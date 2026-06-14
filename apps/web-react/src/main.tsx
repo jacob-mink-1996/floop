@@ -577,6 +577,30 @@ function App() {
                   getRunObservability(projectId).then(setRunObservability),
                 ]);
               }}
+              onDispatchAgentMessage={async (agentMessage) => {
+                if (!projectId || typeof agentMessage.target.ticketId !== "string" || !agentMessage.target.ticketId) return;
+                const role = typeof agentMessage.metadata.role === "string" && roles.includes(agentMessage.metadata.role as RoleName)
+                  ? agentMessage.metadata.role as RoleName
+                  : "developer";
+                const execution = await startExecution(projectId, agentMessage.target.ticketId, {
+                  role,
+                  reason: agentMessage.body || agentMessage.summary,
+                });
+                await updateAgentMessage(projectId, agentMessage.id, {
+                  status: "attached",
+                  promotedKind: "execution",
+                  promotedRef: execution.id,
+                });
+                await refreshTicket(agentMessage.target.ticketId);
+                await Promise.all([
+                  listMergeQueue(projectId).then(setMergeQueue),
+                  listCeremonies(projectId).then(setCeremonies),
+                  listEvents(projectId).then(setEvents),
+                  listAgentMessages(projectId).then(setAgentMessages),
+                  listArtifacts(projectId).then(setArtifacts),
+                  getRunObservability(projectId).then(setRunObservability),
+                ]);
+              }}
               onOpenCeremonies={() => setActiveView("ceremonies")}
             />
           )}
@@ -774,6 +798,7 @@ function OpsPanel({
   onApplyCeremony,
   onUpdateAgentMessage,
   onConvertAgentMessage,
+  onDispatchAgentMessage,
   onOpenCeremonies,
 }: {
   board: Board | null;
@@ -787,6 +812,7 @@ function OpsPanel({
   onApplyCeremony: (runId: string, proposalIds?: string[]) => Promise<void>;
   onUpdateAgentMessage: (messageId: string, input: { status: AgentMessage["status"]; promotedKind?: string; promotedRef?: string }) => Promise<void>;
   onConvertAgentMessage: (message: AgentMessage) => Promise<void>;
+  onDispatchAgentMessage: (message: AgentMessage) => Promise<void>;
   onOpenCeremonies: () => void;
 }) {
   const [busyDecisionId, setBusyDecisionId] = useState("");
@@ -829,6 +855,15 @@ function OpsPanel({
     setBusyAgentMessageId(message.id);
     try {
       await onConvertAgentMessage(message);
+    } finally {
+      setBusyAgentMessageId("");
+    }
+  }
+
+  async function dispatchInboxMessage(message: AgentMessage) {
+    setBusyAgentMessageId(message.id);
+    try {
+      await onDispatchAgentMessage(message);
     } finally {
       setBusyAgentMessageId("");
     }
@@ -903,14 +938,6 @@ function OpsPanel({
                 <code>{JSON.stringify({ target: message.target, metadata: message.metadata }, null, 2)}</code>
               </details>
               <div className="agent-message-actions">
-                <button
-                  className="quiet-button"
-                  type="button"
-                  disabled={busyAgentMessageId === message.id}
-                  onClick={() => updateInboxMessage(message, "accepted")}
-                >
-                  Accept
-                </button>
                 {message.intent === "suggest_ticket" || message.intent === "raise_risk" ? (
                   <button
                     className="quiet-button"
@@ -921,7 +948,17 @@ function OpsPanel({
                     Convert
                   </button>
                 ) : null}
-                {typeof message.target.ticketId === "string" && message.target.ticketId ? (
+                {message.intent === "suggest_dispatch" && typeof message.target.ticketId === "string" && message.target.ticketId ? (
+                  <button
+                    className="quiet-button"
+                    type="button"
+                    disabled={busyAgentMessageId === message.id}
+                    onClick={() => dispatchInboxMessage(message)}
+                  >
+                    Dispatch
+                  </button>
+                ) : null}
+                {message.intent === "comment_on_ticket" && typeof message.target.ticketId === "string" && message.target.ticketId ? (
                   <button
                     className="quiet-button"
                     type="button"
@@ -931,6 +968,14 @@ function OpsPanel({
                     Attach
                   </button>
                 ) : null}
+                <button
+                  className="quiet-button"
+                  type="button"
+                  disabled={busyAgentMessageId === message.id}
+                  onClick={() => updateInboxMessage(message, "accepted")}
+                >
+                  Accept
+                </button>
                 <button
                   className="quiet-button"
                   type="button"

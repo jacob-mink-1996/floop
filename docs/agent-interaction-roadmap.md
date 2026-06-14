@@ -203,9 +203,17 @@ Implemented:
 - Project events for received and decided external-agent messages.
 - Ops/Attention "External Agents" inbox with accept/dismiss actions and collapsed metadata.
 - One-click conversion from `suggest_ticket` and `raise_risk` messages into proposed tickets.
-- One-click attachment closure for messages that target an existing ticket.
+- One-click dispatch for `suggest_dispatch` messages that target an existing ticket.
+- One-click attachment closure for `comment_on_ticket` messages that target an existing ticket.
+- Ticket-targeted attached messages appear in the ticket timeline.
+- Accepted or attached `submit_artifact` messages become durable ticket artifacts.
+- Accepted or attached `submit_ceremony_input` messages become pending ceremony note proposals.
 - Project-level `interactionMode` policy field.
 - Settings UI for the interaction mode ladder.
+- Routine evidence-lane dispatch is gated by `interactionMode`:
+  - `manual`: no automatic next-lane dispatch
+  - `operator_approved`: creates a pending `suggest_dispatch` inbox message
+  - `autonomous_with_review` / `fully_autonomous`: starts eligible next-lane executions
 - CLI wrapper:
 
 ```bash
@@ -217,12 +225,84 @@ npm run agent:message -- \
   --body "The ceremony participant path should be covered with a real adapter fixture." \
   --target '{"repoId":"repo_project_floop_floop"}'
 ```
+- MCP stdio facade:
+
+```bash
+npm run mcp:server
+```
+
+Available MCP tools:
+
+- `floop_list_projects`
+- `floop_list_tickets`
+- `floop_append_agent_message`
+- `floop_request_dispatch`
+- `floop_get_run_status`
+- `floop_list_artifacts`
+
+## Current Execution Plan
+
+### Slice 1: Finish Inbox Promotion
+
+Goal: external-agent messages should become useful domain objects with one operator action.
+
+Steps:
+
+1. Promote `comment_on_ticket` messages into ticket timeline events when accepted or attached.
+2. Promote `submit_artifact` messages into ticket artifacts when accepted or attached.
+3. Add a dispatch action for `suggest_dispatch` messages so operator-approved mode is genuinely two clicks: do it and record why.
+4. Add test coverage for ticket timeline promotion, artifact promotion, and dispatch request handling.
+5. Update the Ops/Attention inbox copy and button ordering so pending messages show the next obvious action first.
+
+### Slice 2: Make Interaction Modes Real
+
+Goal: reduce required user participation without removing policy control.
+
+Steps:
+
+1. Audit the ticket loop for every user-required action.
+2. Mark each action as routine, policy-gated, risk-gated, or human-only.
+3. Apply `interactionMode` consistently:
+   - `manual`: never start routine follow-up work automatically.
+   - `operator_approved`: create pending `suggest_dispatch` messages for routine follow-up work.
+   - `autonomous_with_review`: start routine execution, review, and validation, but stop at risky transitions.
+   - `fully_autonomous`: start eligible routine work and apply eligible low-risk proposals.
+4. Add explicit tests for each mode at the driver/store boundary.
+5. Keep manual dispatch visible as an override, not the primary path.
+
+### Slice 3: External Agent Tooling
+
+Goal: give OpenClaw, Hermes, and similar agents a stable manual integration path without coupling them to Floop internals.
+
+Steps:
+
+1. Keep the webhook and CLI as the lowest-friction ingress path.
+2. Add and document the MCP stdio facade for agents that can use tools:
+   - list projects
+   - list tickets
+   - append agent messages
+   - request dispatch
+   - inspect run status
+   - list artifacts
+3. Treat MCP as the default near-term integration format because it maps cleanly to Floop's existing API.
+4. Spike A2A only if we want Floop to advertise itself as a coordinating agent with task delegation semantics.
+5. Spike ACP only after OpenClaw or Hermes has a concrete ACP implementation we can target.
+
+### Slice 4: Operator Experience Cleanup
+
+Goal: make autonomy calmer and easier to supervise.
+
+Steps:
+
+1. Reframe Ops/Attention around exceptions: waiting approvals, risks, failed validations, blocked tickets, and external-agent suggestions.
+2. Keep raw agent metadata collapsed by default.
+3. Show current activity up front with compact status, progress, and lane indicators.
+4. Prefer graphical progress and checklists over explanatory text where the state is obvious.
+5. Verify the web UI with browser checks after each meaningful surface change.
 
 Remaining:
 
-- Convert accepted inbox messages into ticket comments, ceremony inputs, artifacts, or dispatch requests.
-- Gate routine auto-dispatch behavior through `interactionMode`.
-- Add an MCP facade over the stable Agent Inbox and project/ticket APIs.
+- Finish the fully autonomous low-risk proposal path once the exact auto-apply policy is defined.
 - Spike A2A or ACP once OpenClaw/Hermes protocol support is concrete.
 
 ## Open Questions

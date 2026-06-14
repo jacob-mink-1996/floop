@@ -553,6 +553,7 @@ test("API surfaces merge-policy blocks when validation profile does not satisfy 
         requireValidator: true,
         requireHumanApprovalBeforeMerge: false,
         requiredValidationCommandProfileForMerge: "ci",
+        interactionMode: "autonomous_with_review",
       }),
     });
 

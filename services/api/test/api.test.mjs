@@ -151,6 +151,13 @@ test("API exposes execution start, completion, continuation, and cancellation fl
     await listen(server);
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
 
+    const policyResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/policy`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ interactionMode: "autonomous_with_review" }),
+    });
+    assert.equal(policyResponse.status, 200);
+
     const createExecutionResponse = await fetch(
       `${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2/executions`,
       {
@@ -900,6 +907,147 @@ test("API exposes project agent inbox messages and decisions", async () => {
       }),
     });
     assert.equal(invalidResponse.status, 400);
+
+    const commentResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/agent-messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: "hermes",
+        source: "webhook",
+        intent: "comment_on_ticket",
+        target: { ticketId: "ticket_project_floop_2" },
+        summary: "Reviewer should inspect transport errors",
+        body: "Hermes saw repeated transport-contract failures in a downstream run.",
+      }),
+    });
+    assert.equal(commentResponse.status, 201);
+    const commentBody = await commentResponse.json();
+    const attachResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages/${commentBody.message.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "attached", promotedKind: "ticket_event", promotedRef: "ticket_project_floop_2" }),
+      },
+    );
+    assert.equal(attachResponse.status, 200);
+    const ticketResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2`);
+    assert.equal(ticketResponse.status, 200);
+    const ticketBody = await ticketResponse.json();
+    const attachedEvent = ticketBody.ticket.events.find((event) => event.type === "agent.message_attached");
+    assert.ok(attachedEvent);
+    assert.match(attachedEvent.detail, /transport-contract failures/);
+
+    const artifactResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/agent-messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: "openclaw",
+        source: "webhook",
+        intent: "submit_artifact",
+        target: { ticketId: "ticket_project_floop_2" },
+        summary: "External trace is ready",
+        metadata: {
+          artifact: {
+            kind: "record",
+            label: "External trace",
+            uri: "https://example.com/floop/trace",
+            metadata: { source: "openclaw" },
+          },
+        },
+      }),
+    });
+    assert.equal(artifactResponse.status, 201);
+    const artifactBody = await artifactResponse.json();
+    const promoteArtifactResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages/${artifactBody.message.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "accepted" }),
+      },
+    );
+    assert.equal(promoteArtifactResponse.status, 200);
+    const promoteArtifactBody = await promoteArtifactResponse.json();
+    assert.equal(promoteArtifactBody.message.promotedKind, "artifact");
+
+    const externalArtifactsResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/artifacts?ticketId=ticket_project_floop_2&kind=record&limit=5`,
+    );
+    assert.equal(externalArtifactsResponse.status, 200);
+    const externalArtifactsBody = await externalArtifactsResponse.json();
+    const externalArtifact = externalArtifactsBody.artifacts.find((artifact) => artifact.label === "External trace");
+    assert.ok(externalArtifact);
+    assert.equal(externalArtifact.ticketKey, "FLOOP-2");
+    assert.equal(externalArtifact.uri, "https://example.com/floop/trace");
+
+    const repeatPromoteResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages/${artifactBody.message.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "accepted" }),
+      },
+    );
+    assert.equal(repeatPromoteResponse.status, 200);
+    const repeatedArtifactsResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/artifacts?ticketId=ticket_project_floop_2&kind=record&limit=10`,
+    );
+    assert.equal(repeatedArtifactsResponse.status, 200);
+    const repeatedArtifactsBody = await repeatedArtifactsResponse.json();
+    assert.equal(
+      repeatedArtifactsBody.artifacts.filter((artifact) => artifact.label === "External trace").length,
+      1,
+    );
+
+    const ceremonyResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/ceremonies`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "daily_triage" }),
+    });
+    assert.equal(ceremonyResponse.status, 201);
+    const ceremonyBody = await ceremonyResponse.json();
+    const ceremonyInputResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/agent-messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: "hermes",
+        source: "webhook",
+        intent: "submit_ceremony_input",
+        target: { runId: ceremonyBody.ceremony.id },
+        summary: "External triage signal",
+        body: "Hermes recommends treating transport failures as the current triage focus.",
+        metadata: { confidence: 0.74 },
+      }),
+    });
+    assert.equal(ceremonyInputResponse.status, 201);
+    const ceremonyInputBody = await ceremonyInputResponse.json();
+    const promoteCeremonyInputResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages/${ceremonyInputBody.message.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "accepted" }),
+      },
+    );
+    assert.equal(promoteCeremonyInputResponse.status, 200);
+    const promoteCeremonyInputBody = await promoteCeremonyInputResponse.json();
+    assert.equal(promoteCeremonyInputBody.message.promotedKind, "ceremony_proposal");
+    assert.match(promoteCeremonyInputBody.message.promotedRef, /^ceremony_proposal_/);
+
+    const ceremoniesResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/ceremonies`);
+    assert.equal(ceremoniesResponse.status, 200);
+    const ceremoniesBody = await ceremoniesResponse.json();
+    const promotedCeremony = ceremoniesBody.ceremonies.find((ceremony) => ceremony.id === ceremonyBody.ceremony.id);
+    assert.ok(promotedCeremony);
+    const externalProposal = promotedCeremony.proposals.find(
+      (proposal) => proposal.id === promoteCeremonyInputBody.message.promotedRef,
+    );
+    assert.ok(externalProposal);
+    assert.equal(externalProposal.kind, "note");
+    assert.equal(externalProposal.status, "pending");
+    assert.equal(externalProposal.payload.agentMessageId, ceremonyInputBody.message.id);
+    assert.match(externalProposal.payload.note, /transport failures/);
   } finally {
     await closeServer(server);
     store.close();

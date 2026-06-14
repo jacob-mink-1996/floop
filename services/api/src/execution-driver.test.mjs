@@ -189,6 +189,9 @@ process.stdin.on("end", () => {
   );
 
   try {
+    store.updateProjectPolicy("project_floop", {
+      interactionMode: "autonomous_with_review",
+    });
     store.updateRoleProfile("project_floop", "reviewer", {
       adapter: "codex",
       model: "codex-latest",
@@ -244,6 +247,7 @@ test("execution driver can persist embedded validation evidence from the validat
     store.updateProjectPolicy("project_floop", {
       requireReviewer: false,
       requireValidator: true,
+      interactionMode: "autonomous_with_review",
     });
     store.updateRoleProfile("project_floop", "validator", {
       adapter: "shell",

@@ -132,6 +132,7 @@ export function createSqliteStore(options = {}) {
   const agentMessageCommands = createAgentMessageCommands({
     database,
     getProjectRow,
+    insertArtifacts,
     insertEvent,
     mapAgentMessage,
     now,
@@ -406,12 +407,51 @@ function startAutoRoutedLaneExecution({ store, database, projectId, ticketId, re
     return null;
   }
 
+  const policy = requiredProjectPolicy(database, projectId);
+
   let nextRole = null;
   if (ticket.state === "REVIEWING") {
     nextRole = "reviewer";
   } else if (ticket.state === "VALIDATING") {
     nextRole = "validator";
   } else {
+    return null;
+  }
+
+  const interactionMode = policy.interaction_mode || policy.interactionMode || "manual";
+  if (interactionMode === "manual") {
+    return null;
+  }
+
+  if (interactionMode === "operator_approved") {
+    const existingSuggestion = database
+      .prepare(
+        `select id
+         from agent_messages
+         where project_id = ?
+           and status = 'pending'
+           and intent = 'suggest_dispatch'
+           and json_extract(target_json, '$.ticketId') = ?
+           and json_extract(metadata_json, '$.role') = ?
+         order by created_at desc
+         limit 1`,
+      )
+      .get(projectId, ticketId, nextRole);
+    if (!existingSuggestion) {
+      store.createAgentMessage(projectId, {
+        actor: "floop",
+        source: "interaction_policy",
+        intent: "suggest_dispatch",
+        target: { ticketId },
+        summary: `Dispatch ${nextRole} lane for ${ticket.key}`,
+        body: reason || `${ticket.key} is ready for ${nextRole} work.`,
+        metadata: {
+          role: nextRole,
+          interactionMode,
+          reasonCode: "routine_lane_ready",
+        },
+      });
+    }
     return null;
   }
 

@@ -4,6 +4,7 @@ import { agentMessageDto } from "../../contracts/src/index.mjs";
 export function createAgentMessageCommands({
   database,
   getProjectRow,
+  insertArtifacts,
   insertEvent,
   mapAgentMessage,
   now,
@@ -104,6 +105,42 @@ export function createAgentMessageCommands({
 
       const timestamp = now();
       const dismissedAt = input.status === "dismissed" ? timestamp : existing.dismissedAt || null;
+      const ticketId = typeof existing.target?.ticketId === "string" && existing.target.ticketId
+        ? existing.target.ticketId
+        : null;
+      const repoId = typeof existing.target?.repoId === "string" && existing.target.repoId
+        ? existing.target.repoId
+        : null;
+      const ceremonyRunId = typeof existing.target?.runId === "string" && existing.target.runId
+        ? existing.target.runId
+        : null;
+      const promotedKind = optionalText(input.promotedKind, defaultPromotedKind(existing, input.status));
+      let promotedRef = optionalText(input.promotedRef, existing.promotedRef);
+      const shouldPromoteArtifact =
+        ticketId &&
+        !existing.promotedKind &&
+        promotedKind === "artifact" &&
+        existing.intent === "submit_artifact" &&
+        (input.status === "accepted" || input.status === "attached") &&
+        isArtifactInput(existing.metadata?.artifact);
+      const shouldPromoteCeremonyInput =
+        ceremonyRunId &&
+        !existing.promotedKind &&
+        promotedKind === "ceremony_proposal" &&
+        existing.intent === "submit_ceremony_input" &&
+        (input.status === "accepted" || input.status === "attached");
+      const ceremonyInputProposalId = shouldPromoteCeremonyInput
+        ? promotedRef || `ceremony_proposal_${randomUUID()}`
+        : "";
+      if (shouldPromoteCeremonyInput) {
+        const run = database
+          .prepare("select id from ceremony_runs where project_id = ? and id = ?")
+          .get(projectId, ceremonyRunId);
+        if (!run) {
+          throw new Error(`Target ceremony run not found: ${ceremonyRunId}`);
+        }
+        promotedRef = ceremonyInputProposalId;
+      }
       withTransaction(database, () => {
         database
           .prepare(
@@ -113,18 +150,32 @@ export function createAgentMessageCommands({
           )
           .run(
             input.status,
-            optionalText(input.promotedKind, existing.promotedKind),
-            optionalText(input.promotedRef, existing.promotedRef),
+            promotedKind,
+            promotedRef,
             dismissedAt || null,
             timestamp,
             projectId,
             messageId,
           );
+        if (shouldPromoteArtifact) {
+          insertArtifacts(database, projectId, ticketId, {}, [existing.metadata.artifact], timestamp);
+        }
+        if (shouldPromoteCeremonyInput) {
+          insertCeremonyInputProposal(database, {
+            projectId,
+            runId: ceremonyRunId,
+            proposalId: ceremonyInputProposalId,
+            message: existing,
+            timestamp,
+          });
+        }
         insertEvent(database, {
           projectId,
+          repoId,
+          ticketId,
           type: `agent.message_${input.status}`,
           summary: `${existing.actor} message ${input.status}`,
-          detail: existing.summary,
+          detail: existing.body || existing.summary,
           reasonCode: input.status,
           reasonSource: "operator",
         });
@@ -135,4 +186,65 @@ export function createAgentMessageCommands({
   };
 
   return commands;
+}
+
+function defaultPromotedKind(message, status) {
+  if (message.promotedKind) {
+    return message.promotedKind;
+  }
+  if (status === "attached" && message.intent === "comment_on_ticket") {
+    return "ticket_event";
+  }
+  if ((status === "accepted" || status === "attached") && message.intent === "submit_artifact") {
+    return "artifact";
+  }
+  if ((status === "accepted" || status === "attached") && message.intent === "submit_ceremony_input") {
+    return "ceremony_proposal";
+  }
+  return "";
+}
+
+function isArtifactInput(value) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      typeof value.kind === "string" &&
+      typeof value.label === "string" &&
+      typeof value.uri === "string",
+  );
+}
+
+function insertCeremonyInputProposal(database, { projectId, runId, proposalId, message, timestamp }) {
+  const detail = message.body || message.summary;
+  database
+    .prepare(
+      `insert into ceremony_proposals (
+        id, project_id, run_id, kind, status, summary, ticket_id,
+        payload_json, applied_ticket_id, applied_at, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      proposalId,
+      projectId,
+      runId,
+      "note",
+      "pending",
+      message.summary || `External input from ${message.actor}`,
+      null,
+      JSON.stringify({
+        note: detail,
+        actor: message.actor,
+        source: message.source,
+        agentMessageId: message.id,
+        metadata: message.metadata || {},
+      }),
+      null,
+      null,
+      timestamp,
+      timestamp,
+    );
+  database
+    .prepare("update ceremony_runs set updated_at = ? where project_id = ? and id = ?")
+    .run(timestamp, projectId, runId);
 }

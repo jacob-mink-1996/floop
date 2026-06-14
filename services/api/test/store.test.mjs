@@ -15,6 +15,7 @@ test("SQLite store persists ticket state and board aggregates across reopen", ()
       seedDemo: true,
       workspaceRoot: "/workspace/floop",
     });
+    store.updateProjectPolicy("project_floop", { interactionMode: "autonomous_with_review" });
 
     const createdTicket = store.createTicket("project_floop", {
       title: "Implement board read model",

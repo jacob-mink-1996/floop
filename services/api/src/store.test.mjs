@@ -584,6 +584,9 @@ test("store updates repo metadata and keeps a single primary repo", () => {
 
 test("store persists execution history and routes ticket state from outcomes", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "autonomous_with_review",
+  });
 
   const started = store.createExecution("project_floop", "ticket_project_floop_2", {
     role: "developer",
@@ -796,6 +799,9 @@ test("store persists review and validation evidence and advances the ticket loop
 
 test("store auto-routes next execution lanes after implementation and review completion", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "autonomous_with_review",
+  });
 
   const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
     role: "developer",
@@ -832,8 +838,79 @@ test("store auto-routes next execution lanes after implementation and review com
   store.close();
 });
 
+test("store gates routine evidence lane dispatch by interaction mode", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+
+  const manualExecution = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Manual mode should not auto-dispatch review.",
+  });
+  store.completeExecution("project_floop", manualExecution.id, {
+    outcome: "completed",
+    summaryMd: "Implementation finished under manual mode.",
+  });
+  const manualTicket = store.getTicket("project_floop", "ticket_project_floop_2");
+  assert.equal(manualTicket.state, "REVIEWING");
+  assert.equal(manualTicket.executions.some((execution) => execution.role === "reviewer"), false);
+  assert.equal(store.listAgentMessages("project_floop", { intent: "suggest_dispatch" }).length, 0);
+
+  const approvedTicket = store.createTicket("project_floop", {
+    title: "Operator approved dispatch policy",
+    brief: "Prove routine dispatch becomes an inbox suggestion.",
+    state: "READY",
+    priority: "medium",
+    assignedRole: "developer",
+  });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "operator_approved",
+  });
+  const approvedExecution = store.createExecution("project_floop", approvedTicket.id, {
+    role: "developer",
+    reason: "Operator-approved mode should suggest review.",
+  });
+  store.completeExecution("project_floop", approvedExecution.id, {
+    outcome: "completed",
+    summaryMd: "Implementation finished under operator-approved mode.",
+  });
+  const approvedAfterComplete = store.getTicket("project_floop", approvedTicket.id);
+  assert.equal(approvedAfterComplete.state, "REVIEWING");
+  assert.equal(approvedAfterComplete.executions.some((execution) => execution.role === "reviewer"), false);
+  const dispatchSuggestion = store
+    .listAgentMessages("project_floop", { intent: "suggest_dispatch" })
+    .find((message) => message.target.ticketId === approvedTicket.id);
+  assert.ok(dispatchSuggestion);
+  assert.equal(dispatchSuggestion.metadata.role, "reviewer");
+
+  const autonomousTicket = store.createTicket("project_floop", {
+    title: "Autonomous dispatch policy",
+    brief: "Prove routine dispatch starts the next lane.",
+    state: "READY",
+    priority: "medium",
+    assignedRole: "developer",
+  });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "autonomous_with_review",
+  });
+  const autonomousExecution = store.createExecution("project_floop", autonomousTicket.id, {
+    role: "developer",
+    reason: "Autonomous mode should start review.",
+  });
+  store.completeExecution("project_floop", autonomousExecution.id, {
+    outcome: "completed",
+    summaryMd: "Implementation finished under autonomous mode.",
+  });
+  const autonomousAfterComplete = store.getTicket("project_floop", autonomousTicket.id);
+  assert.equal(autonomousAfterComplete.state, "REVIEWING");
+  assert.equal(autonomousAfterComplete.executions.some((execution) => execution.role === "reviewer"), true);
+
+  store.close();
+});
+
 test("store can persist a review directly from reviewer execution completion", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "autonomous_with_review",
+  });
 
   const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
     role: "developer",
@@ -874,6 +951,7 @@ test("store can persist validation directly from validator execution completion"
   store.updateProjectPolicy("project_floop", {
     requireReviewer: false,
     requireValidator: true,
+    interactionMode: "autonomous_with_review",
   });
 
   const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
@@ -1155,6 +1233,7 @@ test("store enforces merge validation-profile policy before merge", () => {
     requireValidator: true,
     requireHumanApprovalBeforeMerge: false,
     requiredValidationCommandProfileForMerge: "ci",
+    interactionMode: "autonomous_with_review",
   });
 
   const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
