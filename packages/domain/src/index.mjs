@@ -62,7 +62,7 @@ export const interactionModes = [
   "manual",
   "operator_approved",
   "autonomous_with_review",
-  "fully_autonomous",
+  "autopilot",
 ];
 
 export const agentMessageIntents = [

@@ -906,9 +906,9 @@ test("store gates routine evidence lane dispatch by interaction mode", () => {
   store.close();
 });
 
-test("store auto-promotes low-risk agent inbox messages in fully autonomous mode", () => {
+test("store auto-promotes low-risk agent inbox messages in autopilot mode", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
-  store.updateProjectPolicy("project_floop", { interactionMode: "fully_autonomous" });
+  store.updateProjectPolicy("project_floop", { interactionMode: "autopilot" });
 
   const comment = store.createAgentMessage("project_floop", {
     actor: "hermes",

@@ -33,7 +33,7 @@ Add a per-project automation mode with explicit behavior:
 - `manual`: user dispatches each step.
 - `operator_approved`: Floop proposes next steps and asks before acting.
 - `autonomous_with_review`: Floop runs routine execution/review/validation, but stops for risky transitions.
-- `fully_autonomous`: Floop runs eligible work and applies eligible proposals without routine approval.
+- `autopilot`: Floop keeps routine work moving and applies low-risk inputs while surfacing exceptions.
 
 This should build on the existing ceremony automation policy rather than becoming a separate policy system.
 
@@ -213,8 +213,8 @@ Implemented:
 - Routine evidence-lane dispatch is gated by `interactionMode`:
   - `manual`: no automatic next-lane dispatch
   - `operator_approved`: creates a pending `suggest_dispatch` inbox message
-  - `autonomous_with_review` / `fully_autonomous`: starts eligible next-lane executions
-- `fully_autonomous` auto-promotes low-risk inbox messages:
+  - `autonomous_with_review` / `autopilot`: starts eligible next-lane executions
+- `autopilot` auto-promotes low-risk inbox messages:
   - `comment_on_ticket` with a target ticket is attached to the ticket timeline
   - `submit_artifact` with a target ticket and valid artifact metadata becomes a durable artifact
   - `submit_ceremony_input` with a target ceremony run becomes a pending ceremony note proposal
@@ -271,7 +271,7 @@ Steps:
    - `manual`: never start routine follow-up work automatically.
    - `operator_approved`: create pending `suggest_dispatch` messages for routine follow-up work.
    - `autonomous_with_review`: start routine execution, review, and validation, but stop at risky transitions.
-   - `fully_autonomous`: start eligible routine work and apply eligible low-risk proposals.
+   - `autopilot`: start eligible routine work and apply eligible low-risk inputs.
 4. Add explicit tests for each mode at the driver/store boundary.
 5. Keep manual dispatch visible as an override, not the primary path.
 

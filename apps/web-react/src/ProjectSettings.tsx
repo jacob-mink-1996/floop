@@ -31,7 +31,7 @@ const interactionModes: Array<{ value: InteractionMode; label: string; detail: s
   { value: "manual", label: "Manual", detail: "The operator dispatches each step." },
   { value: "operator_approved", label: "Operator approved", detail: "Floop proposes next steps and asks before acting." },
   { value: "autonomous_with_review", label: "Autonomous + review", detail: "Routine work runs, risky transitions stop for review." },
-  { value: "fully_autonomous", label: "Fully autonomous", detail: "Eligible work and proposals move without routine approval." },
+  { value: "autopilot", label: "Autopilot", detail: "Routine work and low-risk inputs move; exceptions still surface." },
 ];
 
 const refinementModes: Array<{ value: RefinementMode; label: string; detail: string }> = [

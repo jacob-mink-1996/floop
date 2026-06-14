@@ -15,7 +15,7 @@ export type TicketState =
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
 
 export type RefinementMode = "autonomous" | "user_approved" | "user_participant" | "user_only";
-export type InteractionMode = "manual" | "operator_approved" | "autonomous_with_review" | "fully_autonomous";
+export type InteractionMode = "manual" | "operator_approved" | "autonomous_with_review" | "autopilot";
 export type CeremonyType = "refinement" | "planning" | "daily_triage" | "review_demo_prep" | "retro";
 export type AgentMessageIntent =
   | "suggest_ticket"

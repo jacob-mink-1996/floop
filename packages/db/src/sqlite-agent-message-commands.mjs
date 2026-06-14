@@ -190,7 +190,7 @@ export function createAgentMessageCommands({
 }
 
 function maybeAutoPromoteAgentMessage(commands, database, projectId, messageId) {
-  if (projectInteractionMode(database, projectId) !== "fully_autonomous") {
+  if (projectInteractionMode(database, projectId) !== "autopilot") {
     return;
   }
   const message = commands.getAgentMessage(projectId, messageId);
