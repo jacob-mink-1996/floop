@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { agentMessageDto } from "../../contracts/src/index.mjs";
 
+const roleNames = new Set(["product_manager", "architect", "developer", "reviewer", "validator", "integrator"]);
+
 export function createAgentMessageCommands({
   database,
+  getStore,
   getProjectRow,
   insertArtifacts,
   insertEvent,
@@ -87,7 +90,7 @@ export function createAgentMessageCommands({
         });
       });
 
-      maybeAutoPromoteAgentMessage(commands, database, projectId, id);
+      maybeAutoPromoteAgentMessage(commands, database, getStore, projectId, id);
       return commands.getAgentMessage(projectId, id);
     },
 
@@ -189,12 +192,15 @@ export function createAgentMessageCommands({
   return commands;
 }
 
-function maybeAutoPromoteAgentMessage(commands, database, projectId, messageId) {
-  if (projectInteractionMode(database, projectId) !== "autopilot") {
+function maybeAutoPromoteAgentMessage(commands, database, getStore, projectId, messageId) {
+  const interactionMode = projectInteractionMode(database, projectId);
+  if (interactionMode !== "autopilot" && interactionMode !== "fully_autonomous") {
     return;
   }
   const message = commands.getAgentMessage(projectId, messageId);
-  const decision = lowRiskAutonomousDecision(message);
+  const decision = interactionMode === "fully_autonomous"
+    ? fullyAutonomousDecision(getStore(), database, projectId, message)
+    : lowRiskAutonomousDecision(message);
   if (!decision) {
     return;
   }
@@ -225,6 +231,63 @@ function lowRiskAutonomousDecision(message) {
     return { status: "accepted" };
   }
   return null;
+}
+
+function fullyAutonomousDecision(store, database, projectId, message) {
+  const lowRiskDecision = lowRiskAutonomousDecision(message);
+  if (lowRiskDecision) {
+    return lowRiskDecision;
+  }
+  if (!message || message.status !== "pending") {
+    return null;
+  }
+  if (message.intent === "suggest_ticket" || message.intent === "raise_risk") {
+    const ticket = store.createTicket(projectId, {
+      title: message.summary,
+      brief: message.body || message.summary,
+      priority: message.intent === "raise_risk" ? "urgent" : "medium",
+      state: "READY",
+      assignedRole: roleFromMessage(message),
+      latestSummary: `Created from ${message.actor} ${message.intent.replaceAll("_", " ")}.`,
+      repoTargets: repoTargetsForMessage(database, projectId, message),
+    });
+    if (!ticket) {
+      return null;
+    }
+    try {
+      store.createExecution(projectId, ticket.id, {
+        role: ticket.assignedRole || roleFromMessage(message),
+        reason: message.body || message.summary,
+      });
+    } catch {
+      // Ticket creation is still progress; execution may be blocked by concurrency or missing role policy.
+    }
+    return { status: "converted", promotedKind: "ticket", promotedRef: ticket.id };
+  }
+  if (message.intent === "suggest_dispatch" && hasTarget(message, "ticketId")) {
+    const execution = store.createExecution(projectId, message.target.ticketId, {
+      role: roleFromMessage(message),
+      reason: message.body || message.summary,
+    });
+    return execution
+      ? { status: "attached", promotedKind: "execution", promotedRef: execution.id }
+      : null;
+  }
+  return null;
+}
+
+function roleFromMessage(message) {
+  return typeof message.metadata?.role === "string" && roleNames.has(message.metadata.role)
+    ? message.metadata.role
+    : "developer";
+}
+
+function repoTargetsForMessage(database, projectId, message) {
+  const targetRepoId = typeof message.target?.repoId === "string" ? message.target.repoId : "";
+  const repo = targetRepoId
+    ? database.prepare("select id, default_branch from repos where project_id = ? and id = ?").get(projectId, targetRepoId)
+    : database.prepare("select id, default_branch from repos where project_id = ? order by is_primary desc, created_at asc limit 1").get(projectId);
+  return repo ? [{ repoId: repo.id, baseRef: repo.default_branch || "main" }] : [];
 }
 
 function hasTarget(message, key) {

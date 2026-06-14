@@ -117,11 +117,14 @@ export function createMergeCommands({
       const policy = requiredProjectPolicy(database, projectId);
       const latestReview = getLatestReviewRow(database, projectId, ticketId);
       const latestValidation = getLatestValidationRunRow(database, projectId, ticketId);
-      const requiresHumanApproval = readPolicyBoolean(
-        policy,
-        "requireHumanApprovalBeforeMerge",
-        "require_human_approval_before_merge",
-      );
+      const requiresHumanApproval =
+        policy.interaction_mode === "fully_autonomous"
+          ? false
+          : readPolicyBoolean(
+              policy,
+              "requireHumanApprovalBeforeMerge",
+              "require_human_approval_before_merge",
+            );
       const mergePolicyBlock = describeMergePolicyBlock(policy, latestReview, latestValidation);
       const approvedByKind = optionalText(input.approvedByKind);
       const approvedByRef = optionalText(input.approvedByRef);
@@ -152,7 +155,11 @@ export function createMergeCommands({
         finishedAt: null,
       };
       const approvalDetail =
-        approvedByKind && approvedByRef ? `Approved by ${approvedByKind}:${approvedByRef}` : "No approval recorded";
+        approvedByKind && approvedByRef
+          ? `Approved by ${approvedByKind}:${approvedByRef}`
+          : requiresHumanApproval
+            ? "No approval recorded"
+            : "Approval bypassed by policy";
       assertProjectCanStartMerge(database, projectId, ticket.key);
 
       const started = withTransaction(database, () => {
@@ -313,11 +320,14 @@ export function createMergeCommands({
       const status = optionalText(input.status, "completed");
       const latestReview = getLatestReviewRow(database, projectId, ticketId);
       const latestValidation = getLatestValidationRunRow(database, projectId, ticketId);
-      const requiresHumanApproval = readPolicyBoolean(
-        policy,
-        "requireHumanApprovalBeforeMerge",
-        "require_human_approval_before_merge",
-      );
+      const requiresHumanApproval =
+        policy.interaction_mode === "fully_autonomous"
+          ? false
+          : readPolicyBoolean(
+              policy,
+              "requireHumanApprovalBeforeMerge",
+              "require_human_approval_before_merge",
+            );
       const mergePolicyBlock = describeMergePolicyBlock(policy, latestReview, latestValidation);
       const approvedByKind = optionalText(input.approvedByKind);
       const approvedByRef = optionalText(input.approvedByRef);

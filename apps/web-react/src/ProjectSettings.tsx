@@ -32,6 +32,7 @@ const interactionModes: Array<{ value: InteractionMode; label: string; detail: s
   { value: "operator_approved", label: "Operator approved", detail: "Floop proposes next steps and asks before acting." },
   { value: "autonomous_with_review", label: "Autonomous + review", detail: "Routine work runs, risky transitions stop for review." },
   { value: "autopilot", label: "Autopilot", detail: "Routine work and low-risk inputs move; exceptions still surface." },
+  { value: "fully_autonomous", label: "Fully autonomous", detail: "External suggestions become work and human merge approval is bypassed." },
 ];
 
 const refinementModes: Array<{ value: RefinementMode; label: string; detail: string }> = [

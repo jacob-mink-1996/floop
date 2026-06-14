@@ -988,6 +988,63 @@ test("store auto-promotes low-risk agent inbox messages in autopilot mode", () =
   store.close();
 });
 
+test("store acts on broad agent inbox messages in fully autonomous mode", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "fully_autonomous",
+    maxParallelExecutions: 10,
+  });
+
+  const suggestion = store.createAgentMessage("project_floop", {
+    actor: "openclaw",
+    source: "webhook",
+    intent: "suggest_ticket",
+    target: { repoId: "repo_project_floop_floop" },
+    summary: "Add autonomous fixture coverage",
+    body: "OpenClaw found missing fixture coverage.",
+    metadata: { role: "developer" },
+  });
+  assert.equal(suggestion.status, "converted");
+  assert.equal(suggestion.promotedKind, "ticket");
+  const createdTicket = store.getTicket("project_floop", suggestion.promotedRef);
+  assert.equal(createdTicket.state, "WORKING");
+  assert.equal(createdTicket.priority, "medium");
+  assert.equal(createdTicket.executions.some((execution) => execution.role === "developer" && execution.status === "running"), true);
+
+  const risk = store.createAgentMessage("project_floop", {
+    actor: "hermes",
+    source: "webhook",
+    intent: "raise_risk",
+    target: { repoId: "repo_project_floop_floop" },
+    summary: "Transport risk needs mitigation",
+    body: "Hermes found a likely transport regression.",
+  });
+  assert.equal(risk.status, "converted");
+  assert.equal(risk.promotedKind, "ticket");
+  const riskTicket = store.getTicket("project_floop", risk.promotedRef);
+  assert.equal(riskTicket.priority, "urgent");
+  assert.equal(riskTicket.state, "WORKING");
+
+  const dispatch = store.createAgentMessage("project_floop", {
+    actor: "hermes",
+    source: "webhook",
+    intent: "suggest_dispatch",
+    target: { ticketId: "ticket_project_floop_2" },
+    summary: "Run architect lane",
+    metadata: { role: "architect" },
+  });
+  assert.equal(dispatch.status, "attached");
+  assert.equal(dispatch.promotedKind, "execution");
+  assert.equal(
+    store
+      .getTicket("project_floop", "ticket_project_floop_2")
+      .executions.some((execution) => execution.id === dispatch.promotedRef && execution.role === "architect"),
+    true,
+  );
+
+  store.close();
+});
+
 test("store can persist a review directly from reviewer execution completion", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   store.updateProjectPolicy("project_floop", {
@@ -1304,6 +1361,35 @@ test("store enforces merge readiness and approval policy", () => {
       }),
     /Ticket FLOOP-1 is not ready for merge/,
   );
+
+  store.close();
+});
+
+test("store bypasses human merge approval in fully autonomous mode", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "fully_autonomous",
+    requireReviewer: false,
+    requireValidator: false,
+    requireHumanApprovalBeforeMerge: true,
+  });
+  store.transitionTicket("project_floop", "ticket_project_floop_2", {
+    targetState: "READY_TO_MERGE",
+    reason: "Fully autonomous mode can merge without human approval.",
+    reasonCode: "fully_autonomous_merge",
+  });
+
+  const mergeStatus = store.getMergeStatus("project_floop", "ticket_project_floop_2");
+  assert.equal(mergeStatus.requiresHumanApproval, false);
+  assert.equal(mergeStatus.approval.required, false);
+  assert.equal(mergeStatus.canMerge, true);
+  assert.equal(mergeStatus.readiness, "ready");
+
+  const merged = store.mergeTicket("project_floop", "ticket_project_floop_2", {
+    strategy: "merge_commit",
+  });
+  assert.equal(merged.latestRun.status, "completed");
+  assert.equal(merged.ticketState, "DONE");
 
   store.close();
 });

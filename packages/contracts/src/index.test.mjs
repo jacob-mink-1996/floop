@@ -348,6 +348,7 @@ test("request parsers normalize project and ticket payloads", () => {
     maxParallelExecutions: 4,
     maxParallelMerges: 2,
     maxAutoContinueIterations: 7,
+    interactionMode: " fully_autonomous ",
     refinementMode: " user_participant ",
     agentCreatedTicketDefaultState: " READY ",
     ceremonyAutomation: {
@@ -387,6 +388,7 @@ test("request parsers normalize project and ticket payloads", () => {
     maxParallelExecutions: 4,
     maxParallelMerges: 2,
     maxAutoContinueIterations: 7,
+    interactionMode: "fully_autonomous",
     refinementMode: "user_participant",
     agentCreatedTicketDefaultState: "READY",
     ceremonyAutomation: {

@@ -640,11 +640,14 @@ export function buildMergeStatus(database, ticket, worktrees = []) {
   const latestValidation = getLatestValidationRunRow(database, ticket.projectId, ticket.id);
   const latestRunArtifacts =
     latestRun ? getArtifactsByMergeRunId(database, [latestRun.id]).get(latestRun.id) || [] : [];
-  const requiresHumanApproval = readPolicyBoolean(
-    policy,
-    "requireHumanApprovalBeforeMerge",
-    "require_human_approval_before_merge",
-  );
+  const requiresHumanApproval =
+    policy.interaction_mode === "fully_autonomous"
+      ? false
+      : readPolicyBoolean(
+          policy,
+          "requireHumanApprovalBeforeMerge",
+          "require_human_approval_before_merge",
+        );
   const mergePolicyBlocks = buildMergePolicyBlocks(policy, latestReview, latestValidation);
   const mergePolicyBlock = mergePolicyBlocks[0]?.message || "";
   const mergeable = ticket.state === "READY_TO_MERGE" && !mergePolicyBlock;

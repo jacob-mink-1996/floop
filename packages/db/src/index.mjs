@@ -131,6 +131,7 @@ export function createSqliteStore(options = {}) {
 
   const agentMessageCommands = createAgentMessageCommands({
     database,
+    getStore: () => store,
     getProjectRow,
     insertArtifacts,
     insertEvent,

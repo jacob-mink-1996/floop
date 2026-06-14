@@ -34,6 +34,7 @@ Add a per-project automation mode with explicit behavior:
 - `operator_approved`: Floop proposes next steps and asks before acting.
 - `autonomous_with_review`: Floop runs routine execution/review/validation, but stops for risky transitions.
 - `autopilot`: Floop keeps routine work moving and applies low-risk inputs while surfacing exceptions.
+- `fully_autonomous`: Floop turns external suggestions into work, dispatches requested lanes, and bypasses human approval gates.
 
 This should build on the existing ceremony automation policy rather than becoming a separate policy system.
 
@@ -213,12 +214,17 @@ Implemented:
 - Routine evidence-lane dispatch is gated by `interactionMode`:
   - `manual`: no automatic next-lane dispatch
   - `operator_approved`: creates a pending `suggest_dispatch` inbox message
-  - `autonomous_with_review` / `autopilot`: starts eligible next-lane executions
+  - `autonomous_with_review` / `autopilot` / `fully_autonomous`: starts eligible next-lane executions
 - `autopilot` auto-promotes low-risk inbox messages:
   - `comment_on_ticket` with a target ticket is attached to the ticket timeline
   - `submit_artifact` with a target ticket and valid artifact metadata becomes a durable artifact
   - `submit_ceremony_input` with a target ceremony run becomes a pending ceremony note proposal
   - `suggest_ticket`, `raise_risk`, and external `suggest_dispatch` remain operator-visible
+- `fully_autonomous` acts on broad inbox messages without operator review:
+  - `suggest_ticket` and `raise_risk` become ready tickets and start developer work when execution capacity allows
+  - `suggest_dispatch` starts the requested role execution
+  - low-risk inbox messages use the same promotion path as `autopilot`
+  - human merge approval gates are bypassed while technical merge blockers still apply
 - CLI wrapper:
 
 ```bash
@@ -272,6 +278,7 @@ Steps:
    - `operator_approved`: create pending `suggest_dispatch` messages for routine follow-up work.
    - `autonomous_with_review`: start routine execution, review, and validation, but stop at risky transitions.
    - `autopilot`: start eligible routine work and apply eligible low-risk inputs.
+   - `fully_autonomous`: convert external suggestions into work, dispatch external lane requests, and bypass human approval gates.
 4. Add explicit tests for each mode at the driver/store boundary.
 5. Keep manual dispatch visible as an override, not the primary path.
 
