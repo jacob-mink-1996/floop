@@ -1371,36 +1371,11 @@ function CeremoniesPanel({
         <div className="ceremony-controls">
           <div className="section-heading">
             <h3>{ceremonyOptions.find((option) => option.type === selectedType)?.label}</h3>
-            <span>Fan-out</span>
+            <span>{participantRoles.length} roles</span>
           </div>
-          <div className="role-toggle-grid">
-            {roles.map((role) => {
-              const typedRole = role as RoleName;
-              return (
-              <label key={role} className="check-row">
-                <input
-                  type="checkbox"
-                  checked={participantRoles.includes(typedRole)}
-                  onChange={() => toggleParticipant(typedRole)}
-                />
-                {prettyRole(typedRole)}
-              </label>
-            );
-            })}
-          </div>
-          <label>
+          <label className="read-field">
             <span>Decider</span>
-            <select value={deciderRole} onChange={(event) => setDeciderRole(event.currentTarget.value as RoleName)}>
-              {deciderOptions.map((role) => (
-                <option key={role} value={role}>
-                  {prettyRole(role)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Consensus policy</span>
-            <input value={consensusPolicy} onChange={(event) => setConsensusPolicy(event.currentTarget.value)} />
+            <p>{prettyRole(deciderRole)}</p>
           </label>
           <button
             className="primary-button"
@@ -1418,6 +1393,38 @@ function CeremoniesPanel({
           >
             Run fan-out
           </button>
+          <details className="advanced-disclosure">
+            <summary>Fan-out settings</summary>
+            <div className="role-toggle-grid">
+              {roles.map((role) => {
+                const typedRole = role as RoleName;
+                return (
+                <label key={role} className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={participantRoles.includes(typedRole)}
+                    onChange={() => toggleParticipant(typedRole)}
+                  />
+                  {prettyRole(typedRole)}
+                </label>
+              );
+              })}
+            </div>
+            <label>
+              <span>Decider</span>
+              <select value={deciderRole} onChange={(event) => setDeciderRole(event.currentTarget.value as RoleName)}>
+                {deciderOptions.map((role) => (
+                  <option key={role} value={role}>
+                    {prettyRole(role)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Consensus policy</span>
+              <input value={consensusPolicy} onChange={(event) => setConsensusPolicy(event.currentTarget.value)} />
+            </label>
+          </details>
         </div>
         <div className="compact-list">
           {ceremonies.slice(0, 6).map((run) => (
@@ -2419,7 +2426,7 @@ function TicketActionForm({
   return (
     <ActionDock
       label="Dispatch"
-      detail={`${primaryActionLabel(ticket)} · do it, then record why.`}
+      detail={`${primaryActionLabel(ticket)} · note is optional.`}
       busy={Boolean(busy)}
       disabled={!canSubmitPrimaryAction(ticket, activeExecution, latestCompletedExecution)}
       defaultOpen={canSubmitPrimaryAction(ticket, activeExecution, latestCompletedExecution)}
@@ -2428,7 +2435,7 @@ function TicketActionForm({
         <ActionFields ticket={ticket} activeExecution={activeExecution} latestCompletedExecution={latestCompletedExecution} />
         <label>
           <span>Why</span>
-          <textarea name="summary" rows={3} placeholder="Record why this action is happening." required />
+          <textarea name="summary" rows={2} placeholder="Optional note for audit history." />
         </label>
         <button className="primary-button" type="submit" disabled={Boolean(busy) || !canSubmitPrimaryAction(ticket, activeExecution, latestCompletedExecution)}>
           {submitLabel}
@@ -2743,47 +2750,50 @@ function TicketComposer({
         </button>
       </div>
       {error ? <div className="status is-error">{error}</div> : null}
-      <div className="form-grid">
-        <label>
-          <span>Title</span>
-          <input name="title" required maxLength={120} />
-        </label>
-        <label>
-          <span>Repo</span>
-          <select name="repoId">
-            {repos.map((repo) => (
-              <option key={repo.id} value={repo.id}>
-                {repo.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Priority</span>
-          <select name="priority" defaultValue="medium">
-            {priorities.map((priority) => (
-              <option key={priority} value={priority}>
-                {priority}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Role</span>
-          <select name="assignedRole" defaultValue="developer">
-            {roles.map((role) => (
-              <option key={role} value={role}>
-                {prettyRole(role)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <label className="wide-field">
+        <span>Title</span>
+        <input name="title" required maxLength={120} />
+      </label>
       <input type="hidden" name="state" value="READY" />
       <label>
         <span>Brief</span>
         <textarea name="brief" required rows={3} />
       </label>
+      <details className="advanced-disclosure">
+        <summary>Ticket settings</summary>
+        <div className="form-grid">
+          <label>
+            <span>Repo</span>
+            <select name="repoId">
+              {repos.map((repo) => (
+                <option key={repo.id} value={repo.id}>
+                  {repo.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Priority</span>
+            <select name="priority" defaultValue="medium">
+              {priorities.map((priority) => (
+                <option key={priority} value={priority}>
+                  {priority}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Role</span>
+            <select name="assignedRole" defaultValue="developer">
+              {roles.map((role) => (
+                <option key={role} value={role}>
+                  {prettyRole(role)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </details>
       <div className="composer-actions">
         <button className="primary-button" type="submit" disabled={busy}>
           {busy ? "Creating..." : "Create ticket"}

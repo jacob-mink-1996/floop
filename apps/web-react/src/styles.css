@@ -768,6 +768,45 @@ h3 {
   background: var(--panel-warm);
 }
 
+.advanced-disclosure {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.advanced-disclosure summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.advanced-disclosure summary::after {
+  content: "+";
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--teal);
+}
+
+.advanced-disclosure[open] summary::after {
+  content: "-";
+}
+
+.advanced-disclosure[open] {
+  gap: 12px;
+}
+
 .ops-panel {
   display: grid;
   grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.55fr) repeat(2, minmax(140px, 0.5fr));
@@ -1799,6 +1838,14 @@ h3 {
   gap: 8px;
 }
 
+.mode-list-primary {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.policy-advanced {
+  border-top-style: dashed;
+}
+
 .repo-mode-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2478,6 +2525,11 @@ textarea {
 .checklist-item div,
 .evidence-step {
   min-width: 0;
+}
+
+.checklist-item div {
+  display: grid;
+  gap: 4px;
 }
 
 .checklist-item strong,

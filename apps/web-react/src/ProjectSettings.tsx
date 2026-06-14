@@ -426,43 +426,7 @@ function PolicyForm({
         <label><input name="requireValidator" type="checkbox" defaultChecked={policy?.requireValidator ?? true} /> Require validator</label>
         <label><input name="requireHumanApprovalBeforeMerge" type="checkbox" defaultChecked={policy?.requireHumanApprovalBeforeMerge ?? true} /> Human approval</label>
       </div>
-      <label>
-        <span>Required validation profile</span>
-        <input name="requiredValidationCommandProfileForMerge" defaultValue={policy?.requiredValidationCommandProfileForMerge || ""} placeholder="ci" />
-      </label>
-      <div className="action-grid">
-        <label>
-          <span>Max executions</span>
-          <input name="maxParallelExecutions" type="number" min={1} defaultValue={policy?.maxParallelExecutions || 1} />
-        </label>
-        <label>
-          <span>Max merges</span>
-          <input name="maxParallelMerges" type="number" min={1} defaultValue={policy?.maxParallelMerges || 1} />
-        </label>
-        <label>
-          <span>Continue limit</span>
-          <input name="maxAutoContinueIterations" type="number" min={1} defaultValue={policy?.maxAutoContinueIterations || 3} />
-        </label>
-        <label>
-          <span>Agent ticket state</span>
-          <select name="agentCreatedTicketDefaultState" defaultValue={policy?.agentCreatedTicketDefaultState || "PROPOSED"}>
-            {ticketStates.map((state) => <option key={state} value={state}>{prettyState(state)}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>Interaction mode</span>
-          <select name="interactionMode" defaultValue={policy?.interactionMode || "manual"}>
-            {interactionModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>Refinement mode</span>
-          <select name="refinementMode" defaultValue={policy?.refinementMode || "user_approved"}>
-            {refinementModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
-          </select>
-        </label>
-      </div>
-      <div className="mode-list">
+      <div className="mode-list mode-list-primary">
         {interactionModes.map((mode) => (
           <span key={mode.value} className={mode.value === (policy?.interactionMode || "manual") ? "mode-pill active" : "mode-pill"}>
             <strong>{mode.label}</strong>
@@ -470,15 +434,53 @@ function PolicyForm({
           </span>
         ))}
       </div>
-      <div className="mode-list">
-        {refinementModes.map((mode) => (
-          <span key={mode.value} className={mode.value === (policy?.refinementMode || "user_approved") ? "mode-pill active" : "mode-pill"}>
-            <strong>{mode.label}</strong>
-            {mode.detail}
-          </span>
-        ))}
-      </div>
-      <div className="subform">
+      <details className="advanced-disclosure policy-advanced">
+        <summary>Policy settings</summary>
+        <label>
+          <span>Required validation profile</span>
+          <input name="requiredValidationCommandProfileForMerge" defaultValue={policy?.requiredValidationCommandProfileForMerge || ""} placeholder="ci" />
+        </label>
+        <div className="action-grid">
+          <label>
+            <span>Max executions</span>
+            <input name="maxParallelExecutions" type="number" min={1} defaultValue={policy?.maxParallelExecutions || 1} />
+          </label>
+          <label>
+            <span>Max merges</span>
+            <input name="maxParallelMerges" type="number" min={1} defaultValue={policy?.maxParallelMerges || 1} />
+          </label>
+          <label>
+            <span>Continue limit</span>
+            <input name="maxAutoContinueIterations" type="number" min={1} defaultValue={policy?.maxAutoContinueIterations || 3} />
+          </label>
+          <label>
+            <span>Agent ticket state</span>
+            <select name="agentCreatedTicketDefaultState" defaultValue={policy?.agentCreatedTicketDefaultState || "PROPOSED"}>
+              {ticketStates.map((state) => <option key={state} value={state}>{prettyState(state)}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Interaction mode</span>
+            <select name="interactionMode" defaultValue={policy?.interactionMode || "manual"}>
+              {interactionModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Refinement mode</span>
+            <select name="refinementMode" defaultValue={policy?.refinementMode || "user_approved"}>
+              {refinementModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+            </select>
+          </label>
+        </div>
+        <div className="mode-list">
+          {refinementModes.map((mode) => (
+            <span key={mode.value} className={mode.value === (policy?.refinementMode || "user_approved") ? "mode-pill active" : "mode-pill"}>
+              <strong>{mode.label}</strong>
+              {mode.detail}
+            </span>
+          ))}
+        </div>
+        <div className="subform">
         <div className="section-heading">
           <h3>Ceremony Triggers</h3>
           <span className="section-note">Automation</span>
@@ -529,7 +531,8 @@ function PolicyForm({
             );
           })}
         </div>
-      </div>
+        </div>
+      </details>
       <button className="primary-button" type="submit" disabled={Boolean(busy)}>
         {busy === "Saving policy" ? busy : "Save policy"}
       </button>
@@ -577,22 +580,22 @@ function RepoRegistry({
           <RepoEditor key={repo.id} repo={repo} busy={busy} onUpdate={onUpdate} />
         ))}
       </div>
-      <form className="subform" onSubmit={handleSubmit}>
-        <div className="section-heading">
-          <h3>Add local checkout</h3>
-        </div>
-        <div className="action-grid">
-          <label className="wide-field"><span>Local checkout path</span><input name="localPath" placeholder="/home/me/src/project" required /></label>
-          <label><span>Name</span><input name="name" placeholder="Derived from path" /></label>
-          <label><span>Slug</span><input name="slug" placeholder="Derived from name" /></label>
-          <label><span>Default branch</span><input name="defaultBranch" defaultValue="main" /></label>
-          <label><span>Remote URL</span><input name="remoteUrl" /></label>
-        </div>
-        <label className="check-row"><input name="isPrimary" type="checkbox" defaultChecked={repos.length === 0} /> Set as primary</label>
-        <button className="primary-button" type="submit" disabled={Boolean(busy)}>
-          {busy === "Registering repo" ? busy : "Add checkout"}
-        </button>
-      </form>
+      <details className="advanced-disclosure">
+        <summary>Add local checkout</summary>
+        <form className="subform" onSubmit={handleSubmit}>
+          <div className="action-grid">
+            <label className="wide-field"><span>Local checkout path</span><input name="localPath" placeholder="/home/me/src/project" required /></label>
+            <label><span>Name</span><input name="name" placeholder="Derived from path" /></label>
+            <label><span>Slug</span><input name="slug" placeholder="Derived from name" /></label>
+            <label><span>Default branch</span><input name="defaultBranch" defaultValue="main" /></label>
+            <label><span>Remote URL</span><input name="remoteUrl" /></label>
+          </div>
+          <label className="check-row"><input name="isPrimary" type="checkbox" defaultChecked={repos.length === 0} /> Set as primary</label>
+          <button className="primary-button" type="submit" disabled={Boolean(busy)}>
+            {busy === "Registering repo" ? busy : "Add checkout"}
+          </button>
+        </form>
+      </details>
     </section>
   );
 }
