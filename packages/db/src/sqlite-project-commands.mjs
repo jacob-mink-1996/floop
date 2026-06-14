@@ -187,6 +187,10 @@ export function createProjectCommands({
       applyPositiveIntegerPatch(updates, changedFields, input, existing, "maxAutoContinueIterations", {
         column: "max_auto_continue_iterations",
       });
+      applyTextPatch(updates, changedFields, input, existing, "interactionMode", {
+        column: "interaction_mode",
+        required: true,
+      });
       applyRefinementModePatch(updates, changedFields, input, existing);
       applyTextPatch(updates, changedFields, input, existing, "agentCreatedTicketDefaultState", {
         column: "agent_created_ticket_default_state",

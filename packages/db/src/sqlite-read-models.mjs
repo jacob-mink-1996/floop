@@ -946,6 +946,8 @@ function deriveEventLane(family) {
       return "repo";
     case "project":
       return "project";
+    case "agent":
+      return "agent";
     default:
       return "system";
   }

@@ -58,6 +58,31 @@ export const refinementModes = ["autonomous", "user_approved", "user_participant
 
 export const ceremonyTypes = ["refinement", "planning", "daily_triage", "review_demo_prep", "retro"];
 
+export const interactionModes = [
+  "manual",
+  "operator_approved",
+  "autonomous_with_review",
+  "fully_autonomous",
+];
+
+export const agentMessageIntents = [
+  "suggest_ticket",
+  "comment_on_ticket",
+  "suggest_dispatch",
+  "submit_ceremony_input",
+  "raise_risk",
+  "submit_artifact",
+  "request_status",
+];
+
+export const agentMessageStatuses = [
+  "pending",
+  "accepted",
+  "dismissed",
+  "converted",
+  "attached",
+];
+
 export const blockerKinds = [
   "needs_human_input",
   "needs_dependency",
@@ -87,6 +112,11 @@ export const eventTypes = [
   "ceremony.proposed",
   "ceremony.applied",
   "ceremony.rejected",
+  "agent.message_received",
+  "agent.message_accepted",
+  "agent.message_dismissed",
+  "agent.message_converted",
+  "agent.message_attached",
 ];
 
 export function isTicketState(value) {
@@ -131,6 +161,18 @@ export function isRefinementMode(value) {
 
 export function isCeremonyType(value) {
   return ceremonyTypes.includes(value);
+}
+
+export function isInteractionMode(value) {
+  return interactionModes.includes(value);
+}
+
+export function isAgentMessageIntent(value) {
+  return agentMessageIntents.includes(value);
+}
+
+export function isAgentMessageStatus(value) {
+  return agentMessageStatuses.includes(value);
 }
 
 export {

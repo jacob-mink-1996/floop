@@ -1,10 +1,12 @@
 import {
   parseCreateProjectInput,
+  parseCreateAgentMessageInput,
+  parseUpdateAgentMessageInput,
   parseUpdateProjectInput,
   parseUpdateProjectPolicyInput,
   parseUpdateRoleProfileInput,
 } from "../../../../packages/contracts/src/index.mjs";
-import { parseTicketFilters, respondMaybe } from "./shared.mjs";
+import { parseTicketFilters, respondCreated, respondMaybe } from "./shared.mjs";
 
 export function handleProjectRoute(route, url, body, store) {
   switch (route.name) {
@@ -54,7 +56,36 @@ export function handleProjectRoute(route, url, body, store) {
         ),
         "profile",
       );
+    case "projectAgentMessages":
+      if (route.method === "GET") {
+        const messages = store.listAgentMessages(route.params.projectId, parseAgentMessageFilters(url));
+        if (!messages) {
+          return { status: 404, body: { error: "not_found" } };
+        }
+        return { status: 200, body: { messages } };
+      }
+      return respondCreated(
+        store.createAgentMessage(route.params.projectId, parseCreateAgentMessageInput(body)),
+        "message",
+      );
+    case "projectAgentMessage":
+      return respondMaybe(
+        store.updateAgentMessage(
+          route.params.projectId,
+          route.params.messageId,
+          parseUpdateAgentMessageInput(body),
+        ),
+        "message",
+      );
     default:
       return null;
   }
+}
+
+function parseAgentMessageFilters(url) {
+  return {
+    status: url.searchParams.get("status") || "",
+    intent: url.searchParams.get("intent") || "",
+    limit: Number.parseInt(url.searchParams.get("limit") || "50", 10),
+  };
 }

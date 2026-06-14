@@ -93,6 +93,7 @@ test("store updates project policy and role profiles", () => {
     maxParallelExecutions: 5,
     maxParallelMerges: 2,
     maxAutoContinueIterations: 8,
+    interactionMode: "autonomous_with_review",
     refinementMode: "user_participant",
     agentCreatedTicketDefaultState: "READY",
     ceremonyAutomation: {
@@ -122,6 +123,7 @@ test("store updates project policy and role profiles", () => {
   assert.equal(updatedPolicy.maxParallelExecutions, 5);
   assert.equal(updatedPolicy.maxParallelMerges, 2);
   assert.equal(updatedPolicy.maxAutoContinueIterations, 8);
+  assert.equal(updatedPolicy.interactionMode, "autonomous_with_review");
   assert.equal(updatedPolicy.refinementMode, "user_participant");
   assert.equal(updatedPolicy.agentCreatedTicketDefaultState, "READY");
   assert.equal(updatedPolicy.ceremonyAutomation.enabled, true);
@@ -139,6 +141,7 @@ test("store updates project policy and role profiles", () => {
   const project = store.getProjectSummary("project_floop");
   assert.equal(project.policy.maxParallelExecutions, 5);
   assert.equal(project.policy.maxParallelMerges, 2);
+  assert.equal(project.policy.interactionMode, "autonomous_with_review");
   assert.equal(project.policy.refinementMode, "user_participant");
   assert.equal(project.policy.agentCreatedTicketDefaultState, "READY");
   assert.equal(project.policy.ceremonyAutomation.triggers.refinement.deciderRole, "product_manager");

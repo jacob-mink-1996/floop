@@ -9,6 +9,7 @@ export function defaultProjectPolicy() {
     maxParallelExecutions: 3,
     maxParallelMerges: 1,
     maxAutoContinueIterations: 5,
+    interactionMode: "manual",
     refinementMode: "user_approved",
     agentCreatedTicketDefaultState: "PROPOSED",
     ceremonyAutomation: defaultCeremonyAutomation(),

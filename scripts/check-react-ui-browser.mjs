@@ -18,6 +18,15 @@ const store = createStore({
   seedDemo: true,
   workspaceRoot: join(fixtureDir, "workspace"),
 });
+store.createAgentMessage("project_floop", {
+  actor: "openclaw",
+  source: "ui-check",
+  intent: "suggest_ticket",
+  target: { repoId: "repo_project_floop_floop" },
+  summary: "Add fixture coverage for ceremony fan-out",
+  body: "The ceremony participant path should be covered with a real adapter fixture.",
+  metadata: { check: "browser" },
+});
 const server = createFloopServer({ store });
 let driver;
 let sessionId = "";
@@ -120,9 +129,17 @@ try {
   await assertScript("document.querySelectorAll('.consensus-cell').length >= 4", "ceremony consensus heatmap is visible");
   await clickText("Board");
 
+  await clickText("Ops");
+  await waitForText("External Agents");
+  await assertScript("document.body.innerText.includes('Add fixture coverage for ceremony fan-out')", "agent inbox suggestion renders in Ops");
+  await clickText("Accept");
+  await waitForScript("!document.body.innerText.includes('Add fixture coverage for ceremony fan-out')");
+  await clickText("Board");
+
   await clickText("Settings");
   await waitForScript("document.querySelector('.settings-drawer') !== null");
   await assertScript("document.querySelectorAll('.toggle-list input[type=\"checkbox\"]').length >= 4", "settings policy checkboxes render");
+  await assertScript("document.body.innerText.includes('Interaction mode')", "settings interaction mode renders");
   await assertScript("document.body.innerText.includes('Enable automatic ceremony triggers')", "settings ceremony trigger controls render");
   await assertScript("getComputedStyle(document.querySelector('.toggle-list label')).borderStyle !== 'none'", "settings checkbox rows are styled");
   await setFormValue("Save project", "name", "Floop QA Control");

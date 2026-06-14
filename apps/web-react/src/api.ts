@@ -1,5 +1,7 @@
 import type {
   Artifact,
+  AgentMessage,
+  AgentMessageStatus,
   Board,
   CeremonyRun,
   CeremonyType,
@@ -188,6 +190,29 @@ export async function getRunObservability(projectId: string, limit = 20): Promis
     `/api/v1/projects/${projectId}/runs?limit=${limit}`,
   );
   return payload.observability;
+}
+
+export async function listAgentMessages(projectId: string, limit = 20): Promise<AgentMessage[]> {
+  const payload = await fetchJson<{ messages: AgentMessage[] }>(
+    `/api/v1/projects/${projectId}/agent-messages?limit=${limit}`,
+  );
+  return payload.messages;
+}
+
+export async function updateAgentMessage(
+  projectId: string,
+  messageId: string,
+  input: { status: AgentMessageStatus; promotedKind?: string; promotedRef?: string },
+): Promise<AgentMessage> {
+  const payload = await fetchJson<{ message: AgentMessage }>(
+    `/api/v1/projects/${projectId}/agent-messages/${messageId}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  return payload.message;
 }
 
 export async function updateProject(projectId: string, input: ProjectUpdateInput): Promise<Project> {

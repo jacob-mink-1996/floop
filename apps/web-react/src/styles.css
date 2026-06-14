@@ -955,6 +955,92 @@ h3 {
   padding-left: 8px;
 }
 
+.agent-inbox {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  padding: 12px;
+  background: var(--panel-warm);
+}
+
+.agent-message-list {
+  display: grid;
+  gap: 9px;
+}
+
+.agent-message-item {
+  display: grid;
+  gap: 8px;
+  border-left: 4px solid var(--teal);
+  border-top: 1px solid var(--line);
+  padding: 9px 0 0 8px;
+}
+
+.agent-message-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.agent-message-item.intent-raise_risk {
+  border-left-color: var(--amber);
+}
+
+.agent-message-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  min-width: 0;
+}
+
+.agent-message-head div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.agent-message-head span,
+.agent-message-item p,
+.agent-message-item summary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-message-head strong,
+.agent-message-item p {
+  overflow-wrap: anywhere;
+}
+
+.agent-message-item p {
+  margin: 0;
+}
+
+.agent-message-item details {
+  min-width: 0;
+}
+
+.agent-message-item summary {
+  cursor: pointer;
+}
+
+.agent-message-item code {
+  display: block;
+  max-height: 140px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  padding: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.agent-message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .inline-link {
   border: 0;
   padding: 0;
@@ -2579,6 +2665,7 @@ textarea {
   .ops-panel,
   .run-metrics,
   .decision-queue,
+  .agent-inbox,
   .ceremonies-panel,
   .action-grid,
   .repo-mode-list,

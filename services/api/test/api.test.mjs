@@ -832,6 +832,81 @@ test("API exposes project artifact feeds with ticket context and filters", async
   }
 });
 
+test("API exposes project agent inbox messages and decisions", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-api-"));
+  const filename = join(fixtureDir, "floop.sqlite");
+  const store = createStore({
+    filename,
+    seedDemo: true,
+    workspaceRoot: "/workspace/floop",
+  });
+  const server = createFloopServer({ store });
+
+  try {
+    await listen(server);
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+    const createResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/agent-messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: "openclaw",
+        source: "webhook",
+        intent: "suggest_ticket",
+        target: { repoId: "repo_project_floop_floop" },
+        summary: "Add fixture coverage for ceremony fan-out",
+        body: "The ceremony participant path should be covered with a real adapter fixture.",
+        metadata: { confidence: 0.82 },
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createBody = await createResponse.json();
+    assert.equal(createBody.message.actor, "openclaw");
+    assert.equal(createBody.message.status, "pending");
+    assert.equal(createBody.message.target.repoId, "repo_project_floop_floop");
+
+    const listResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/agent-messages?status=pending`);
+    assert.equal(listResponse.status, 200);
+    const listBody = await listResponse.json();
+    assert.equal(listBody.messages.length, 1);
+    assert.equal(listBody.messages[0].summary, "Add fixture coverage for ceremony fan-out");
+
+    const updateResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages/${createBody.message.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "accepted" }),
+      },
+    );
+    assert.equal(updateResponse.status, 200);
+    const updateBody = await updateResponse.json();
+    assert.equal(updateBody.message.status, "accepted");
+
+    const eventsResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/events?type=agent.message_received&limit=5`);
+    assert.equal(eventsResponse.status, 200);
+    const eventsBody = await eventsResponse.json();
+    assert.equal(eventsBody.events.some((event) => event.type === "agent.message_received"), true);
+    assert.equal(eventsBody.events.every((event) => event.lane === "agent"), true);
+
+    const invalidResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/agent-messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: "hermes",
+        source: "webhook",
+        intent: "unknown_intent",
+        summary: "Invalid",
+      }),
+    });
+    assert.equal(invalidResponse.status, 400);
+  } finally {
+    await closeServer(server);
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 function findColumn(columns, state) {
   const column = columns.find((item) => item.state === state);
   assert.ok(column, `Expected board column ${state}`);

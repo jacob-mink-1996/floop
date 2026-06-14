@@ -11,6 +11,7 @@ import {
 import { normalizeArtifactForStorage, projectArtifactRoot } from "./artifact-durability.mjs";
 import { sqliteSchema, migrateSchema } from "./sqlite-schema.mjs";
 import {
+  mapAgentMessage,
   mapArtifact,
   mapExecution,
   mapMergeRun,
@@ -55,6 +56,7 @@ import { createMergeCommands } from "./sqlite-merge-commands.mjs";
 import { createCeremonyCommands } from "./sqlite-ceremony-commands.mjs";
 import { createProjectCommands } from "./sqlite-project-commands.mjs";
 import { createRepoCommands } from "./sqlite-repo-commands.mjs";
+import { createAgentMessageCommands } from "./sqlite-agent-message-commands.mjs";
 import { defaultDatabasePath, openSqliteDatabase, withTransaction } from "./sqlite-runtime.mjs";
 import { createTicketCommands } from "./sqlite-ticket-commands.mjs";
 
@@ -125,6 +127,17 @@ export function createSqliteStore(options = {}) {
     applyTextPatch,
     applyBooleanPatch,
     mapRepo,
+  });
+
+  const agentMessageCommands = createAgentMessageCommands({
+    database,
+    getProjectRow,
+    insertEvent,
+    mapAgentMessage,
+    now,
+    optionalText,
+    requiredText,
+    withTransaction,
   });
 
   const ticketCommands = createTicketCommands({
@@ -290,6 +303,8 @@ export function createSqliteStore(options = {}) {
 
     ...repoCommands,
 
+    ...agentMessageCommands,
+
     ...ticketCommands,
 
     ...executionCommands,
@@ -450,6 +465,7 @@ function mapProjectPolicy(row) {
     maxParallelExecutions: Number(row.max_parallel_executions),
     maxParallelMerges: Number(row.max_parallel_merges),
     maxAutoContinueIterations: Number(row.max_auto_continue_iterations),
+    interactionMode: row.interaction_mode || "manual",
     refinementMode: row.refinement_mode || "user_approved",
     agentCreatedTicketDefaultState: row.agent_created_ticket_default_state,
     ceremonyAutomation: mergeCeremonyAutomation(parseJsonObject(row.ceremony_automation_json, {})),
@@ -1047,9 +1063,9 @@ function insertProjectPolicy(database, projectId, policy, timestamp) {
         id, project_id, require_reviewer, require_validator,
         require_human_approval_before_merge, required_validation_command_profile_for_merge,
         max_parallel_executions, max_parallel_merges, max_auto_continue_iterations,
-        refinement_mode, agent_created_ticket_default_state, ceremony_automation_json,
+        interaction_mode, refinement_mode, agent_created_ticket_default_state, ceremony_automation_json,
         created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       `policy_${slugify(projectId)}`,
@@ -1061,6 +1077,7 @@ function insertProjectPolicy(database, projectId, policy, timestamp) {
       policy.maxParallelExecutions,
       policy.maxParallelMerges ?? 1,
       policy.maxAutoContinueIterations,
+      policy.interactionMode || "manual",
       policy.refinementMode || "user_approved",
       policy.agentCreatedTicketDefaultState,
       JSON.stringify(policy.ceremonyAutomation || defaultCeremonyAutomation()),

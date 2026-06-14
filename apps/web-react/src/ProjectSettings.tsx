@@ -20,11 +20,19 @@ import type {
   Repo,
   RepoInput,
   RepoUpdateInput,
+  InteractionMode,
   RefinementMode,
   RoleName,
   RoleProfile,
   TicketState,
 } from "./types";
+
+const interactionModes: Array<{ value: InteractionMode; label: string; detail: string }> = [
+  { value: "manual", label: "Manual", detail: "The operator dispatches each step." },
+  { value: "operator_approved", label: "Operator approved", detail: "Floop proposes next steps and asks before acting." },
+  { value: "autonomous_with_review", label: "Autonomous + review", detail: "Routine work runs, risky transitions stop for review." },
+  { value: "fully_autonomous", label: "Fully autonomous", detail: "Eligible work and proposals move without routine approval." },
+];
 
 const refinementModes: Array<{ value: RefinementMode; label: string; detail: string }> = [
   { value: "autonomous", label: "Autonomous", detail: "Agent-created tickets may leave refinement automatically." },
@@ -400,6 +408,7 @@ function PolicyForm({
       maxParallelExecutions: Number(form.get("maxParallelExecutions") || 1),
       maxParallelMerges: Number(form.get("maxParallelMerges") || 1),
       maxAutoContinueIterations: Number(form.get("maxAutoContinueIterations") || 1),
+      interactionMode: String(form.get("interactionMode") || "manual") as InteractionMode,
       refinementMode: String(form.get("refinementMode") || "user_approved") as RefinementMode,
       agentCreatedTicketDefaultState: String(form.get("agentCreatedTicketDefaultState") || "PROPOSED") as TicketState,
       ceremonyAutomation,
@@ -440,11 +449,25 @@ function PolicyForm({
           </select>
         </label>
         <label>
+          <span>Interaction mode</span>
+          <select name="interactionMode" defaultValue={policy?.interactionMode || "manual"}>
+            {interactionModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+          </select>
+        </label>
+        <label>
           <span>Refinement mode</span>
           <select name="refinementMode" defaultValue={policy?.refinementMode || "user_approved"}>
             {refinementModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
           </select>
         </label>
+      </div>
+      <div className="mode-list">
+        {interactionModes.map((mode) => (
+          <span key={mode.value} className={mode.value === (policy?.interactionMode || "manual") ? "mode-pill active" : "mode-pill"}>
+            <strong>{mode.label}</strong>
+            {mode.detail}
+          </span>
+        ))}
       </div>
       <div className="mode-list">
         {refinementModes.map((mode) => (

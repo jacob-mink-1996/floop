@@ -17,6 +17,26 @@ export function mapArtifact(row) {
   };
 }
 
+export function mapAgentMessage(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    actor: row.actor,
+    source: row.source,
+    intent: row.intent,
+    target: JSON.parse(row.target_json || "{}"),
+    summary: row.summary,
+    body: row.body || "",
+    metadata: JSON.parse(row.metadata_json || "{}"),
+    status: row.status,
+    promotedKind: row.promoted_kind || "",
+    promotedRef: row.promoted_ref || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    dismissedAt: row.dismissed_at || "",
+  };
+}
+
 export function mapExecution(row) {
   return {
     id: row.id,

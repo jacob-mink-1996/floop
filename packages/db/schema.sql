@@ -33,11 +33,30 @@ create table if not exists project_policies (
   max_parallel_executions integer not null default 1,
   max_parallel_merges integer not null default 1,
   max_auto_continue_iterations integer not null default 3,
+  interaction_mode text not null default 'manual',
   refinement_mode text not null default 'user_approved',
   agent_created_ticket_default_state text not null,
   ceremony_automation_json jsonb not null default '{}'::jsonb,
   created_at timestamptz not null,
   updated_at timestamptz not null
+);
+
+create table if not exists agent_messages (
+  id text primary key,
+  project_id text not null references projects(id) on delete cascade,
+  actor text not null,
+  source text not null,
+  intent text not null,
+  target_json jsonb not null default '{}'::jsonb,
+  summary text not null,
+  body text not null default '',
+  metadata_json jsonb not null default '{}'::jsonb,
+  status text not null default 'pending',
+  promoted_kind text not null default '',
+  promoted_ref text not null default '',
+  created_at timestamptz not null,
+  updated_at timestamptz not null,
+  dismissed_at timestamptz
 );
 
 create table if not exists agent_profiles (

@@ -4,6 +4,7 @@ import { migration as eventReasons } from "./003_event_reasons.mjs";
 import { migration as executionClaims } from "./004_execution_claims.mjs";
 import { migration as mergeRunClaimsAndFinishedAt } from "./005_merge_run_claims_and_finished_at.mjs";
 import { migration as artifactMergeRunFk } from "./006_artifact_merge_run_fk.mjs";
+import { migration as agentMessagesAndInteractionMode } from "./007_agent_messages_and_interaction_mode.mjs";
 
 export const sqliteMigrations = [
   projectPolicyControls,
@@ -12,6 +13,7 @@ export const sqliteMigrations = [
   executionClaims,
   mergeRunClaimsAndFinishedAt,
   artifactMergeRunFk,
+  agentMessagesAndInteractionMode,
 ];
 
 for (let index = 0; index < sqliteMigrations.length; index += 1) {

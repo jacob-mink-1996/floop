@@ -15,7 +15,17 @@ export type TicketState =
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
 
 export type RefinementMode = "autonomous" | "user_approved" | "user_participant" | "user_only";
+export type InteractionMode = "manual" | "operator_approved" | "autonomous_with_review" | "fully_autonomous";
 export type CeremonyType = "refinement" | "planning" | "daily_triage" | "review_demo_prep" | "retro";
+export type AgentMessageIntent =
+  | "suggest_ticket"
+  | "comment_on_ticket"
+  | "suggest_dispatch"
+  | "submit_ceremony_input"
+  | "raise_risk"
+  | "submit_artifact"
+  | "request_status";
+export type AgentMessageStatus = "pending" | "accepted" | "dismissed" | "converted" | "attached";
 
 export type RoleName =
   | "product_manager"
@@ -47,6 +57,7 @@ export type ProjectPolicy = {
   maxParallelExecutions: number;
   maxParallelMerges: number;
   maxAutoContinueIterations: number;
+  interactionMode: InteractionMode;
   refinementMode: RefinementMode;
   agentCreatedTicketDefaultState: TicketState;
   ceremonyAutomation: CeremonyAutomation;
@@ -93,9 +104,28 @@ export type ProjectPolicyInput = {
   maxParallelExecutions: number;
   maxParallelMerges: number;
   maxAutoContinueIterations: number;
+  interactionMode: InteractionMode;
   refinementMode: RefinementMode;
   agentCreatedTicketDefaultState: TicketState;
   ceremonyAutomation?: CeremonyAutomation;
+};
+
+export type AgentMessage = {
+  id: string;
+  projectId: string;
+  actor: string;
+  source: string;
+  intent: AgentMessageIntent;
+  target: Record<string, unknown>;
+  summary: string;
+  body: string;
+  metadata: Record<string, unknown>;
+  status: AgentMessageStatus;
+  promotedKind: string;
+  promotedRef: string;
+  createdAt: string;
+  updatedAt: string;
+  dismissedAt: string;
 };
 
 export type BoardTicket = {

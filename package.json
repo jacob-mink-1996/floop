@@ -15,6 +15,7 @@
     "build:web": "npm --workspace apps/web-react run build",
     "build:electron": "npm --workspace apps/electron run build",
     "bootstrap:project": "node scripts/bootstrap-project.mjs",
+    "agent:message": "node scripts/floop-agent-message.mjs",
     "demo:live": "node scripts/demo-live-flow.mjs",
     "demo:proof": "npm run build:web && node scripts/record-usage-demo.mjs",
     "demo:proof:keep": "FLOOP_DEMO_KEEP_FIXTURE=true npm run demo:proof",

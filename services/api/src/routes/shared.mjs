@@ -192,6 +192,9 @@ export function inferErrorStatus(error) {
     message.startsWith("Invalid merge status:") ||
     message.startsWith("Invalid review finding severity:") ||
     message.startsWith("Invalid dependency type:") ||
+    message.startsWith("Invalid interaction mode:") ||
+    message.startsWith("Invalid agent message intent:") ||
+    message.startsWith("Invalid agent message status:") ||
     message.startsWith("Unknown repo target:") ||
     message.startsWith("Duplicate repo target:") ||
     message.startsWith("Unknown execution for ticket ") ||

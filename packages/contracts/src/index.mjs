@@ -1,6 +1,9 @@
 import {
   isCeremonyType,
   isDependencyType,
+  isAgentMessageIntent,
+  isAgentMessageStatus,
+  isInteractionMode,
   isRefinementMode,
   isRoleName,
   isExecutionOutcome,
@@ -65,6 +68,8 @@ function deriveEventLane(family) {
       return "repo";
     case "project":
       return "project";
+    case "agent":
+      return "agent";
     default:
       return "system";
   }
@@ -269,6 +274,26 @@ export function ceremonyRunDto(run, proposals = [], participants = []) {
   };
 }
 
+export function agentMessageDto(message) {
+  return {
+    id: message.id,
+    projectId: message.projectId,
+    actor: message.actor,
+    source: message.source,
+    intent: message.intent,
+    target: { ...(message.target || {}) },
+    summary: message.summary,
+    body: message.body || "",
+    metadata: { ...(message.metadata || {}) },
+    status: message.status,
+    promotedKind: message.promotedKind || "",
+    promotedRef: message.promotedRef || "",
+    createdAt: message.createdAt,
+    updatedAt: message.updatedAt,
+    dismissedAt: message.dismissedAt || "",
+  };
+}
+
 export function boardTicketDto(ticket) {
   return {
     id: ticket.id,
@@ -456,6 +481,14 @@ export function parseUpdateProjectPolicyInput(body) {
     parsed.refinementMode = refinementMode;
   }
 
+  if (hasOwn(body, "interactionMode")) {
+    const interactionMode = requiredString(body, "interactionMode");
+    if (!isInteractionMode(interactionMode)) {
+      throw new Error(`Invalid interaction mode: ${interactionMode}`);
+    }
+    parsed.interactionMode = interactionMode;
+  }
+
   if (hasOwn(body, "maxParallelExecutions")) {
     parsed.maxParallelExecutions = requiredPositiveInteger(body, "maxParallelExecutions");
   }
@@ -481,6 +514,37 @@ export function parseUpdateProjectPolicyInput(body) {
   }
 
   return parsed;
+}
+
+export function parseCreateAgentMessageInput(body) {
+  assertObject(body);
+  const intent = requiredString(body, "intent");
+  if (!isAgentMessageIntent(intent)) {
+    throw new Error(`Invalid agent message intent: ${intent}`);
+  }
+
+  return {
+    actor: requiredString(body, "actor"),
+    source: requiredString(body, "source"),
+    intent,
+    target: hasOwn(body, "target") ? optionalObject(body, "target") : {},
+    summary: requiredString(body, "summary"),
+    body: optionalString(body, "body"),
+    metadata: hasOwn(body, "metadata") ? optionalObject(body, "metadata") : {},
+  };
+}
+
+export function parseUpdateAgentMessageInput(body) {
+  assertObject(body);
+  const status = requiredString(body, "status");
+  if (!isAgentMessageStatus(status)) {
+    throw new Error(`Invalid agent message status: ${status}`);
+  }
+  return compactObject({
+    status,
+    promotedKind: optionalPatchedString(body, "promotedKind"),
+    promotedRef: optionalPatchedString(body, "promotedRef"),
+  });
 }
 
 export function parseUpdateRoleProfileInput(body) {

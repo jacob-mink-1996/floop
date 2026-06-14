@@ -23,6 +23,7 @@ import {
   getProject,
   getRunObservability,
   getTicket,
+  listAgentMessages,
   listArtifacts,
   listCeremonies,
   listEvents,
@@ -34,6 +35,7 @@ import {
   restartTicket,
   startExecution,
   transitionTicket,
+  updateAgentMessage,
   updateTicket,
 } from "./api";
 import {
@@ -48,6 +50,7 @@ import {
 } from "./domain";
 import type {
   Artifact,
+  AgentMessage,
   Board,
   BoardTicket,
   CeremonyRun,
@@ -112,6 +115,7 @@ function App() {
   const [mergeQueue, setMergeQueue] = useState<MergeQueueItem[]>([]);
   const [ceremonies, setCeremonies] = useState<CeremonyRun[]>([]);
   const [events, setEvents] = useState<EventRecord[]>([]);
+  const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [runObservability, setRunObservability] = useState<RunObservability | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState("");
@@ -170,10 +174,11 @@ function App() {
       listMergeQueue(projectId),
       listCeremonies(projectId),
       listEvents(projectId),
+      listAgentMessages(projectId),
       listArtifacts(projectId),
       getRunObservability(projectId),
     ])
-      .then(([nextProject, nextBoard, nextRepos, nextMergeQueue, nextCeremonies, nextEvents, nextArtifacts, nextRunObservability]) => {
+      .then(([nextProject, nextBoard, nextRepos, nextMergeQueue, nextCeremonies, nextEvents, nextAgentMessages, nextArtifacts, nextRunObservability]) => {
         if (cancelled) return;
         setProject(nextProject);
         setBoard(nextBoard);
@@ -181,6 +186,7 @@ function App() {
         setMergeQueue(nextMergeQueue);
         setCeremonies(nextCeremonies);
         setEvents(nextEvents);
+        setAgentMessages(nextAgentMessages);
         setArtifacts(nextArtifacts);
         setRunObservability(nextRunObservability);
         setLoadState("ready");
@@ -272,13 +278,14 @@ function App() {
 
   const refresh = async () => {
     if (!projectId) return;
-    const [nextProject, nextBoard, nextRepos, nextMergeQueue, nextCeremonies, nextEvents, nextArtifacts, nextRunObservability] = await Promise.all([
+    const [nextProject, nextBoard, nextRepos, nextMergeQueue, nextCeremonies, nextEvents, nextAgentMessages, nextArtifacts, nextRunObservability] = await Promise.all([
       getProject(projectId),
       getBoard(projectId),
       listRepos(projectId),
       listMergeQueue(projectId),
       listCeremonies(projectId),
       listEvents(projectId),
+      listAgentMessages(projectId),
       listArtifacts(projectId),
       getRunObservability(projectId),
     ]);
@@ -288,6 +295,7 @@ function App() {
     setMergeQueue(nextMergeQueue);
     setCeremonies(nextCeremonies);
     setEvents(nextEvents);
+    setAgentMessages(nextAgentMessages);
     setArtifacts(nextArtifacts);
     setRunObservability(nextRunObservability);
     setMessage("");
@@ -355,6 +363,7 @@ function App() {
       listMergeQueue(projectId).then(setMergeQueue),
       listCeremonies(projectId).then(setCeremonies),
       listEvents(projectId).then(setEvents),
+      listAgentMessages(projectId).then(setAgentMessages),
       listArtifacts(projectId).then(setArtifacts),
       getRunObservability(projectId).then(setRunObservability),
     ]);
@@ -424,6 +433,7 @@ function App() {
     setMergeQueue([]);
     setCeremonies([]);
     setEvents([]);
+    setAgentMessages([]);
     setArtifacts([]);
     setRunObservability(null);
     setSelectedTicketId("");
@@ -528,10 +538,45 @@ function App() {
               mergeQueue={mergeQueue}
               ceremonies={ceremonies}
               events={events}
+              agentMessages={agentMessages}
               artifacts={artifacts}
               runObservability={runObservability}
               onSelectTicket={selectTicket}
               onApplyCeremony={handleApplyCeremony}
+              onUpdateAgentMessage={async (messageId, input) => {
+                if (!projectId) return;
+                await updateAgentMessage(projectId, messageId, input);
+                await refresh();
+              }}
+              onConvertAgentMessage={async (agentMessage) => {
+                if (!projectId) return;
+                const targetRepoId = typeof agentMessage.target.repoId === "string" ? agentMessage.target.repoId : "";
+                const repo = repos.find((candidate) => candidate.id === targetRepoId) || repos[0];
+                const created = await createTicket(projectId, {
+                  title: agentMessage.summary,
+                  brief: agentMessage.body || agentMessage.summary,
+                  priority: agentMessage.intent === "raise_risk" ? "high" : "medium",
+                  state: "PROPOSED",
+                  assignedRole: "developer",
+                  repoTargets: repo ? [{ repoId: repo.id, baseRef: repo.defaultBranch }] : [],
+                });
+                await updateAgentMessage(projectId, agentMessage.id, {
+                  status: "converted",
+                  promotedKind: "ticket",
+                  promotedRef: created.id,
+                });
+                setSelectedTicketId(created.id);
+                setTicket(created);
+                await refreshTicket(created.id);
+                await Promise.all([
+                  listMergeQueue(projectId).then(setMergeQueue),
+                  listCeremonies(projectId).then(setCeremonies),
+                  listEvents(projectId).then(setEvents),
+                  listAgentMessages(projectId).then(setAgentMessages),
+                  listArtifacts(projectId).then(setArtifacts),
+                  getRunObservability(projectId).then(setRunObservability),
+                ]);
+              }}
               onOpenCeremonies={() => setActiveView("ceremonies")}
             />
           )}
@@ -722,27 +767,35 @@ function OpsPanel({
   mergeQueue,
   ceremonies,
   events,
+  agentMessages,
   artifacts,
   runObservability,
   onSelectTicket,
   onApplyCeremony,
+  onUpdateAgentMessage,
+  onConvertAgentMessage,
   onOpenCeremonies,
 }: {
   board: Board | null;
   mergeQueue: MergeQueueItem[];
   ceremonies: CeremonyRun[];
   events: EventRecord[];
+  agentMessages: AgentMessage[];
   artifacts: Artifact[];
   runObservability: RunObservability | null;
   onSelectTicket: (id: string) => void;
   onApplyCeremony: (runId: string, proposalIds?: string[]) => Promise<void>;
+  onUpdateAgentMessage: (messageId: string, input: { status: AgentMessage["status"]; promotedKind?: string; promotedRef?: string }) => Promise<void>;
+  onConvertAgentMessage: (message: AgentMessage) => Promise<void>;
   onOpenCeremonies: () => void;
 }) {
   const [busyDecisionId, setBusyDecisionId] = useState("");
+  const [busyAgentMessageId, setBusyAgentMessageId] = useState("");
   const decisions = useMemo(
     () => buildDecisionQueue({ board, mergeQueue, ceremonies }),
     [board, mergeQueue, ceremonies],
   );
+  const pendingAgentMessages = agentMessages.filter((message) => message.status === "pending");
 
   async function actOnDecision(item: DecisionQueueItem) {
     if (item.ticketId) {
@@ -760,6 +813,24 @@ function OpsPanel({
         return;
       }
       onOpenCeremonies();
+    }
+  }
+
+  async function updateInboxMessage(message: AgentMessage, status: AgentMessage["status"]) {
+    setBusyAgentMessageId(message.id);
+    try {
+      await onUpdateAgentMessage(message.id, { status });
+    } finally {
+      setBusyAgentMessageId("");
+    }
+  }
+
+  async function convertInboxMessage(message: AgentMessage) {
+    setBusyAgentMessageId(message.id);
+    try {
+      await onConvertAgentMessage(message);
+    } finally {
+      setBusyAgentMessageId("");
     }
   }
 
@@ -806,6 +877,69 @@ function OpsPanel({
               >
                 {item.ceremonyRunId && item.proposalIds?.length ? "Apply" : "Open"}
               </button>
+            </article>
+          ))}
+        </div>
+      </div>
+      <div className="agent-inbox attention-panel">
+        <div className="section-heading">
+          <h3>External Agents</h3>
+          <span>{pendingAgentMessages.length}</span>
+        </div>
+        <div className="agent-message-list">
+          {pendingAgentMessages.length === 0 ? <p className="lane-empty">No external agent suggestions waiting.</p> : null}
+          {pendingAgentMessages.slice(0, 6).map((message) => (
+            <article key={message.id} className={`agent-message-item intent-${message.intent}`}>
+              <div className="agent-message-head">
+                <StateDot tone={message.intent === "raise_risk" ? "attention" : "primary"} />
+                <div>
+                  <span>{message.actor} · {prettyState(message.intent)} · {formatDate(message.createdAt)}</span>
+                  <strong>{message.summary}</strong>
+                </div>
+              </div>
+              {message.body ? <p>{message.body}</p> : null}
+              <details>
+                <summary>Metadata</summary>
+                <code>{JSON.stringify({ target: message.target, metadata: message.metadata }, null, 2)}</code>
+              </details>
+              <div className="agent-message-actions">
+                <button
+                  className="quiet-button"
+                  type="button"
+                  disabled={busyAgentMessageId === message.id}
+                  onClick={() => updateInboxMessage(message, "accepted")}
+                >
+                  Accept
+                </button>
+                {message.intent === "suggest_ticket" || message.intent === "raise_risk" ? (
+                  <button
+                    className="quiet-button"
+                    type="button"
+                    disabled={busyAgentMessageId === message.id}
+                    onClick={() => convertInboxMessage(message)}
+                  >
+                    Convert
+                  </button>
+                ) : null}
+                {typeof message.target.ticketId === "string" && message.target.ticketId ? (
+                  <button
+                    className="quiet-button"
+                    type="button"
+                    disabled={busyAgentMessageId === message.id}
+                    onClick={() => updateInboxMessage(message, "attached")}
+                  >
+                    Attach
+                  </button>
+                ) : null}
+                <button
+                  className="quiet-button"
+                  type="button"
+                  disabled={busyAgentMessageId === message.id}
+                  onClick={() => updateInboxMessage(message, "dismissed")}
+                >
+                  Dismiss
+                </button>
+              </div>
             </article>
           ))}
         </div>

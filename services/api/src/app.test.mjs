@@ -376,6 +376,7 @@ test("project policy and role profiles can be patched through the API", async ()
         maxParallelExecutions: 6,
         maxParallelMerges: 2,
         maxAutoContinueIterations: 9,
+        interactionMode: "operator_approved",
         agentCreatedTicketDefaultState: "READY",
         ceremonyAutomation: {
           enabled: true,
@@ -416,6 +417,7 @@ test("project policy and role profiles can be patched through the API", async ()
     assert.equal(updatePolicyResponse.status, 200);
     assert.equal(updatePolicyBody.policy.maxParallelExecutions, 6);
     assert.equal(updatePolicyBody.policy.maxParallelMerges, 2);
+    assert.equal(updatePolicyBody.policy.interactionMode, "operator_approved");
     assert.equal(updatePolicyBody.policy.requireReviewer, false);
     assert.equal(updatePolicyBody.policy.requiredValidationCommandProfileForMerge, "ci");
     assert.equal(updatePolicyBody.policy.ceremonyAutomation.enabled, true);
@@ -429,6 +431,7 @@ test("project policy and role profiles can be patched through the API", async ()
     assert.equal(projectResponse.status, 200);
     assert.equal(projectBody.project.policy.maxAutoContinueIterations, 9);
     assert.equal(projectBody.project.policy.maxParallelMerges, 2);
+    assert.equal(projectBody.project.policy.interactionMode, "operator_approved");
     assert.equal(projectBody.project.policy.requiredValidationCommandProfileForMerge, "ci");
     assert.equal(
       projectBody.project.roleProfiles.find((profile) => profile.role === "developer").adapter,
