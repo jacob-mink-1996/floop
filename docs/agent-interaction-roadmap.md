@@ -214,6 +214,11 @@ Implemented:
   - `manual`: no automatic next-lane dispatch
   - `operator_approved`: creates a pending `suggest_dispatch` inbox message
   - `autonomous_with_review` / `fully_autonomous`: starts eligible next-lane executions
+- `fully_autonomous` auto-promotes low-risk inbox messages:
+  - `comment_on_ticket` with a target ticket is attached to the ticket timeline
+  - `submit_artifact` with a target ticket and valid artifact metadata becomes a durable artifact
+  - `submit_ceremony_input` with a target ceremony run becomes a pending ceremony note proposal
+  - `suggest_ticket`, `raise_risk`, and external `suggest_dispatch` remain operator-visible
 - CLI wrapper:
 
 ```bash
@@ -270,6 +275,36 @@ Steps:
 4. Add explicit tests for each mode at the driver/store boundary.
 5. Keep manual dispatch visible as an override, not the primary path.
 
+### Interaction Classification
+
+Routine:
+
+- start reviewer execution after implementation completes
+- start validator execution after review completes
+- attach external comments to an existing ticket
+- attach externally submitted artifacts to an existing ticket
+- attach external ceremony input to an existing ceremony as a note proposal
+
+Policy-gated:
+
+- merge when human approval is required
+- merge when a required validation profile has not passed
+- ceremony proposal application when ceremony automation is operator-approved
+- external dispatch suggestions outside the internal routine-lane path
+
+Risk-gated:
+
+- external `raise_risk` messages
+- new work suggested by external agents
+- blocked execution, failed validation, rework review, and dirty merge targets
+
+Human-only:
+
+- deleting projects
+- restarting tickets
+- changing project policy and role profiles
+- approving ambiguous or destructive external-agent requests
+
 ### Slice 3: External Agent Tooling
 
 Goal: give OpenClaw, Hermes, and similar agents a stable manual integration path without coupling them to Floop internals.
@@ -302,8 +337,11 @@ Steps:
 
 Remaining:
 
-- Finish the fully autonomous low-risk proposal path once the exact auto-apply policy is defined.
-- Spike A2A or ACP once OpenClaw/Hermes protocol support is concrete.
+- No current implementation blocker. A2A/ACP remains deferred until OpenClaw, Hermes, or another target agent exposes a concrete protocol surface Floop can validate against.
+
+Deferred protocol note:
+
+- See [Agent Protocol Spike](./agent-protocol-spike.md).
 
 ## Open Questions
 

@@ -906,6 +906,88 @@ test("store gates routine evidence lane dispatch by interaction mode", () => {
   store.close();
 });
 
+test("store auto-promotes low-risk agent inbox messages in fully autonomous mode", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", { interactionMode: "fully_autonomous" });
+
+  const comment = store.createAgentMessage("project_floop", {
+    actor: "hermes",
+    source: "webhook",
+    intent: "comment_on_ticket",
+    target: { ticketId: "ticket_project_floop_2" },
+    summary: "External note",
+    body: "Hermes saw a reusable transport-contract warning.",
+  });
+  assert.equal(comment.status, "attached");
+  assert.equal(comment.promotedKind, "ticket_event");
+  assert.equal(
+    store
+      .getTicket("project_floop", "ticket_project_floop_2")
+      .events.some((event) => event.type === "agent.message_attached" && event.detail.includes("transport-contract warning")),
+    true,
+  );
+
+  const artifact = store.createAgentMessage("project_floop", {
+    actor: "openclaw",
+    source: "webhook",
+    intent: "submit_artifact",
+    target: { ticketId: "ticket_project_floop_2" },
+    summary: "External trace",
+    metadata: {
+      artifact: {
+        kind: "record",
+        label: "Autonomous trace",
+        uri: "https://example.com/floop/autonomous-trace",
+      },
+    },
+  });
+  assert.equal(artifact.status, "accepted");
+  assert.equal(artifact.promotedKind, "artifact");
+  assert.equal(
+    store
+      .listArtifacts("project_floop", { ticketId: "ticket_project_floop_2", kind: "record" })
+      .some((item) => item.label === "Autonomous trace"),
+    true,
+  );
+
+  const ceremony = store.createCeremonyRun("project_floop", { type: "daily_triage" });
+  const ceremonyInput = store.createAgentMessage("project_floop", {
+    actor: "hermes",
+    source: "webhook",
+    intent: "submit_ceremony_input",
+    target: { runId: ceremony.id },
+    summary: "External triage input",
+    body: "Hermes recommends prioritizing transport-contract warnings.",
+  });
+  assert.equal(ceremonyInput.status, "accepted");
+  assert.equal(ceremonyInput.promotedKind, "ceremony_proposal");
+  assert.equal(
+    store
+      .getCeremonyRun("project_floop", ceremony.id)
+      .proposals.some((proposal) => proposal.id === ceremonyInput.promotedRef && proposal.payload.agentMessageId === ceremonyInput.id),
+    true,
+  );
+
+  const suggestion = store.createAgentMessage("project_floop", {
+    actor: "openclaw",
+    source: "webhook",
+    intent: "suggest_ticket",
+    target: { repoId: "repo_project_floop_floop" },
+    summary: "Add a new follow-up",
+  });
+  const risk = store.createAgentMessage("project_floop", {
+    actor: "hermes",
+    source: "webhook",
+    intent: "raise_risk",
+    target: { ticketId: "ticket_project_floop_2" },
+    summary: "Risk needs operator attention",
+  });
+  assert.equal(suggestion.status, "pending");
+  assert.equal(risk.status, "pending");
+
+  store.close();
+});
+
 test("store can persist a review directly from reviewer execution completion", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   store.updateProjectPolicy("project_floop", {

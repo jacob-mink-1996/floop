@@ -87,6 +87,7 @@ export function createAgentMessageCommands({
         });
       });
 
+      maybeAutoPromoteAgentMessage(commands, database, projectId, id);
       return commands.getAgentMessage(projectId, id);
     },
 
@@ -177,7 +178,7 @@ export function createAgentMessageCommands({
           summary: `${existing.actor} message ${input.status}`,
           detail: existing.body || existing.summary,
           reasonCode: input.status,
-          reasonSource: "operator",
+          reasonSource: input.reasonSource || "operator",
         });
       });
 
@@ -186,6 +187,48 @@ export function createAgentMessageCommands({
   };
 
   return commands;
+}
+
+function maybeAutoPromoteAgentMessage(commands, database, projectId, messageId) {
+  if (projectInteractionMode(database, projectId) !== "fully_autonomous") {
+    return;
+  }
+  const message = commands.getAgentMessage(projectId, messageId);
+  const decision = lowRiskAutonomousDecision(message);
+  if (!decision) {
+    return;
+  }
+  commands.updateAgentMessage(projectId, messageId, {
+    ...decision,
+    reasonSource: "interaction_policy",
+  });
+}
+
+function projectInteractionMode(database, projectId) {
+  const row = database
+    .prepare("select interaction_mode from project_policies where project_id = ?")
+    .get(projectId);
+  return row?.interaction_mode || "manual";
+}
+
+function lowRiskAutonomousDecision(message) {
+  if (!message || message.status !== "pending") {
+    return null;
+  }
+  if (message.intent === "comment_on_ticket" && hasTarget(message, "ticketId")) {
+    return { status: "attached" };
+  }
+  if (message.intent === "submit_artifact" && hasTarget(message, "ticketId") && isArtifactInput(message.metadata?.artifact)) {
+    return { status: "accepted" };
+  }
+  if (message.intent === "submit_ceremony_input" && hasTarget(message, "runId")) {
+    return { status: "accepted" };
+  }
+  return null;
+}
+
+function hasTarget(message, key) {
+  return typeof message.target?.[key] === "string" && Boolean(message.target[key]);
 }
 
 function defaultPromotedKind(message, status) {
