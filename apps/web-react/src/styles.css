@@ -432,6 +432,7 @@ h3 {
 
 .phase-rail.is-compact {
   grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 3px;
   border: 0;
   background: transparent;
 }
@@ -449,6 +450,16 @@ h3 {
   border-right: 0;
 }
 
+.phase-rail.is-compact .phase-step strong,
+.phase-rail.is-compact .phase-step small {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 .phase-step:last-child {
   border-right: 0;
 }
@@ -457,6 +468,10 @@ h3 {
   display: block;
   height: 5px;
   background: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+.phase-rail.is-compact .phase-step > span {
+  height: 7px;
 }
 
 .phase-step.is-complete > span,
@@ -723,6 +738,7 @@ h3 {
 }
 
 .metric span,
+.fact span,
 .evidence-item span,
 .read-field span {
   color: var(--muted);
@@ -737,6 +753,11 @@ h3 {
   line-height: 1;
 }
 
+.fact strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .ticket-composer {
   display: grid;
   gap: 12px;
@@ -749,12 +770,13 @@ h3 {
 
 .ops-panel {
   display: grid;
-  grid-template-columns: minmax(360px, 1.6fr) repeat(3, minmax(180px, 0.8fr));
-  gap: 10px;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.55fr) repeat(2, minmax(140px, 0.5fr));
+  gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
   margin-bottom: 14px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
 }
 
@@ -771,7 +793,7 @@ h3 {
 
 .run-observability {
   display: grid;
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   gap: 10px;
   border: 1px solid var(--line);
   border-radius: 0;
@@ -803,7 +825,7 @@ h3 {
   display: grid;
   gap: 8px;
   border-top: 1px solid var(--line);
-  padding-top: 9px;
+  padding: 10px 0 0;
 }
 
 .run-subway-item:first-child {
@@ -813,8 +835,8 @@ h3 {
 
 .run-subway-main {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 12px;
   width: 100%;
   border: 0;
   padding: 0;
@@ -844,8 +866,8 @@ h3 {
 .run-marker {
   display: inline-grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   border: 1px solid var(--line-strong);
   background: var(--panel-soft);
   color: var(--teal);
@@ -854,8 +876,13 @@ h3 {
 
 .run-copy {
   display: grid;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
+}
+
+.run-copy strong {
+  font-size: 15px;
+  line-height: 1.25;
 }
 
 .run-copy span,
@@ -1288,13 +1315,13 @@ h3 {
 }
 
 .constellation-stage {
-  --orbit-size: clamp(310px, 38vw, 430px);
+  --orbit-size: clamp(280px, 34vw, 390px);
   --orbit-radius: calc(var(--orbit-size) * 0.38);
   position: relative;
   display: grid;
   place-items: center;
-  min-height: calc(var(--orbit-size) + 22px);
-  overflow: hidden;
+  min-height: calc(var(--orbit-size) + 46px);
+  overflow: visible;
 }
 
 .constellation-ring {
@@ -1609,7 +1636,7 @@ h3 {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
-  width: min(760px, calc(100vw - 48px));
+  width: min(820px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
   margin: 0 auto;
   border: 1px solid var(--line);
@@ -1702,9 +1729,47 @@ h3 {
 }
 
 .setup-meter {
+  display: grid;
+  gap: 10px;
   border: 1px solid var(--line);
   padding: 10px;
   background: var(--panel-warm);
+}
+
+.setup-checklist {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.setup-checklist span {
+  display: inline-grid;
+  place-items: center;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.setup-checklist span::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-bottom: 3px;
+  border: 1px solid currentColor;
+}
+
+.setup-checklist span.is-done {
+  border-color: color-mix(in srgb, var(--green) 50%, var(--line));
+  background: var(--success-bg);
+  color: var(--green);
+}
+
+.setup-checklist span.is-done::before {
+  background: currentColor;
 }
 
 .toggle-list label,
@@ -2220,10 +2285,10 @@ textarea {
 
 .ticket-detail {
   position: fixed;
-  inset: 24px;
+  inset: 16px;
   z-index: 44;
-  width: min(980px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
+  width: min(1120px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
   margin: 0 auto;
   overflow: auto;
   overscroll-behavior: contain;
@@ -2285,39 +2350,38 @@ textarea {
 
 .ticket-cockpit-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 1fr) minmax(280px, .95fr);
-  gap: 24px;
+  grid-template-columns: minmax(260px, 0.95fr) minmax(380px, 1.55fr);
+  gap: 16px;
   align-items: start;
   min-width: 0;
 }
 
 .cockpit-main,
-.cockpit-now,
-.cockpit-facts {
+.cockpit-now {
   display: grid;
   align-content: start;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
 }
 
 .cockpit-flow {
-  grid-column: 1 / -1;
+  grid-column: 1;
   min-width: 0;
 }
 
 .cockpit-flow .phase-rail {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(56px, 1fr));
 }
 
 .cockpit-flow .phase-step {
   min-width: 0;
-  min-height: 58px;
+  min-height: 64px;
   overflow: hidden;
-  padding: 8px 7px;
+  padding: 9px 8px;
 }
 
 .cockpit-flow .phase-step strong {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .cockpit-main p {
@@ -2325,10 +2389,17 @@ textarea {
   color: var(--muted);
 }
 
+.detail-brief {
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.45;
+}
+
 .cockpit-signal-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
 }
 
 .cockpit-signal {
@@ -2336,8 +2407,8 @@ textarea {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 3px 7px;
   border: 1px solid var(--line);
-  min-height: 96px;
-  padding: 12px;
+  min-height: 78px;
+  padding: 10px;
   background: var(--panel-soft);
 }
 
@@ -2356,17 +2427,6 @@ textarea {
   font-size: 12px;
 }
 
-.cockpit-facts {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
-}
-
-.cockpit-facts .fact {
-  min-height: 135px;
-  align-content: start;
-  padding: 18px;
-}
-
 .action-dock {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2382,6 +2442,10 @@ textarea {
   font-weight: 800;
 }
 
+.action-dock.is-open {
+  align-items: start;
+}
+
 .action-dock-sheet {
   grid-column: 1 / -1;
   border: 1px solid var(--line);
@@ -2392,7 +2456,7 @@ textarea {
 .checklist-rail,
 .evidence-rail {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 8px;
 }
 
@@ -2408,6 +2472,7 @@ textarea {
 
 .checklist-item {
   grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
 }
 
 .checklist-item div,
@@ -2421,6 +2486,7 @@ textarea {
 .evidence-step small {
   min-width: 0;
   overflow-wrap: anywhere;
+  line-height: 1.25;
 }
 
 .checklist-item span,
@@ -2681,6 +2747,10 @@ textarea {
   .evidence-rail,
   .proposal-buckets {
     grid-template-columns: 1fr;
+  }
+
+  .run-observability {
+    grid-column: auto;
   }
 
   .phase-rail,

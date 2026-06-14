@@ -266,6 +266,12 @@ export function ProjectOnboardingDialog({
                   { id: "repo", label: "Repo", value: sourceMode === "new" || projectDetails.defaultBaseBranch ? 1 : 0, tone: sourceMode === "new" || projectDetails.defaultBaseBranch ? "attention" : "neutral" },
                 ]}
               />
+              <div className="setup-checklist" aria-label="Project readiness">
+                <span className="is-done">Source</span>
+                <span className={projectDetails.name ? "is-done" : ""}>Name</span>
+                <span className={projectDetails.slug ? "is-done" : ""}>Slug</span>
+                <span className={projectDetails.defaultBaseBranch || sourceMode === "new" ? "is-done" : ""}>Branch</span>
+              </div>
             </section>
             <section className="settings-card">
               <div className="section-heading">

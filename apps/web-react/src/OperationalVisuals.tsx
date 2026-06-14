@@ -96,18 +96,20 @@ export function ActionDock({
   detail,
   disabled,
   busy,
+  defaultOpen = false,
   children,
 }: {
   label: string;
   detail?: string;
   disabled?: boolean;
   busy?: boolean;
+  defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   useEffect(() => {
-    setOpen(false);
-  }, [label, detail]);
+    setOpen(defaultOpen);
+  }, [label, detail, defaultOpen]);
   return (
     <div className={`action-dock ${open ? "is-open" : ""}`}>
       <button className="primary-button" type="button" disabled={disabled || busy} onClick={() => setOpen((value) => !value)}>

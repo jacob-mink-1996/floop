@@ -24,6 +24,7 @@ import { createMergeDriver } from "../services/api/src/merge-driver.mjs";
 import { createStore } from "../services/api/src/store.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+loadDotEnv();
 const mode = process.argv.includes("--record") ? "record" : "proof";
 const openAfterRecord = process.argv.includes("--open");
 const outputRoot = resolve(process.env.FLOOP_DEMO_OUTPUT_DIR || join(repoRoot, "demo-recordings"));
@@ -216,7 +217,8 @@ async function runWalkthrough(page, appUrl) {
   await page.getByText("Attention").first().waitFor();
   await page.getByText("Ceremony proposals").first().waitFor();
   await page.getByText("Blocked").first().waitFor();
-  await pause(1200);
+  await openDeveloperRunProof(page);
+  await pause(2200);
   await clickFirstDecisionApply(page);
   await waitForAppliedCeremony();
   await refresh(page);
@@ -239,22 +241,24 @@ async function createTicketFromUi(page, { title, brief }) {
 async function runTicketLoopFromUi(page, title) {
   await clickByText(page, title);
   await page.getByText("Start developer lane").first().waitFor();
-  await clickByText(page, "Dispatch");
   await fillByName(page, "summary", "Operator starts the real developer agent.");
   await clickByText(page, "Start run");
+  await waitForTicketState(title, "WORKING", 12_000);
+  await revealTicketState(page, title, "Working");
+  await pause(1800);
   await waitForTicketState(title, "REVIEWING", 30_000);
   await revealTicketState(page, title, "Reviewing");
-  await pause(900);
+  await pause(1800);
   await waitForTicketState(title, "VALIDATING", 30_000);
   await revealTicketState(page, title, "Validating");
-  await pause(900);
+  await pause(1800);
   await waitForTicketState(title, "READY_TO_MERGE", 30_000);
   await revealTicketState(page, title, "Ready to merge");
-  await pause(900);
+  await pause(1400);
   await mergeDriver.pollOnce();
   await waitForTicketState(title, "DONE", 30_000);
   await revealTicketState(page, title, "Done");
-  await pause(900);
+  await pause(1400);
   await closeTicketDetail(page);
   await pause(500);
 }
@@ -292,17 +296,32 @@ async function configureAgents(projectId) {
   });
 
   const profiles = {
-    developer: developerCommand(),
-    reviewer: reviewerCommand(),
-    validator: validatorCommand(),
-    product_manager: ceremonyCommand("product manager"),
-    architect: ceremonyCommand("architect"),
-    integrator: ceremonyCommand("integrator"),
+    developer: commandFromEnv("developer", developerCommand()),
+    reviewer: commandFromEnv("reviewer", reviewerCommand()),
+    validator: commandFromEnv("validator", validatorCommand()),
+    product_manager: commandFromEnv("product_manager", ceremonyCommand("product manager")),
+    architect: commandFromEnv("architect", ceremonyCommand("architect")),
+    integrator: commandFromEnv("integrator", ceremonyCommand("integrator")),
   };
 
   for (const [role, command] of Object.entries(profiles)) {
     await updateRoleProfile(projectId, role, command);
   }
+}
+
+function commandFromEnv(role, fallback) {
+  const normalized = role.toUpperCase();
+  const command =
+    process.env[`FLOOP_DEMO_${normalized}_COMMAND`] ||
+    process.env[`FLOOP_AGENT_${normalized}_COMMAND`] ||
+    process.env.FLOOP_DEMO_AGENT_COMMAND ||
+    "";
+  if (!command.trim()) return fallback;
+  return {
+    adapter: "shell",
+    model: `env-${role}`,
+    config: { command },
+  };
 }
 
 function developerCommand() {
@@ -328,14 +347,18 @@ function developerCommand() {
         const worktree = process.env.FLOOP_WORKTREE_PATH;
         const ticketKey = process.env.FLOOP_TICKET_KEY.toLowerCase();
         fs.mkdirSync(path.join(worktree, "demo"), { recursive: true });
-        fs.writeFileSync(path.join(worktree, "demo", ticketKey + ".md"), "# " + process.env.FLOOP_TICKET_TITLE + "\\n\\nImplemented by the local developer agent.\\n");
+        fs.writeFileSync(path.join(worktree, "demo", ticketKey + ".md"), "# " + process.env.FLOOP_TICKET_TITLE + "\\n\\nImplemented by the local developer agent.\\n\\nProof timestamp: " + new Date().toISOString() + "\\n");
+        fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".developer.log", "developer agent entered worktree " + worktree + "\\ncreated demo/" + ticketKey + ".md\\n");
         execFileSync("git", ["-C", worktree, "add", "-A"]);
         execFileSync("git", ["-C", worktree, "commit", "-m", "Implement " + process.env.FLOOP_TICKET_KEY]);
-        sleep(900);
+        sleep(3200);
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
           outcome: "completed",
           summaryMd: "Developer agent changed the local repo and committed evidence.",
-          artifacts: [{ kind: "report", label: "Developer implementation note", uri: "file://" + path.join(worktree, "demo", ticketKey + ".md") }],
+          artifacts: [
+            { kind: "report", label: "Developer implementation note", uri: "file://" + path.join(worktree, "demo", ticketKey + ".md") },
+            { kind: "log", label: "Developer work log", uri: "file://" + process.env.FLOOP_RESULT_PATH + ".developer.log" }
+          ],
           followupTickets: [{
             title: "Document " + process.env.FLOOP_TICKET_KEY + " operator notes",
             brief: "Follow-up ticket created by the developer agent during the demo.",
@@ -371,8 +394,8 @@ function reviewerCommand() {
             payload: { participant: role, ceremonyType: type, note: "reviewer" }
           }));
         } else {
-        sleep(1600);
-        fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".review.md", "review passed\\n");
+        sleep(2600);
+        fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".review.md", "reviewer inspected execution artifacts at " + new Date().toISOString() + "\\nreview passed\\n");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
           outcome: "completed",
           summaryMd: "Reviewer agent inspected the developer evidence.",
@@ -407,8 +430,8 @@ function validatorCommand() {
             payload: { participant: role, ceremonyType: type, note: "validator" }
           }));
         } else {
-        sleep(1600);
-        fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".validation.log", "local validation passed\\n");
+        sleep(2600);
+        fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".validation.log", "validator ran local evidence check at " + new Date().toISOString() + "\\nlocal validation passed\\n");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
           outcome: "completed",
           summaryMd: "Validator agent ran the local evidence check.",
@@ -435,6 +458,7 @@ function ceremonyCommand(label) {
         const fs = require("node:fs");
         const role = process.env.FLOOP_CEREMONY_ROLE;
         const type = process.env.FLOOP_CEREMONY_TYPE;
+        sleep(2200);
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
           outcome: "completed",
           summaryMd: role + " contributed to " + type + " as a real local shell participant.",
@@ -677,6 +701,15 @@ async function clickFirstDecisionApply(page) {
   await pause(700);
 }
 
+async function openDeveloperRunProof(page) {
+  const developerRun = page.locator(".run-subway-item").filter({ hasText: "developer iteration 1" }).locator(".run-subway-main").first();
+  await moveTo(page, developerRun);
+  await developerRun.click();
+  const proofDock = page.locator(".log-dock").first();
+  await proofDock.waitFor({ state: "visible", timeout: 5000 });
+  await proofDock.scrollIntoViewIfNeeded();
+}
+
 async function refresh(page) {
   await clickByText(page, "Refresh");
   await pause(500);
@@ -752,6 +785,25 @@ function openRecording(videoPath) {
   } catch (error) {
     console.log(`Recording ready: ${videoPath}`);
     console.warn(`Could not open recording automatically: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function loadDotEnv() {
+  const envPath = resolve(repoRoot, ".env");
+  if (!existsSync(envPath)) return;
+  const lines = readFileSync(envPath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const index = trimmed.indexOf("=");
+    if (index <= 0) continue;
+    const key = trimmed.slice(0, index).trim();
+    if (process.env[key] !== undefined) continue;
+    let value = trimmed.slice(index + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
   }
 }
 

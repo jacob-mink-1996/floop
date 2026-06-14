@@ -871,25 +871,6 @@ function OpsPanel({
 
   return (
     <section className="ops-panel" aria-label="Operations overview">
-      <div className="run-observability">
-        <div className="section-heading">
-          <h3>Run Subway</h3>
-          <span>{runObservability ? formatDate(runObservability.generatedAt) : "Loading"}</span>
-        </div>
-        <StatusMeter
-          items={[
-            { id: "running", label: "Running", value: runObservability?.summary.running || 0, tone: "active" },
-            { id: "attention", label: "Attention", value: runObservability?.summary.needsAttention || 0, tone: "attention" },
-            { id: "failed", label: "Failed", value: runObservability?.summary.failed || 0, tone: "danger" },
-            { id: "complete", label: "Recent", value: Math.max(0, (runObservability?.summary.total || 0) - (runObservability?.summary.running || 0) - (runObservability?.summary.failed || 0)), tone: "done" },
-          ]}
-        />
-        <RunSubway runs={runObservability?.runs || []} onSelectTicket={onSelectTicket} />
-        {/* Keep a fallback empty state adjacent to the subway for first-run projects. */}
-        <div className="run-list is-empty-only">
-          {!runObservability || runObservability.runs.length === 0 ? <p className="lane-empty">No worker runs recorded yet.</p> : null}
-        </div>
-      </div>
       <div className="decision-queue attention-panel">
         <div className="section-heading">
           <h3>Attention</h3>
@@ -914,6 +895,25 @@ function OpsPanel({
               </button>
             </article>
           ))}
+        </div>
+      </div>
+      <div className="run-observability">
+        <div className="section-heading">
+          <h3>Run Subway</h3>
+          <span>{runObservability ? formatDate(runObservability.generatedAt) : "Loading"}</span>
+        </div>
+        <StatusMeter
+          items={[
+            { id: "running", label: "Running", value: runObservability?.summary.running || 0, tone: "active" },
+            { id: "attention", label: "Attention", value: runObservability?.summary.needsAttention || 0, tone: "attention" },
+            { id: "failed", label: "Failed", value: runObservability?.summary.failed || 0, tone: "danger" },
+            { id: "complete", label: "Recent", value: Math.max(0, (runObservability?.summary.total || 0) - (runObservability?.summary.running || 0) - (runObservability?.summary.failed || 0)), tone: "done" },
+          ]}
+        />
+        <RunSubway runs={runObservability?.runs || []} onSelectTicket={onSelectTicket} />
+        {/* Keep a fallback empty state adjacent to the subway for first-run projects. */}
+        <div className="run-list is-empty-only">
+          {!runObservability || runObservability.runs.length === 0 ? <p className="lane-empty">No worker runs recorded yet.</p> : null}
         </div>
       </div>
       <div className="agent-inbox attention-panel">
@@ -1899,8 +1899,11 @@ function TicketDetailPanel({
             />
           </section>
           <section className="detail-section">
-            <h3>Overview</h3>
-            <p>{ticket.brief}</p>
+            <div className="section-heading">
+              <h3>Overview</h3>
+              <span>{ticket.repoTargets.length} repo{ticket.repoTargets.length === 1 ? "" : "s"}</span>
+            </div>
+            <p className="detail-brief">{ticket.brief}</p>
             <div className="fact-grid">
               <Fact label="Priority" value={ticket.priority} />
               <Fact label="Role" value={prettyRole(ticket.assignedRole)} />
@@ -1985,9 +1988,12 @@ function TicketCockpit({ ticket, action }: { ticket: TicketDetail; action: { lab
         <h3>{action.label}</h3>
         <p>{action.detail}</p>
       </div>
+      <div className="cockpit-flow">
+        <PhaseRail items={ticketPhaseItems(ticket)} />
+      </div>
       <div className="cockpit-now">
         <div className="section-heading">
-          <h3>Now</h3>
+          <h3>Proof Trail</h3>
           <span>{activeExecution ? "Active" : prettyState(ticket.state)}</span>
         </div>
         <div className="cockpit-signal-list">
@@ -1996,15 +2002,6 @@ function TicketCockpit({ ticket, action }: { ticket: TicketDetail; action: { lab
           <CockpitSignal label="Validation" value={latestValidation?.verdict || "No validation"} tone={toneForStatus(latestValidation?.verdict)} />
           <CockpitSignal label="Merge" value={ticket.mergeStatus?.statusSummary || (ticket.mergeStatus?.canMerge ? "Ready" : "Not ready")} tone={ticket.mergeStatus?.canMerge ? "done" : ticket.mergeStatus?.blockingReasons?.length ? "attention" : "neutral"} />
         </div>
-      </div>
-      <div className="cockpit-facts">
-        <Fact label="Priority" value={ticket.priority} />
-        <Fact label="Role" value={prettyRole(ticket.assignedRole)} />
-        <Fact label="Repos" value={String(ticket.repoTargets.length)} />
-        <Fact label="Updated" value={formatDate(ticket.updatedAt)} />
-      </div>
-      <div className="cockpit-flow">
-        <PhaseRail items={ticketPhaseItems(ticket)} />
       </div>
     </div>
   );
@@ -2425,6 +2422,7 @@ function TicketActionForm({
       detail={`${primaryActionLabel(ticket)} · do it, then record why.`}
       busy={Boolean(busy)}
       disabled={!canSubmitPrimaryAction(ticket, activeExecution, latestCompletedExecution)}
+      defaultOpen={canSubmitPrimaryAction(ticket, activeExecution, latestCompletedExecution)}
     >
       <form className="action-form" onSubmit={handleSubmit}>
         <ActionFields ticket={ticket} activeExecution={activeExecution} latestCompletedExecution={latestCompletedExecution} />
