@@ -212,9 +212,8 @@ async function runWalkthrough(page, appUrl) {
   await pause(1000);
 
   await clickByText(page, "Ops");
-  await page.getByText("Run Observability").first().waitFor();
+  await page.getByText("Run Subway").first().waitFor();
   await page.getByText("Attention").first().waitFor();
-  await page.getByText("Decision Queue").first().waitFor();
   await page.getByText("Ceremony proposals").first().waitFor();
   await page.getByText("Blocked").first().waitFor();
   await pause(1200);
@@ -240,6 +239,7 @@ async function createTicketFromUi(page, { title, brief }) {
 async function runTicketLoopFromUi(page, title) {
   await clickByText(page, title);
   await page.getByText("Start developer lane").first().waitFor();
+  await clickByText(page, "Dispatch");
   await fillByName(page, "summary", "Operator starts the real developer agent.");
   await clickByText(page, "Start run");
   await waitForTicketState(title, "REVIEWING", 30_000);
@@ -286,6 +286,7 @@ async function configureAgents(projectId) {
     maxParallelExecutions: 6,
     maxParallelMerges: 2,
     maxAutoContinueIterations: 4,
+    interactionMode: "autopilot",
     refinementMode: "autonomous",
     agentCreatedTicketDefaultState: "PROPOSED",
   });
@@ -313,6 +314,17 @@ function developerCommand() {
         const fs = require("node:fs");
         const path = require("node:path");
         const { execFileSync } = require("node:child_process");
+        if (process.env.FLOOP_CEREMONY_ROLE) {
+          const role = process.env.FLOOP_CEREMONY_ROLE;
+          const type = process.env.FLOOP_CEREMONY_TYPE;
+          fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
+            outcome: "completed",
+            summaryMd: role + " contributed to " + type + " with implementation context.",
+            questionsMd: "No blocking questions from " + role + ".",
+            riskMd: "Implementation scope looks bounded.",
+            payload: { participant: role, ceremonyType: type, note: "developer" }
+          }));
+        } else {
         const worktree = process.env.FLOOP_WORKTREE_PATH;
         const ticketKey = process.env.FLOOP_TICKET_KEY.toLowerCase();
         fs.mkdirSync(path.join(worktree, "demo"), { recursive: true });
@@ -335,6 +347,7 @@ function developerCommand() {
             repoTargets: []
           }]
         }));
+        }
       `),
     },
   };
@@ -347,6 +360,17 @@ function reviewerCommand() {
     config: {
       command: nodeEvalCommand(`
         const fs = require("node:fs");
+        if (process.env.FLOOP_CEREMONY_ROLE) {
+          const role = process.env.FLOOP_CEREMONY_ROLE;
+          const type = process.env.FLOOP_CEREMONY_TYPE;
+          fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
+            outcome: "completed",
+            summaryMd: role + " contributed to " + type + " with review context.",
+            questionsMd: "No blocking questions from " + role + ".",
+            riskMd: "Review risk is low for the demo change.",
+            payload: { participant: role, ceremonyType: type, note: "reviewer" }
+          }));
+        } else {
         sleep(1600);
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".review.md", "review passed\\n");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
@@ -359,6 +383,7 @@ function reviewerCommand() {
             artifacts: [{ kind: "report", label: "Reviewer approval", uri: "file://" + process.env.FLOOP_RESULT_PATH + ".review.md" }]
           }
         }));
+        }
       `),
     },
   };
@@ -371,6 +396,17 @@ function validatorCommand() {
     config: {
       command: nodeEvalCommand(`
         const fs = require("node:fs");
+        if (process.env.FLOOP_CEREMONY_ROLE) {
+          const role = process.env.FLOOP_CEREMONY_ROLE;
+          const type = process.env.FLOOP_CEREMONY_TYPE;
+          fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
+            outcome: "completed",
+            summaryMd: role + " contributed to " + type + " with validation context.",
+            questionsMd: "No blocking questions from " + role + ".",
+            riskMd: "Validation path is clear.",
+            payload: { participant: role, ceremonyType: type, note: "validator" }
+          }));
+        } else {
         sleep(1600);
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".validation.log", "local validation passed\\n");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
@@ -384,6 +420,7 @@ function validatorCommand() {
             artifacts: [{ kind: "log", label: "Validator output", uri: "file://" + process.env.FLOOP_RESULT_PATH + ".validation.log" }]
           }
         }));
+        }
       `),
     },
   };
