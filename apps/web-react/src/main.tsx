@@ -87,18 +87,21 @@ import "./styles.css";
 type LoadState = "idle" | "loading" | "ready" | "error";
 type ThemeMode = "light" | "dark";
 type WorkspaceView = "board" | "ceremonies" | "ops";
-type DecisionKind = "approval" | "blocked" | "validation" | "stale" | "merge" | "ceremony";
+type AttentionKind = "approval" | "blocked" | "validation" | "stale" | "merge" | "ceremony" | "external_agent";
 
-type DecisionQueueItem = {
+type AttentionItem = {
   id: string;
-  kind: DecisionKind;
+  kind: AttentionKind;
   label: string;
   title: string;
   detail: string;
   age: string;
+  severity: number;
+  actionLabel: string;
   ticketId?: string;
   ceremonyRunId?: string;
   proposalIds?: string[];
+  agentMessage?: AgentMessage;
 };
 
 function initialThemeMode(): ThemeMode {
@@ -128,7 +131,7 @@ function App() {
   const [isComposerOpen, setComposerOpen] = useState(false);
   const [isSettingsOpen, setSettingsOpen] = useState(false);
   const [isProjectOnboardingOpen, setProjectOnboardingOpen] = useState(false);
-  const [activeView, setActiveView] = useState<WorkspaceView>("board");
+  const [activeView, setActiveView] = useState<WorkspaceView>("ops");
   const [liveStatus, setLiveStatus] = useState("idle");
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
 
@@ -506,7 +509,7 @@ function App() {
             <Tabs.List className="view-tabs" aria-label="Workspace view">
               <Tabs.Trigger value="board">Board</Tabs.Trigger>
               <Tabs.Trigger value="ceremonies">Ceremonies</Tabs.Trigger>
-              <Tabs.Trigger value="ops">Ops</Tabs.Trigger>
+              <Tabs.Trigger value="ops">Cockpit</Tabs.Trigger>
             </Tabs.List>
           </Tabs.Root>
           <div className="tool-cluster" aria-label="Workspace actions">
@@ -523,7 +526,7 @@ function App() {
         </div>
 
         <section className="board-surface">
-          <BoardHeader project={project} board={board} loadState={loadState} label={activeView === "board" ? "Board" : activeView === "ceremonies" ? "Ceremonies" : "Ops"} />
+          <BoardHeader project={project} board={board} loadState={loadState} label={activeView === "board" ? "Board" : activeView === "ceremonies" ? "Ceremonies" : "Cockpit"} />
           {!projectId && loadState === "ready" ? (
             <ProjectEmptyState onCreateProject={() => flushSync(() => setProjectOnboardingOpen(true))} />
           ) : isComposerOpen ? (
@@ -766,7 +769,7 @@ function BoardHeader({ project, board, loadState, label }: { project: Project | 
     <section className="summary-strip">
       <div>
         <p className="kicker">{label}</p>
-        <h2>{label === "Ops" ? "Operations" : label === "Ceremonies" ? "Agent ceremonies" : board?.projectName || (loadState === "loading" ? "Loading project..." : "No project selected")}</h2>
+        <h2>{label === "Cockpit" ? "Cockpit" : label === "Ceremonies" ? "Agent ceremonies" : board?.projectName || (loadState === "loading" ? "Loading project..." : "No project selected")}</h2>
         <StatusMeter items={flowItems} />
       </div>
       <Metric label="Total" value={String(board?.totalTickets || 0)} />
@@ -815,26 +818,43 @@ function OpsPanel({
   onDispatchAgentMessage: (message: AgentMessage) => Promise<void>;
   onOpenCeremonies: () => void;
 }) {
-  const [busyDecisionId, setBusyDecisionId] = useState("");
-  const [busyAgentMessageId, setBusyAgentMessageId] = useState("");
-  const decisions = useMemo(
-    () => buildDecisionQueue({ board, mergeQueue, ceremonies }),
-    [board, mergeQueue, ceremonies],
+  const [busyAttentionId, setBusyAttentionId] = useState("");
+  const attentionItems = useMemo(
+    () => buildAttentionQueue({ board, mergeQueue, ceremonies, agentMessages }),
+    [board, mergeQueue, ceremonies, agentMessages],
   );
-  const pendingAgentMessages = agentMessages.filter((message) => message.status === "pending");
+  const visibleMergeQueue = mergeQueue.filter((item) => item.mergeStatus?.requiresHumanApproval || item.mergeStatus?.canMerge);
 
-  async function actOnDecision(item: DecisionQueueItem) {
+  async function actOnAttention(item: AttentionItem) {
+    if (item.agentMessage) {
+      const message = item.agentMessage;
+      setBusyAttentionId(item.id);
+      try {
+        if (message.intent === "suggest_ticket" || message.intent === "raise_risk") {
+          await onConvertAgentMessage(message);
+        } else if (message.intent === "suggest_dispatch" && typeof message.target.ticketId === "string" && message.target.ticketId) {
+          await onDispatchAgentMessage(message);
+        } else if (message.intent === "comment_on_ticket" && typeof message.target.ticketId === "string" && message.target.ticketId) {
+          await onUpdateAgentMessage(message.id, { status: "attached" });
+        } else {
+          await onUpdateAgentMessage(message.id, { status: "accepted" });
+        }
+      } finally {
+        setBusyAttentionId("");
+      }
+      return;
+    }
     if (item.ticketId) {
       onSelectTicket(item.ticketId);
       return;
     }
     if (item.ceremonyRunId) {
       if (item.proposalIds?.length) {
-        setBusyDecisionId(item.id);
+        setBusyAttentionId(item.id);
         try {
           await onApplyCeremony(item.ceremonyRunId, item.proposalIds);
         } finally {
-          setBusyDecisionId("");
+          setBusyAttentionId("");
         }
         return;
       }
@@ -842,43 +862,16 @@ function OpsPanel({
     }
   }
 
-  async function updateInboxMessage(message: AgentMessage, status: AgentMessage["status"]) {
-    setBusyAgentMessageId(message.id);
-    try {
-      await onUpdateAgentMessage(message.id, { status });
-    } finally {
-      setBusyAgentMessageId("");
-    }
-  }
-
-  async function convertInboxMessage(message: AgentMessage) {
-    setBusyAgentMessageId(message.id);
-    try {
-      await onConvertAgentMessage(message);
-    } finally {
-      setBusyAgentMessageId("");
-    }
-  }
-
-  async function dispatchInboxMessage(message: AgentMessage) {
-    setBusyAgentMessageId(message.id);
-    try {
-      await onDispatchAgentMessage(message);
-    } finally {
-      setBusyAgentMessageId("");
-    }
-  }
-
   return (
-    <section className="ops-panel" aria-label="Operations overview">
+    <section className="ops-panel" aria-label="Cockpit overview">
       <div className="decision-queue attention-panel">
         <div className="section-heading">
           <h3>Attention</h3>
-          <span>{decisions.length}</span>
+          <span>{attentionItems.length}</span>
         </div>
         <div className="decision-list">
-          {decisions.length === 0 ? <p className="lane-empty">No operator decisions waiting.</p> : null}
-          {decisions.map((item) => (
+          {attentionItems.length === 0 ? <p className="lane-empty">No operator decisions waiting.</p> : null}
+          {attentionItems.map((item) => (
             <article key={item.id} className={`decision-item decision-${item.kind}`}>
               <div className="decision-copy">
                 <span>{item.label} · {item.age}</span>
@@ -888,10 +881,10 @@ function OpsPanel({
               <button
                 className="quiet-button"
                 type="button"
-                disabled={busyDecisionId === item.id}
-                onClick={() => actOnDecision(item)}
+                disabled={busyAttentionId === item.id}
+                onClick={() => actOnAttention(item)}
               >
-                {item.ceremonyRunId && item.proposalIds?.length ? "Apply" : "Open"}
+                {item.actionLabel}
               </button>
             </article>
           ))}
@@ -899,7 +892,7 @@ function OpsPanel({
       </div>
       <div className="run-observability">
         <div className="section-heading">
-          <h3>Run Subway</h3>
+          <h3>Agent Work</h3>
           <span>{runObservability ? formatDate(runObservability.generatedAt) : "Loading"}</span>
         </div>
         <StatusMeter
@@ -916,94 +909,20 @@ function OpsPanel({
           {!runObservability || runObservability.runs.length === 0 ? <p className="lane-empty">No worker runs recorded yet.</p> : null}
         </div>
       </div>
-      <div className="agent-inbox attention-panel">
-        <div className="section-heading">
-          <h3>External Agents</h3>
-          <span>{pendingAgentMessages.length}</span>
-        </div>
-        <div className="agent-message-list">
-          {pendingAgentMessages.length === 0 ? <p className="lane-empty">No external agent suggestions waiting.</p> : null}
-          {pendingAgentMessages.slice(0, 6).map((message) => (
-            <article key={message.id} className={`agent-message-item intent-${message.intent}`}>
-              <div className="agent-message-head">
-                <StateDot tone={message.intent === "raise_risk" ? "attention" : "primary"} />
-                <div>
-                  <span>{message.actor} · {prettyState(message.intent)} · {formatDate(message.createdAt)}</span>
-                  <strong>{message.summary}</strong>
-                </div>
-              </div>
-              {message.body ? <p>{message.body}</p> : null}
-              <details>
-                <summary>Metadata</summary>
-                <code>{JSON.stringify({ target: message.target, metadata: message.metadata }, null, 2)}</code>
-              </details>
-              <div className="agent-message-actions">
-                {message.intent === "suggest_ticket" || message.intent === "raise_risk" ? (
-                  <button
-                    className="quiet-button"
-                    type="button"
-                    disabled={busyAgentMessageId === message.id}
-                    onClick={() => convertInboxMessage(message)}
-                  >
-                    Convert
-                  </button>
-                ) : null}
-                {message.intent === "suggest_dispatch" && typeof message.target.ticketId === "string" && message.target.ticketId ? (
-                  <button
-                    className="quiet-button"
-                    type="button"
-                    disabled={busyAgentMessageId === message.id}
-                    onClick={() => dispatchInboxMessage(message)}
-                  >
-                    Dispatch
-                  </button>
-                ) : null}
-                {message.intent === "comment_on_ticket" && typeof message.target.ticketId === "string" && message.target.ticketId ? (
-                  <button
-                    className="quiet-button"
-                    type="button"
-                    disabled={busyAgentMessageId === message.id}
-                    onClick={() => updateInboxMessage(message, "attached")}
-                  >
-                    Attach
-                  </button>
-                ) : null}
-                <button
-                  className="quiet-button"
-                  type="button"
-                  disabled={busyAgentMessageId === message.id}
-                  onClick={() => updateInboxMessage(message, "accepted")}
-                >
-                  Accept
-                </button>
-                <button
-                  className="quiet-button"
-                  type="button"
-                  disabled={busyAgentMessageId === message.id}
-                  onClick={() => updateInboxMessage(message, "dismissed")}
-                >
-                  Dismiss
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
-      </div>
-      <div className="ops-column">
+      {visibleMergeQueue.length ? <div className="ops-column">
         <div className="section-heading">
           <h3>Merge Queue</h3>
-          <span>{mergeQueue.length}</span>
+          <span>{visibleMergeQueue.length}</span>
         </div>
         <div className="compact-list">
-          {mergeQueue.length === 0 ? <p className="lane-empty">No tickets waiting to merge.</p> : null}
-          {mergeQueue.slice(0, 4).map((item) => (
+          {visibleMergeQueue.slice(0, 4).map((item) => (
             <article key={item.id} className="compact-item">
               <strong>{item.key}</strong>
               <span>{item.mergeStatus?.statusSummary || item.title}</span>
             </article>
           ))}
         </div>
-      </div>
+      </div> : null}
       <div className="ops-column">
         <div className="section-heading">
           <h3>Activity</h3>
@@ -1119,53 +1038,83 @@ function runPriority(run: RunObservability["runs"][number]) {
   return 1;
 }
 
-function buildDecisionQueue({
+function buildAttentionQueue({
   board,
   mergeQueue,
   ceremonies,
+  agentMessages,
 }: {
   board: Board | null;
   mergeQueue: MergeQueueItem[];
   ceremonies: CeremonyRun[];
-}): DecisionQueueItem[] {
+  agentMessages: AgentMessage[];
+}): AttentionItem[] {
   const tickets = board?.columns.flatMap((column) => column.tickets) || [];
-  const decisions: DecisionQueueItem[] = [];
+  const items: AttentionItem[] = [];
 
   for (const run of ceremonies) {
     const pending = run.proposals.filter((proposal) => proposal.status === "pending");
     if (pending.length > 0) {
-      decisions.push({
+      items.push({
         id: `ceremony:${run.id}`,
         kind: "ceremony",
         label: "Ceremony proposals",
         title: `${prettyCeremony(run.type)} has ${pending.length} pending proposal${pending.length === 1 ? "" : "s"}`,
         detail: run.summaryMd || "Review and apply the proposals that match current operator intent.",
         age: formatDate(run.updatedAt || run.startedAt),
+        severity: 3,
+        actionLabel: "Apply",
         ceremonyRunId: run.id,
         proposalIds: pending.map((proposal) => proposal.id),
       });
     }
   }
 
+  for (const message of agentMessages.filter((candidate) => candidate.status === "pending")) {
+    items.push({
+      id: `agent:${message.id}`,
+      kind: "external_agent",
+      label: `${message.actor} · ${prettyState(message.intent)}`,
+      title: message.summary,
+      detail: message.body || "External agent input is waiting.",
+      age: formatDate(message.createdAt),
+      severity: message.intent === "raise_risk" ? 4 : 2,
+      actionLabel:
+        message.intent === "suggest_ticket" || message.intent === "raise_risk"
+          ? "Convert"
+          : message.intent === "suggest_dispatch"
+            ? "Dispatch"
+            : message.intent === "comment_on_ticket"
+              ? "Attach"
+              : "Accept",
+      ticketId: typeof message.target.ticketId === "string" ? message.target.ticketId : undefined,
+      agentMessage: message,
+    });
+  }
+
   for (const item of mergeQueue) {
     if (item.mergeStatus?.requiresHumanApproval) {
-      decisions.push({
+      items.push({
         id: `approval:${item.id}`,
         kind: "approval",
         label: "Merge approval",
         title: `${item.key} needs human approval`,
         detail: item.mergeStatus.statusSummary || item.title,
         age: formatDate(item.updatedAt),
+        severity: 5,
+        actionLabel: "Open",
         ticketId: item.id,
       });
     } else if (item.mergeStatus?.canMerge) {
-      decisions.push({
+      items.push({
         id: `merge:${item.id}`,
         kind: "merge",
         label: "Merge ready",
         title: `${item.key} is ready to merge`,
         detail: item.mergeStatus.statusSummary || item.title,
         age: formatDate(item.updatedAt),
+        severity: 2,
+        actionLabel: "Open",
         ticketId: item.id,
       });
     }
@@ -1173,45 +1122,53 @@ function buildDecisionQueue({
 
   for (const ticket of tickets) {
     if (ticket.latestValidationVerdict === "failed") {
-      decisions.push({
+      items.push({
         id: `validation:${ticket.id}`,
         kind: "validation",
         label: "Failed validation",
         title: `${ticket.key} needs validation follow-up`,
         detail: ticket.latestSummary || ticket.title,
         age: formatDate(ticket.updatedAt),
+        severity: 5,
+        actionLabel: "Open",
         ticketId: ticket.id,
       });
       continue;
     }
 
     if (ticket.state === "BLOCKED" || ticket.state === "REWORK") {
-      decisions.push({
+      items.push({
         id: `blocked:${ticket.id}`,
         kind: "blocked",
         label: prettyState(ticket.state),
         title: `${ticket.key} needs an unblock decision`,
         detail: ticket.latestSummary || ticket.title,
         age: formatDate(ticket.updatedAt),
+        severity: ticket.state === "BLOCKED" ? 4 : 3,
+        actionLabel: "Open",
         ticketId: ticket.id,
       });
       continue;
     }
 
     if (isStaleActiveTicket(ticket)) {
-      decisions.push({
+      items.push({
         id: `stale:${ticket.id}`,
         kind: "stale",
         label: "Stale active run",
         title: `${ticket.key} has been active since ${formatDate(ticket.updatedAt)}`,
         detail: ticket.latestSummary || ticket.title,
         age: formatDate(ticket.updatedAt),
+        severity: 3,
+        actionLabel: "Open",
         ticketId: ticket.id,
       });
     }
   }
 
-  return decisions.slice(0, 12);
+  return items
+    .sort((a, b) => b.severity - a.severity)
+    .slice(0, 12);
 }
 
 function isStaleActiveTicket(ticket: BoardTicket) {
@@ -1553,41 +1510,36 @@ function CeremonyProposalBuckets({
   busy: boolean;
   onApply: (proposalId: string) => Promise<void>;
 }) {
-  const buckets = [
-    { id: "pending", label: "Pending", proposals: run.proposals.filter((proposal) => proposal.status === "pending") },
-    { id: "applied", label: "Applied", proposals: run.proposals.filter((proposal) => proposal.status === "applied") },
-    { id: "held", label: "Held / Other", proposals: run.proposals.filter((proposal) => proposal.status !== "pending" && proposal.status !== "applied") },
-  ];
+  const proposals = [...run.proposals].sort((a, b) => Number(b.status === "pending") - Number(a.status === "pending"));
   return (
-    <div className="proposal-buckets">
-      {buckets.map((bucket) => (
-        <section key={bucket.id} className="proposal-bucket">
-          <div className="section-heading">
-            <h3>{bucket.label}</h3>
-            <span>{bucket.proposals.length}</span>
-          </div>
-          <div className="proposal-list">
-            {bucket.proposals.length === 0 ? <p className="lane-empty">None</p> : null}
-            {bucket.proposals.map((proposal) => (
-              <article key={proposal.id} className={`proposal-item proposal-${proposal.status}`}>
-                <div>
-                  <span>{prettyState(proposal.kind)} · {proposal.ticketKey || prettyCeremony(run.type)}</span>
-                  <strong>{proposal.summary}</strong>
-                  <code>{summarizeProposalPayload(proposal.payload)}</code>
-                </div>
-                {proposal.status === "pending" ? (
-                  <button className="quiet-button" type="button" disabled={busy} onClick={() => onApply(proposal.id)}>
-                    Apply
-                  </button>
-                ) : (
-                  <span className="badge">{prettyState(proposal.status)}</span>
-                )}
-              </article>
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
+    <section className="proposal-bucket proposal-bucket-flat">
+      <div className="section-heading">
+        <h3>Proposals</h3>
+        <span>{proposals.length}</span>
+      </div>
+      <div className="proposal-list">
+        {proposals.length === 0 ? <p className="lane-empty">None</p> : null}
+        {proposals.map((proposal) => (
+          <article key={proposal.id} className={`proposal-item proposal-${proposal.status}`}>
+            <div>
+              <span>{prettyState(proposal.kind)} · {proposal.ticketKey || prettyCeremony(run.type)}</span>
+              <strong>{proposal.summary}</strong>
+              <details className="inline-details">
+                <summary>Payload</summary>
+                <code>{summarizeProposalPayload(proposal.payload)}</code>
+              </details>
+            </div>
+            {proposal.status === "pending" ? (
+              <button className="quiet-button" type="button" disabled={busy} onClick={() => onApply(proposal.id)}>
+                Apply
+              </button>
+            ) : (
+              <span className="badge">{prettyState(proposal.status)}</span>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1797,6 +1749,13 @@ function BoardLane({
 function TicketCard({ ticket, selected, onClick }: { ticket: BoardTicket; selected: boolean; onClick: () => void }) {
   const action = nextActionForTicket(ticket);
   const phases = ticketPhaseItems(ticket);
+  const exceptionChips = [
+    ticket.priority === "high" ? "High" : "",
+    ticket.state === "BLOCKED" ? "Blocked" : "",
+    ticket.state === "REWORK" ? "Rework" : "",
+    ticket.latestReviewVerdict && ticket.latestReviewVerdict !== "passed" ? `Review ${prettyState(ticket.latestReviewVerdict)}` : "",
+    ticket.latestValidationVerdict && ticket.latestValidationVerdict !== "passed" ? `Validation ${prettyState(ticket.latestValidationVerdict)}` : "",
+  ].filter(Boolean);
   const { attributes, isDragging, listeners, setNodeRef, transform } = useDraggable({
     id: ticket.id,
     data: { state: ticket.state },
@@ -1822,13 +1781,11 @@ function TicketCard({ ticket, selected, onClick }: { ticket: BoardTicket; select
       <div className="next-action">
         <span>{action.label}</span>
       </div>
-      <div className="card-meta">
-        <span>{ticket.priority}</span>
-        <span>{prettyRole(ticket.assignedRole)}</span>
-        <span>{ticket.repoCount} repos</span>
-        {ticket.latestReviewVerdict ? <span>Review {prettyState(ticket.latestReviewVerdict)}</span> : null}
-        {ticket.latestValidationVerdict ? <span>Validation {prettyState(ticket.latestValidationVerdict)}</span> : null}
-      </div>
+      {exceptionChips.length ? (
+        <div className="card-meta">
+          {exceptionChips.map((chip) => <span key={chip}>{chip}</span>)}
+        </div>
+      ) : null}
     </button>
   );
 }
@@ -1919,64 +1876,88 @@ function TicketDetailPanel({
             </div>
           </section>
           {isEditing ? (
-            <TicketEditSection projectId={projectId} ticket={ticket} onRefresh={onRefresh} onSaved={() => setEditing(false)} />
+            <details className="detail-disclosure" open>
+              <summary>Plan</summary>
+              <TicketEditSection projectId={projectId} ticket={ticket} onRefresh={onRefresh} onSaved={() => setEditing(false)} />
+            </details>
           ) : (
-            <TicketPlanSummary ticket={ticket} />
+            <details className="detail-disclosure">
+              <summary>Plan</summary>
+              <TicketPlanSummary ticket={ticket} />
+            </details>
           )}
-          <ScopeSection
-            projectId={projectId}
-            ticket={ticket}
-            repos={repos}
-            tickets={tickets}
-            isEditing={isEditing}
-            onRefresh={onRefresh}
-          />
-          <section className="detail-section">
-            <h3>Evidence</h3>
-            <EvidenceRail items={buildTicketEvidence(ticket)} />
-            <EvidenceList ticket={ticket} />
-          </section>
-          <WorktreeAndArtifactSection
-            projectId={projectId}
-            ticket={ticket}
-            onRun={runAction}
-            onRefresh={onRefresh}
-            onFullRefresh={onFullRefresh}
-          />
-          <section className="detail-section">
-            <h3>Merge Readiness</h3>
-            <p>{ticket.mergeStatus?.statusSummary || (ticket.mergeStatus?.canMerge ? "Ready to merge." : "Not ready to merge yet.")}</p>
-            {ticket.mergeStatus?.blockingReasons?.length ? (
-              <div className="reason-list">
-                {ticket.mergeStatus.blockingReasons.map((reason) => (
-                  <article key={reason.code} className="reason-card">
-                    <strong>{reason.summary || reason.message || prettyState(reason.code)}</strong>
-                    <span>{reason.detail || reason.source || ""}</span>
+          <details className="detail-disclosure">
+            <summary>Scope</summary>
+            <ScopeSection
+              projectId={projectId}
+              ticket={ticket}
+              repos={repos}
+              tickets={tickets}
+              isEditing={isEditing}
+              onRefresh={onRefresh}
+            />
+          </details>
+          <details className="detail-disclosure">
+            <summary>Evidence</summary>
+            <section className="detail-section">
+              <h3>Evidence</h3>
+              <EvidenceRail items={buildTicketEvidence(ticket)} />
+              <EvidenceList ticket={ticket} />
+            </section>
+          </details>
+          <details className="detail-disclosure">
+            <summary>Worktrees</summary>
+            <WorktreeAndArtifactSection
+              projectId={projectId}
+              ticket={ticket}
+              onRun={runAction}
+              onRefresh={onRefresh}
+              onFullRefresh={onFullRefresh}
+            />
+          </details>
+          <details className="detail-disclosure">
+            <summary>Merge</summary>
+            <section className="detail-section">
+              <h3>Merge Readiness</h3>
+              <p>{ticket.mergeStatus?.statusSummary || (ticket.mergeStatus?.canMerge ? "Ready to merge." : "Not ready to merge yet.")}</p>
+              {ticket.mergeStatus?.blockingReasons?.length ? (
+                <div className="reason-list">
+                  {ticket.mergeStatus.blockingReasons.map((reason) => (
+                    <article key={reason.code} className="reason-card">
+                      <strong>{reason.summary || reason.message || prettyState(reason.code)}</strong>
+                      <span>{reason.detail || reason.source || ""}</span>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          </details>
+          <details className="detail-disclosure">
+            <summary>Timeline</summary>
+            <section className="detail-section">
+              <h3>Timeline</h3>
+              <div className="timeline">
+                {ticket.events.slice(-8).map((event) => (
+                  <article key={event.id}>
+                    <span>{prettyState(event.type)}</span>
+                    <strong>{event.summary}</strong>
+                    <time>{formatDate(event.createdAt)}</time>
                   </article>
                 ))}
               </div>
-            ) : null}
-          </section>
-          <section className="detail-section">
-            <h3>Timeline</h3>
-            <div className="timeline">
-              {ticket.events.slice(-8).map((event) => (
-                <article key={event.id}>
-                  <span>{prettyState(event.type)}</span>
-                  <strong>{event.summary}</strong>
-                  <time>{formatDate(event.createdAt)}</time>
-                </article>
-              ))}
-            </div>
-          </section>
-          <TicketDangerZone
-            projectId={projectId}
-            ticket={ticket}
-            busy={busy}
-            onRun={runAction}
-            onRefresh={onRefresh}
-            onFullRefresh={onFullRefresh}
-          />
+            </section>
+          </details>
+          <details className="detail-disclosure">
+            <summary>Advanced</summary>
+            <TicketDangerZone
+              projectId={projectId}
+              ticket={ticket}
+              busy={busy}
+              onRun={runAction}
+              onRefresh={onRefresh}
+              onFullRefresh={onFullRefresh}
+            />
+          </details>
         </div>
       )}
     </>

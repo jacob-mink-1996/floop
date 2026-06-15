@@ -212,8 +212,8 @@ async function runWalkthrough(page, appUrl) {
   await refresh(page);
   await pause(1000);
 
-  await clickByText(page, "Ops");
-  await page.getByText("Run Subway").first().waitFor();
+  await clickByText(page, "Cockpit");
+  await page.getByText("Agent Work").first().waitFor();
   await page.getByText("Attention").first().waitFor();
   await page.getByText("Ceremony proposals").first().waitFor();
   await page.getByText("Blocked").first().waitFor();
@@ -239,7 +239,10 @@ async function createTicketFromUi(page, { title, brief }) {
 }
 
 async function runTicketLoopFromUi(page, title) {
-  await clickByText(page, title);
+  if ((await page.locator(".ticket-detail:visible").count()) === 0) {
+    await clickByText(page, "Board");
+    await clickByText(page, title);
+  }
   await page.getByText("Start developer lane").first().waitFor();
   await fillByName(page, "summary", "Operator starts the real developer agent.");
   await clickByText(page, "Start run");
@@ -270,6 +273,7 @@ async function revealTicketState(page, title, label) {
   } catch {
     await closeTicketDetail(page);
     await refresh(page);
+    await clickByText(page, "Board");
     await clickByText(page, title);
     await page.getByText(label).first().waitFor({ timeout: 10_000 });
   }

@@ -809,7 +809,7 @@ h3 {
 
 .ops-panel {
   display: grid;
-  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.55fr) repeat(2, minmax(140px, 0.5fr));
+  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.55fr) minmax(180px, 0.55fr);
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
@@ -1019,6 +1019,19 @@ h3 {
 .attention-panel .decision-item {
   border-left: 4px solid var(--amber);
   padding-left: 8px;
+}
+
+.decision-external_agent {
+  border-left-color: var(--teal);
+}
+
+.decision-approval,
+.decision-validation {
+  border-left-color: var(--red);
+}
+
+.decision-merge {
+  border-left-color: var(--green);
 }
 
 .agent-inbox {
@@ -1504,12 +1517,6 @@ h3 {
   line-height: 1;
 }
 
-.proposal-buckets {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
 .proposal-bucket {
   display: grid;
   align-content: start;
@@ -1520,8 +1527,26 @@ h3 {
   background: var(--panel);
 }
 
+.proposal-bucket-flat {
+  border-radius: 0;
+}
+
 .proposal-applied {
   opacity: 0.72;
+}
+
+.inline-details {
+  display: grid;
+  gap: 5px;
+}
+
+.inline-details summary {
+  width: fit-content;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .ops-column {
@@ -2377,6 +2402,41 @@ textarea {
   gap: 10px;
   border-top: 1px solid var(--line);
   padding-top: 14px;
+}
+
+.detail-disclosure {
+  display: grid;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.detail-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.detail-disclosure > summary::after {
+  content: "+";
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  color: var(--teal);
+}
+
+.detail-disclosure[open] > summary::after {
+  content: "-";
+}
+
+.detail-disclosure .detail-section {
+  border-top: 0;
+  padding-top: 8px;
 }
 
 .next-action-panel {
