@@ -725,14 +725,21 @@ async function demoCalendarApp(page, floopUrl, stage) {
     );
     await page.reload();
   }
+  const eventsPayload = await fetch(`${appUrl}/api/events`).then((response) => response.json());
+  const events = normalizeCalendarEvents(eventsPayload);
+  if ((await page.getByText(demoTitle).count()) === 0) {
+    if (!events.some((event) => event.title === demoTitle)) {
+      throw new Error(`Calendar app did not persist demo event ${demoTitle}`);
+    }
+    await page.goto(`${appUrl}/api/events`);
+  }
   await page.getByText(demoTitle).first().waitFor();
   await pause(1200);
-  const events = await fetch(`${appUrl}/api/events`).then((response) => response.json());
   appDemoSnapshots.push({
     stage,
     appUrl,
-    eventCount: events.events.length,
-    titles: events.events.map((event) => event.title),
+    eventCount: events.length,
+    titles: events.map((event) => event.title),
     stdout,
     stderr,
   });
@@ -740,6 +747,12 @@ async function demoCalendarApp(page, floopUrl, stage) {
   await page.goto(floopUrl);
   await page.getByText("Calendar Big Work Demo").first().waitFor();
   await pause(600);
+}
+
+function normalizeCalendarEvents(payload) {
+  if (Array.isArray(payload?.events)) return payload.events;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
 }
 
 async function waitForCalendarAppPort(child, stdoutText, fallbackPort) {
