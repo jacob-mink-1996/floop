@@ -1489,10 +1489,16 @@ function initializeCalendarRepo(targetRepoPath) {
   );
   writeFileSync(join(targetRepoPath, "README.md"), "# Calendar App\n\nGreenfield calendar app fixture.\n", "utf8");
   execFileSync("git", ["-C", targetRepoPath, "init", "-b", "main"], { stdio: "ignore" });
-  execFileSync("git", ["-C", targetRepoPath, "config", "user.email", "floop@example.invalid"]);
-  execFileSync("git", ["-C", targetRepoPath, "config", "user.name", "Floop Big Work"]);
+  appendLocalGitIdentity(targetRepoPath);
   execFileSync("git", ["-C", targetRepoPath, "add", "-A"]);
   execFileSync("git", ["-C", targetRepoPath, "commit", "-m", "Seed calendar app"], { stdio: "ignore" });
+}
+
+function appendLocalGitIdentity(repoPath) {
+  const configPath = join(repoPath, ".git", "config");
+  const current = readFileSync(configPath, "utf8");
+  if (/\[user\]/.test(current)) return;
+  writeFileSync(configPath, `${current.trimEnd()}\n[user]\n\temail = floop@example.invalid\n\tname = Floop Big Work\n`, "utf8");
 }
 
 function finalizeVideo(directory, trimSuggestion = [], recordingDurationSeconds = 0) {
