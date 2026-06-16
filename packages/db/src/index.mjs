@@ -272,6 +272,8 @@ export function createSqliteStore(options = {}) {
     requiredProjectPolicy,
     requiredText,
     withTransaction,
+    startAutoRoutedLaneExecution,
+    getStore: () => store,
     assertAutomaticTicketTransition,
   });
 

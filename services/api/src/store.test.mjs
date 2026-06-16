@@ -1623,6 +1623,91 @@ test("store bypasses human merge approval in fully autonomous mode", () => {
   store.close();
 });
 
+test("store routes merge rework back to the previous working lane in autonomous mode", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: false,
+    requireHumanApprovalBeforeMerge: false,
+    interactionMode: "fully_autonomous",
+  });
+
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Prepare a merge conflict rework test.",
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation is ready for merge.",
+  });
+  assert.equal(store.getTicket("project_floop", "ticket_project_floop_2").state, "READY_TO_MERGE");
+
+  const started = store.startMergeRun("project_floop", "ticket_project_floop_2", {
+    strategy: "squash",
+    approvedByKind: "system",
+    approvedByRef: "floop-auto",
+    claimToken: "merge-worker",
+  });
+  store.completeMergeRun("project_floop", started.id, {
+    status: "rework",
+    summaryMd: "Merge conflicted against trunk. Rebase the implementation branch and retry.",
+    artifacts: [{ kind: "report", label: "merge conflict summary", uri: "file:///tmp/merge-conflict.json" }],
+  });
+
+  const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+  const developerRuns = ticket.executions.filter((execution) => execution.role === "developer");
+  assert.equal(ticket.state, "WORKING");
+  assert.equal(developerRuns.length, 2);
+  assert.equal(developerRuns[0].status, "running");
+  assert.match(developerRuns[0].summaryMd || ticket.latestSummary, /merge requested rework|merge evidence/i);
+  assert.equal(store.listAgentMessages("project_floop", { intent: "suggest_dispatch" }).length, 0);
+
+  store.close();
+});
+
+test("store suggests merge rework dispatch in operator-approved mode", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: false,
+    requireHumanApprovalBeforeMerge: false,
+    interactionMode: "operator_approved",
+  });
+
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Prepare operator-approved merge conflict rework test.",
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation is ready for operator-approved merge.",
+  });
+  const started = store.startMergeRun("project_floop", "ticket_project_floop_2", {
+    strategy: "squash",
+    approvedByKind: "system",
+    approvedByRef: "floop-auto",
+    claimToken: "merge-worker",
+  });
+  store.completeMergeRun("project_floop", started.id, {
+    status: "rework",
+    summaryMd: "Merge conflicted against trunk. Let the developer resolve the rebase.",
+    artifacts: [{ kind: "report", label: "merge conflict summary", uri: "file:///tmp/merge-conflict.json" }],
+  });
+
+  const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+  const developerRuns = ticket.executions.filter((execution) => execution.role === "developer");
+  const suggestion = store
+    .listAgentMessages("project_floop", { intent: "suggest_dispatch" })
+    .find((message) => message.target.ticketId === "ticket_project_floop_2");
+  assert.equal(ticket.state, "REWORK");
+  assert.equal(developerRuns.length, 1);
+  assert.ok(suggestion);
+  assert.equal(suggestion.metadata.role, "developer");
+  assert.match(suggestion.body, /merge requested rework|merge evidence/i);
+
+  store.close();
+});
+
 test("store enforces merge validation-profile policy before merge", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   store.updateProjectPolicy("project_floop", {

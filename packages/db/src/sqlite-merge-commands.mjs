@@ -30,6 +30,8 @@ export function createMergeCommands({
   requiredProjectPolicy,
   requiredText,
   withTransaction,
+  startAutoRoutedLaneExecution,
+  getStore,
   assertAutomaticTicketTransition,
 }) {
   const commands = {
@@ -293,6 +295,16 @@ export function createMergeCommands({
           ...transitionReason,
         });
       });
+
+      if (status === "rework") {
+        startAutoRoutedLaneExecution?.({
+          store: getStore?.(),
+          database,
+          projectId,
+          ticketId: mergeRun.ticket_id,
+          reason: `${ticket.key} merge requested rework; Floop routed the previous working lane with merge evidence.`,
+        });
+      }
 
       return commands.getMergeRun(projectId, mergeRunId);
     },
