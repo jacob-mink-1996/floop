@@ -664,17 +664,17 @@ async function mergeTicketNow(projectId, title) {
     const sourceBranch = selectMergeSourceBranch(detail, target.repoId) || target.branchName;
     assert.ok(sourceBranch, `Expected merge source branch for ${detail.key} repo ${target.repoId}`);
     try {
-      execFileSync("git", ["-C", repo.localPath, "merge", "--squash", sourceBranch], { encoding: "utf8" });
+      gitSync(["-C", repo.localPath, "merge", "--squash", sourceBranch], { encoding: "utf8" });
     } catch (error) {
       throw new Error(
         `Failed to squash merge ${sourceBranch} into ${repo.localPath}\nSTDOUT:\n${error.stdout || ""}\nSTDERR:\n${error.stderr || ""}`,
       );
     }
-    const hasStagedChanges = execFileSync("git", ["-C", repo.localPath, "diff", "--cached", "--name-only"], { encoding: "utf8" }).trim();
+    const hasStagedChanges = gitSync(["-C", repo.localPath, "diff", "--cached", "--name-only"], { encoding: "utf8" }).trim();
     if (hasStagedChanges) {
-      execFileSync("git", ["-C", repo.localPath, "commit", "-m", `${detail.key}: ${detail.title}`], { stdio: "ignore" });
+      gitSync(["-C", repo.localPath, "commit", "-m", `${detail.key}: ${detail.title}`], { stdio: "ignore" });
     } else {
-      execFileSync("git", ["-C", repo.localPath, "merge", "--abort"], { stdio: "ignore" });
+      gitSync(["-C", repo.localPath, "merge", "--abort"], { stdio: "ignore" });
     }
   }
 
@@ -918,7 +918,7 @@ function collectProof() {
     appDemoSnapshots,
     runObservability,
     targetRepoHead: existsSync(targetRepoPath)
-      ? execFileSync("git", ["-C", targetRepoPath, "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim()
+      ? gitSync(["-C", targetRepoPath, "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim()
       : "",
   };
 }
@@ -1488,10 +1488,10 @@ function initializeCalendarRepo(targetRepoPath) {
     "utf8",
   );
   writeFileSync(join(targetRepoPath, "README.md"), "# Calendar App\n\nGreenfield calendar app fixture.\n", "utf8");
-  execFileSync("git", ["-C", targetRepoPath, "init", "-b", "main"], { stdio: "ignore" });
+  gitSync(["-C", targetRepoPath, "init", "-b", "main"], { stdio: "ignore" });
   appendLocalGitIdentity(targetRepoPath);
-  execFileSync("git", ["-C", targetRepoPath, "add", "-A"]);
-  execFileSync("git", ["-C", targetRepoPath, "commit", "-m", "Seed calendar app"], { stdio: "ignore" });
+  gitSync(["-C", targetRepoPath, "add", "-A"]);
+  gitSync(["-C", targetRepoPath, "commit", "-m", "Seed calendar app"], { stdio: "ignore" });
 }
 
 function appendLocalGitIdentity(repoPath) {
@@ -1499,6 +1499,20 @@ function appendLocalGitIdentity(repoPath) {
   const current = readFileSync(configPath, "utf8");
   if (/\[user\]/.test(current)) return;
   writeFileSync(configPath, `${current.trimEnd()}\n[user]\n\temail = floop@example.invalid\n\tname = Floop Big Work\n`, "utf8");
+}
+
+function gitSync(args, options = {}) {
+  try {
+    return execFileSync("git", args, options);
+  } catch (error) {
+    if (error?.code === "EPERM" && error.status === 0) {
+      if (options.encoding && options.encoding !== "buffer") {
+        return Buffer.isBuffer(error.stdout) ? error.stdout.toString(options.encoding) : error.stdout || "";
+      }
+      return error.stdout || Buffer.alloc(0);
+    }
+    throw error;
+  }
 }
 
 function finalizeVideo(directory, trimSuggestion = [], recordingDurationSeconds = 0) {
