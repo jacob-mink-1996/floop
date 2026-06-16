@@ -8,6 +8,7 @@ const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_LEASE_MS = 30_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_RETRY_BACKOFF_MS = 250;
+const DEFAULT_RESULT_EXIT_GRACE_MS = 1000;
 
 export function createExecutionDriver(options = {}) {
   if (!options.store) {
@@ -20,17 +21,22 @@ export function createExecutionDriver(options = {}) {
     leaseMs: options.leaseMs || DEFAULT_LEASE_MS,
     maxAttempts: options.maxAttempts || DEFAULT_MAX_ATTEMPTS,
     retryBackoffMs: options.retryBackoffMs || DEFAULT_RETRY_BACKOFF_MS,
+    resultExitGraceMs:
+      Number.isFinite(options.resultExitGraceMs) && options.resultExitGraceMs >= 0
+        ? options.resultExitGraceMs
+        : DEFAULT_RESULT_EXIT_GRACE_MS,
     logger: options.logger || console,
   });
 }
 
 class ExecutionDriver {
-  constructor({ store, pollIntervalMs, leaseMs, maxAttempts, retryBackoffMs, logger }) {
+  constructor({ store, pollIntervalMs, leaseMs, maxAttempts, retryBackoffMs, resultExitGraceMs, logger }) {
     this.store = store;
     this.pollIntervalMs = pollIntervalMs;
     this.leaseMs = leaseMs;
     this.maxAttempts = maxAttempts;
     this.retryBackoffMs = retryBackoffMs;
+    this.resultExitGraceMs = resultExitGraceMs;
     this.logger = logger;
     this.timer = null;
     this.inFlight = new Map();
@@ -210,6 +216,7 @@ class ExecutionDriver {
           cwd: execution.worktrees[0]?.path || project.workspaceRoot,
           env: buildExecutionEnv(project, ticket, execution, runtime),
           signal,
+          resultExitGraceMs: this.resultExitGraceMs,
         });
         const completion = await buildCompletionPayload(result, runtime, execution, ticket);
         lastCompletion = completion;
@@ -528,6 +535,8 @@ async function executeAdapterRun(adapterRun, options) {
       stdoutPath: options.runtime.stdoutPath,
       stderrPath: options.runtime.stderrPath,
       jsonlPath: options.runtime.agentEventsPath,
+      resultPath: options.runtime.resultPath,
+      resultExitGraceMs: options.resultExitGraceMs,
       signal: options.signal,
       metadata: buildProcessMetadata(adapterRun, options),
     });
@@ -536,7 +545,7 @@ async function executeAdapterRun(adapterRun, options) {
   return runShellCommand(adapterRun.command, options);
 }
 
-function runShellCommand(command, { cwd, env, runtime, signal }) {
+function runShellCommand(command, { cwd, env, runtime, signal, resultExitGraceMs }) {
   return runProcess(command, [], {
     cwd,
     env,
@@ -544,6 +553,8 @@ function runShellCommand(command, { cwd, env, runtime, signal }) {
     stdoutPath: runtime.stdoutPath,
     stderrPath: runtime.stderrPath,
     jsonlPath: runtime.agentEventsPath,
+    resultPath: runtime.resultPath,
+    resultExitGraceMs,
     signal,
     metadata: { adapter: "shell", command },
   });
@@ -552,7 +563,19 @@ function runShellCommand(command, { cwd, env, runtime, signal }) {
 function runProcess(
   command,
   args,
-  { cwd, env, shell = false, stdin = "", stdoutPath = "", stderrPath = "", jsonlPath = "", signal, metadata = {} },
+  {
+    cwd,
+    env,
+    shell = false,
+    stdin = "",
+    stdoutPath = "",
+    stderrPath = "",
+    jsonlPath = "",
+    resultPath = "",
+    resultExitGraceMs = DEFAULT_RESULT_EXIT_GRACE_MS,
+    signal,
+    metadata = {},
+  },
 ) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(command, args, {
@@ -568,6 +591,8 @@ function runProcess(
     let cancelled = false;
     let cancelReason = "";
     let killTimer = null;
+    let resultExitTimer = null;
+    let resultFileCompleted = false;
     let stdoutWrite = stdoutPath ? writeFile(stdoutPath, "", "utf8") : Promise.resolve();
     let stderrWrite = stderrPath ? writeFile(stderrPath, "", "utf8") : Promise.resolve();
     let jsonlWrite = jsonlPath ? writeFile(jsonlPath, "", "utf8") : Promise.resolve();
@@ -588,6 +613,29 @@ function runProcess(
 
     if (stdin) {
       child.stdin?.end(stdin);
+    }
+
+    if (resultPath) {
+      resultExitTimer = startResultExitWatcher({
+        resultPath,
+        graceMs: resultExitGraceMs,
+        onDetected: () => {
+          if (resultFileCompleted) {
+            return;
+          }
+          resultFileCompleted = true;
+          record({ event: "process.result_detected", resultPath, graceMs: resultExitGraceMs, pid: child.pid || null });
+          if (child.exitCode === null && !child.killed) {
+            record({ event: "process.result_exit_requested", resultPath, pid: child.pid || null });
+            killChildProcessTree(child, "SIGTERM");
+            killTimer = setTimeout(() => {
+              record({ event: "process.kill_requested", reason: "result_file_completed", pid: child.pid || null });
+              killChildProcessTree(child, "SIGKILL");
+            }, 3000);
+            killTimer.unref?.();
+          }
+        },
+      });
     }
 
     child.stdout.on("data", (chunk) => {
@@ -627,21 +675,24 @@ function runProcess(
     });
     child.on("close", (code) => {
       if (killTimer) clearTimeout(killTimer);
+      if (resultExitTimer) resultExitTimer();
       signal?.removeEventListener("abort", cancel);
       record({
         event: "process.closed",
         exitCode: code ?? 1,
         cancelled,
         cancelReason,
+        resultFileCompleted,
       });
       Promise.all([stdoutWrite, stderrWrite, jsonlWrite])
         .then(() => {
           resolvePromise({
-            exitCode: cancelled && code === null ? 130 : code ?? 1,
+            exitCode: resultFileCompleted ? 0 : cancelled && code === null ? 130 : code ?? 1,
             stdout,
             stderr,
-            cancelled,
-            cancelReason,
+            cancelled: resultFileCompleted ? false : cancelled,
+            cancelReason: resultFileCompleted ? "" : cancelReason,
+            resultFileCompleted,
           });
         })
         .catch(rejectPromise);
@@ -675,6 +726,35 @@ function killChildProcessTree(child, signal) {
   } catch {
     // Process may already be gone.
   }
+}
+
+function startResultExitWatcher({ resultPath, graceMs, onDetected }) {
+  let detected = false;
+  let graceTimer = null;
+  const pollTimer = setInterval(async () => {
+    if (detected) {
+      return;
+    }
+    try {
+      const result = await readResultFile(resultPath);
+      if (!result || typeof result !== "object" || Array.isArray(result)) {
+        return;
+      }
+      detected = true;
+      clearInterval(pollTimer);
+      graceTimer = setTimeout(onDetected, Math.max(0, graceMs));
+      graceTimer.unref?.();
+    } catch {
+      // The agent may still be writing result.json; wait for a parseable file.
+    }
+  }, 100);
+  pollTimer.unref?.();
+  return () => {
+    clearInterval(pollTimer);
+    if (graceTimer) {
+      clearTimeout(graceTimer);
+    }
+  };
 }
 
 async function writeJsonlEvent(filename, event) {

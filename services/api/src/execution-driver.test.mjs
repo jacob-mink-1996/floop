@@ -1073,6 +1073,70 @@ setInterval(() => {}, 1000);
   }
 });
 
+test("execution driver completes when adapter writes result JSON and keeps running", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-driver-result-hang-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const stoppedPath = join(fixtureDir, "adapter-stopped.txt");
+  const fakeAdapterPath = join(fixtureDir, "fake-result-hang-adapter.js");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    fakeAdapterPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
+  outcome: "completed",
+  summaryMd: "Adapter wrote a valid result before hanging."
+}));
+process.on("SIGTERM", () => {
+  fs.writeFileSync(${JSON.stringify(stoppedPath)}, "stopped");
+  process.exit(0);
+});
+setInterval(() => {}, 1000);
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "shell",
+      model: "fixture",
+      config: {
+        command: `"${process.execPath}" "${fakeAdapterPath}"`,
+      },
+    });
+
+    const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Complete after result JSON appears.",
+    });
+    const driver = createExecutionDriver({
+      store,
+      logger: silentLogger(),
+      resultExitGraceMs: 10,
+    });
+
+    await driver.pollOnce();
+
+    const completed = store.getExecution("project_floop", execution.id);
+    const eventsArtifact = completed.artifacts.find((artifact) => artifact.label === "Adapter events JSONL");
+    const events = readFileSync(new URL(eventsArtifact.uri), "utf8");
+
+    assert.equal(completed.outcome, "completed");
+    assert.equal(completed.summaryMd, "Adapter wrote a valid result before hanging.");
+    assert.equal(readFileSync(stoppedPath, "utf8"), "stopped");
+    assert.match(events, /process\.result_detected/);
+    assert.match(events, /"resultFileCompleted":true/);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 async function waitForFile(filename, timeoutMs = 2000) {
   const startedAt = Date.now();
   while (!existsSync(filename)) {
