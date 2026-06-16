@@ -251,6 +251,65 @@ process.stdin.on("end", () => {
   }
 });
 
+test("execution driver tells architect lanes not to create follow-up tickets by default", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-architect-codex-driver-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const fakeCodexPath = join(fixtureDir, "fake-architect-codex.js");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    fakeCodexPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+});
+process.stdin.on("end", () => {
+  fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
+    outcome: "completed",
+    summaryMd: prompt.includes("Do not create follow-up tickets") ? "Architect guidance present." : "Architect guidance missing."
+  }));
+});
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    store.updateRoleProfile("project_floop", "architect", {
+      adapter: "codex",
+      model: "codex-latest",
+      config: {
+        executable: fakeCodexPath,
+      },
+    });
+
+    const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "architect",
+      reason: "Prepare architecture guidance.",
+    });
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+
+    await driver.pollOnce();
+
+    const completed = store.getExecution("project_floop", execution.id);
+    const promptPath = join(workspaceRoot, ".floop", "executions", execution.id, "prompt.md");
+
+    assert.equal(completed.outcome, "completed");
+    assert.match(completed.summaryMd, /Architect guidance present/);
+    assert.match(readFileSync(promptPath, "utf8"), /Do not create follow-up tickets/);
+    assert.match(readFileSync(promptPath, "utf8"), /unless the ticket explicitly asks/);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("execution driver can persist embedded review evidence from the codex reviewer lane", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-reviewer-codex-driver-"));
   const workspaceRoot = join(fixtureDir, "workspace");

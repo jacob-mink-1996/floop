@@ -1182,7 +1182,8 @@ function buildCodexRoleGuidance(role, policy = {}) {
   if (role === "architect") {
     return [
       "- Define the smallest useful technical plan, boundaries, risks, and validation approach for the ticket.",
-      "- Prefer durable project artifacts such as docs, diagrams, or follow-up tickets when they help the next lane act.",
+      "- Prefer durable project artifacts such as docs or diagrams when they help the next lane act.",
+      "- Put suggested follow-up work in the plan or summary. Do not create follow-up tickets or use outcome \"followup_created\" unless the ticket explicitly asks the architect lane to create tickets.",
       "- Do not implement production code unless the ticket explicitly asks the architect lane to do so.",
     ].join("\n");
   }
