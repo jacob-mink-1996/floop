@@ -810,6 +810,7 @@ function normalizeRepoTargets(value, referenceTargets = []) {
   }
 
   return value
+    .map((target) => (typeof target === "string" ? { repoSlug: target } : target))
     .filter((target) => target && typeof target === "object" && !Array.isArray(target))
     .map((target) => {
       const reference = resolveReferenceRepoTarget(target, referenceTargets);

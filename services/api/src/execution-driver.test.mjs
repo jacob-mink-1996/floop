@@ -182,6 +182,12 @@ process.stdin.on("end", () => {
               targetScopeMd: "Child implementation."
             }
           ]
+        },
+        {
+          title: "Implement child from string target",
+          brief: "Uses a bare repo slug string.",
+          assignedRole: "developer",
+          repoTargets: ["floop"]
         }
       ]
     }),
@@ -221,14 +227,24 @@ process.stdin.on("end", () => {
     await driver.pollOnce();
 
     const completed = store.getExecution("project_floop", execution.id);
-    const childSummary = store.listTickets("project_floop", { parentTicketId: parent.id }).at(-1);
-    const child = store.getTicket("project_floop", childSummary.id);
+    const childSummaries = store.listTickets("project_floop", { parentTicketId: parent.id });
+    const child = store.getTicket(
+      "project_floop",
+      childSummaries.find((summary) => summary.title === "Implement child from slug").id,
+    );
+    const stringTargetChild = store.getTicket(
+      "project_floop",
+      childSummaries.find((summary) => summary.title === "Implement child from string target").id,
+    );
 
     assert.equal(completed.outcome, "followup_created");
     assert.equal(child.title, "Implement child from slug");
     assert.equal(child.repoTargets.length, 1);
     assert.equal(child.repoTargets[0].repoId, repo.id);
     assert.equal(child.repoTargets[0].branchName, "child-from-slug");
+    assert.equal(stringTargetChild.repoTargets.length, 1);
+    assert.equal(stringTargetChild.repoTargets[0].repoId, repo.id);
+    assert.equal(stringTargetChild.repoTargets[0].baseRef, parent.repoTargets[0].baseRef);
   } finally {
     store.close();
     rmSync(fixtureDir, { recursive: true, force: true });
