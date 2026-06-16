@@ -1482,6 +1482,8 @@ Before finishing:
 6. Write a JSON object to ${runtime.resultPath} with:
 ${resultContract}
 
+If you lack a decision, product detail, credential, policy call, or environmental fact needed to proceed, ask for it explicitly by returning outcome "blocked" with blockedKind "needs_human_input". Fully autonomous mode still allows this: Floop will surface the question on the ticket and can continue the lane after a human or agent response.
+
 If you are blocked or incomplete, say so explicitly in the JSON outcome fields instead of pretending success.`;
 }
 

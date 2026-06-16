@@ -588,6 +588,11 @@ test("blocked execution input requests can be answered through the API", async (
     assert.ok(request);
     assert.equal(request.target.ticketId, "ticket_project_floop_2");
     assert.equal(request.metadata.blockedKind, "needs_human_input");
+    assert.equal(
+      request.metadata.questionMd,
+      "Choose whether reminders are in-app only or browser notifications.",
+    );
+    assert.equal(request.body, request.metadata.questionMd);
 
     const response = await fetch(
       `${baseUrl}/api/v1/projects/project_floop/agent-messages/${request.id}/respond`,

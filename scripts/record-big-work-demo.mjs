@@ -54,6 +54,15 @@ const timeline = {
   marks: [],
   idleRanges: [],
 };
+const IDLE_CUT_BUFFER_SECONDS = 0.25;
+const IDLE_CUT_MERGE_GAP_SECONDS = 1.5;
+const MIN_IDLE_CUT_SECONDS = 0.75;
+const INTRO_KEEP_SECONDS = 36;
+const FINAL_KEEP_SECONDS = 38;
+const TRANSITION_PRE_SECONDS = 1.25;
+const TRANSITION_START_POST_SECONDS = 2.5;
+const TRANSITION_END_PRE_SECONDS = 2.5;
+const TRANSITION_END_POST_SECONDS = 3.5;
 
 try {
   initializeCalendarRepo(targetRepoPath);
@@ -893,7 +902,9 @@ function collectProof() {
     agentMode,
     timeline: {
       ...timeline,
-      trimSuggestion: buildTrimSuggestion(timeline.idleRanges),
+      idleDefinition:
+        "Idle is any time without an obvious ticket transition or screen work; background agent work is trimmed unless a visible state change is happening.",
+      trimSuggestion: buildTrimSuggestion(timeline.idleRanges, elapsedSeconds()),
     },
     projects,
     repos,
@@ -924,12 +935,90 @@ function collectProof() {
   };
 }
 
-function buildTrimSuggestion(idleRanges) {
-  return idleRanges.map((range) => ({
-    label: range.label,
-    removeFromSeconds: Number(Math.max(0, range.startSeconds + 1).toFixed(3)),
-    removeToSeconds: Number(Math.max(range.startSeconds + 1, range.endSeconds - 1).toFixed(3)),
-  })).filter((range) => range.removeToSeconds > range.removeFromSeconds);
+function buildTrimSuggestion(idleRanges, recordingDurationSeconds = 0) {
+  const keepRanges = buildVisibleTransitionKeepRanges(idleRanges, recordingDurationSeconds);
+  const cuts = [];
+  let cursor = 0;
+  for (const range of keepRanges) {
+    if (range.start - cursor >= MIN_IDLE_CUT_SECONDS) {
+      cuts.push({
+        labels: ["strict idle: no visible ticket transition or screen work"],
+        removeFromSeconds: Number(cursor.toFixed(3)),
+        removeToSeconds: Number(range.start.toFixed(3)),
+      });
+    }
+    cursor = Math.max(cursor, range.end);
+  }
+  if (Number.isFinite(recordingDurationSeconds) && recordingDurationSeconds - cursor >= MIN_IDLE_CUT_SECONDS) {
+    cuts.push({
+      labels: ["strict idle: no visible ticket transition or screen work"],
+      removeFromSeconds: Number(cursor.toFixed(3)),
+      removeToSeconds: Number(recordingDurationSeconds.toFixed(3)),
+    });
+  }
+
+  return mergeTrimCuts(cuts).map((range) => ({
+    label: range.labels.join(" + "),
+    removeFromSeconds: Number(range.removeFromSeconds.toFixed(3)),
+    removeToSeconds: Number(range.removeToSeconds.toFixed(3)),
+  }));
+}
+
+function buildVisibleTransitionKeepRanges(idleRanges, recordingDurationSeconds = 0) {
+  const boundedDuration = Number.isFinite(recordingDurationSeconds) && recordingDurationSeconds > 0
+    ? recordingDurationSeconds
+    : Number.POSITIVE_INFINITY;
+  const keepRanges = [];
+  const push = (start, end) => {
+    const bounded = {
+      start: Number(Math.max(0, start).toFixed(3)),
+      end: Number(Math.min(boundedDuration, end).toFixed(3)),
+    };
+    if (bounded.end - bounded.start >= MIN_IDLE_CUT_SECONDS) {
+      keepRanges.push(bounded);
+    }
+  };
+
+  push(0, INTRO_KEEP_SECONDS);
+  for (const range of idleRanges) {
+    push(range.startSeconds - TRANSITION_PRE_SECONDS, range.startSeconds + TRANSITION_START_POST_SECONDS);
+    push(range.endSeconds - TRANSITION_END_PRE_SECONDS, range.endSeconds + TRANSITION_END_POST_SECONDS);
+  }
+  if (Number.isFinite(boundedDuration)) {
+    push(boundedDuration - FINAL_KEEP_SECONDS, boundedDuration);
+  }
+
+  return mergeKeepRanges(keepRanges);
+}
+
+function mergeKeepRanges(keepRanges) {
+  const merged = [];
+  for (const range of keepRanges.sort((left, right) => left.start - right.start)) {
+    const previous = merged.at(-1);
+    if (previous && range.start <= previous.end + IDLE_CUT_BUFFER_SECONDS) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
+function mergeTrimCuts(cuts) {
+  const sorted = cuts
+    .filter((range) => range.removeToSeconds - range.removeFromSeconds >= MIN_IDLE_CUT_SECONDS)
+    .sort((left, right) => left.removeFromSeconds - right.removeFromSeconds);
+  const merged = [];
+  for (const cut of sorted) {
+    const previous = merged.at(-1);
+    if (previous && cut.removeFromSeconds - previous.removeToSeconds <= IDLE_CUT_MERGE_GAP_SECONDS) {
+      previous.removeToSeconds = Math.max(previous.removeToSeconds, cut.removeToSeconds);
+      previous.labels.push(...cut.labels);
+    } else {
+      merged.push({ ...cut });
+    }
+  }
+  return merged;
 }
 
 function collectAgentConversations(project) {

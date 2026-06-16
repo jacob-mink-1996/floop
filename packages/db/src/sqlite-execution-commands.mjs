@@ -611,7 +611,12 @@ function createBlockedInputRequest(store, projectId, ticket, execution, completi
   }
 
   const blockedKind = completion.blockedKind || "needs_human_input";
-  return store.createAgentMessage(projectId, {
+  const questionMd =
+    completion.remainingWorkMd ||
+    completion.expectedNextEvidenceMd ||
+    completion.summaryMd ||
+    `${ticket.key} is blocked and needs input before ${execution.role} can continue.`;
+  const request = store.createAgentMessage(projectId, {
     actor: "floop",
     source: "execution_blocked",
     intent: "request_input",
@@ -621,13 +626,10 @@ function createBlockedInputRequest(store, projectId, ticket, execution, completi
       role: execution.role,
     },
     summary: `${ticket.key} needs input`,
-    body:
-      completion.remainingWorkMd ||
-      completion.expectedNextEvidenceMd ||
-      completion.summaryMd ||
-      `${ticket.key} is blocked and needs input before ${execution.role} can continue.`,
+    body: questionMd,
     metadata: {
       blockedKind,
+      questionMd,
       role: execution.role,
       suggestedResponders: suggestedRespondersForBlockedKind(blockedKind, execution.role),
       formSchema: {
@@ -644,6 +646,25 @@ function createBlockedInputRequest(store, projectId, ticket, execution, completi
       },
     },
   });
+  store.createAgentMessage(projectId, {
+    actor: "floop",
+    source: "execution_blocked",
+    intent: "comment_on_ticket",
+    target: {
+      ticketId: ticket.id,
+      executionId: execution.id,
+      requestInputMessageId: request.id,
+    },
+    summary: `${ticket.key} blocked question`,
+    body: questionMd,
+    metadata: {
+      requestInputMessageId: request.id,
+      blockedKind,
+      role: execution.role,
+      hitlQuestion: true,
+    },
+  });
+  return request;
 }
 
 function suggestedRespondersForBlockedKind(blockedKind, role) {

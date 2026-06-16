@@ -365,6 +365,8 @@ process.stdin.on("end", () => {
     assert.match(completed.summaryMd, /Architect guidance present/);
     assert.match(readFileSync(promptPath, "utf8"), /Do not create follow-up tickets/);
     assert.match(readFileSync(promptPath, "utf8"), /unless the ticket explicitly asks/);
+    assert.match(readFileSync(promptPath, "utf8"), /blockedKind "needs_human_input"/);
+    assert.match(readFileSync(promptPath, "utf8"), /Fully autonomous mode still allows this/);
   } finally {
     store.close();
     rmSync(fixtureDir, { recursive: true, force: true });

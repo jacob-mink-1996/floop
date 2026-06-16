@@ -1184,7 +1184,20 @@ test("store creates and answers ticket unblock requests from blocked executions"
   assert.ok(request);
   assert.equal(request.target.ticketId, "ticket_project_floop_2");
   assert.equal(request.metadata.blockedKind, "needs_human_input");
+  assert.equal(
+    request.metadata.questionMd,
+    "Choose whether reminders are in-app only or browser notifications.",
+  );
+  assert.equal(request.body, request.metadata.questionMd);
   assert.equal(store.getTicket("project_floop", "ticket_project_floop_2").state, "BLOCKED");
+
+  const questionComment = store
+    .listAgentMessages("project_floop", { intent: "comment_on_ticket" })
+    .find((message) => message.metadata.requestInputMessageId === request.id);
+  assert.ok(questionComment);
+  assert.equal(questionComment.status, "pending");
+  assert.equal(questionComment.body, request.metadata.questionMd);
+  assert.equal(questionComment.metadata.hitlQuestion, true);
 
   const answered = store.respondAgentMessage("project_floop", request.id, {
     responseMd: "Use in-app reminders first; browser notifications are out of scope.",
@@ -1205,6 +1218,79 @@ test("store creates and answers ticket unblock requests from blocked executions"
       .listAgentMessages("project_floop", { intent: "comment_on_ticket", status: "attached" })
       .some((message) => message.metadata.responseToMessageId === request.id),
     true,
+  );
+
+  store.close();
+});
+
+test("store surfaces blocked questions as attached ticket comments in fully autonomous mode", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "fully_autonomous",
+  });
+
+  const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "architect",
+    reason: "Define the system with room for questions.",
+  });
+  store.completeExecution("project_floop", execution.id, {
+    outcome: "blocked",
+    summaryMd: "Need a product decision.",
+    remainingWorkMd: "Should the calendar support shared team availability or only personal events?",
+    blockedKind: "needs_human_input",
+  });
+
+  const request = store
+    .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+    .find((message) => message.target.executionId === execution.id);
+  const questionComment = store
+    .listAgentMessages("project_floop", { intent: "comment_on_ticket", status: "attached" })
+    .find((message) => message.metadata.requestInputMessageId === request?.id);
+
+  assert.ok(request);
+  assert.ok(questionComment);
+  assert.equal(questionComment.promotedKind, "ticket_event");
+  assert.equal(questionComment.body, request.metadata.questionMd);
+  assert.equal(questionComment.metadata.hitlQuestion, true);
+
+  store.close();
+});
+
+test("store does not treat ordinary ticket comments as unblock responses", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Start work before a normal comment arrives.",
+  });
+  store.completeExecution("project_floop", execution.id, {
+    outcome: "blocked",
+    summaryMd: "Need input before continuing.",
+    remainingWorkMd: "Which reminder channel should be implemented first?",
+    blockedKind: "needs_human_input",
+  });
+
+  const ordinaryComment = store.createAgentMessage("project_floop", {
+    actor: "jacob",
+    source: "human",
+    intent: "comment_on_ticket",
+    target: { ticketId: "ticket_project_floop_2" },
+    summary: "Related note",
+    body: "This is useful context, but it is not an answer to the blocked request.",
+  });
+
+  assert.throws(
+    () => store.respondAgentMessage("project_floop", ordinaryComment.id, {
+      responseMd: "Continue.",
+      responderKind: "human",
+      responderRef: "jacob",
+    }),
+    /Only input requests can be responded to/,
+  );
+  assert.equal(
+    store
+      .getTicket("project_floop", "ticket_project_floop_2")
+      .executions.some((item) => item.role === "developer" && item.iteration === 2),
+    false,
   );
 
   store.close();
