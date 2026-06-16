@@ -98,9 +98,10 @@ try {
   assert.equal(proof.repos.length, 1);
   assert.equal(proof.parentTickets.length, 1);
   assert.equal(proof.featureTickets.length >= 4, true);
-  assert.equal(proof.featureTickets.every((ticket) => ticket.state === "DONE"), true);
-  assert.equal(proof.reviewCount >= proof.featureTickets.length, true);
-  assert.equal(proof.validationCount >= proof.featureTickets.length, true);
+  assert.equal(proof.demoFeatureTickets.length >= 4, true);
+  assert.equal(proof.demoFeatureTickets.every((ticket) => ticket.state === "DONE"), true);
+  assert.equal(proof.reviewCount >= proof.demoFeatureTickets.length, true);
+  assert.equal(proof.validationCount >= proof.demoFeatureTickets.length, true);
   assert.equal(proof.appDemoSnapshots.some((snapshot) => snapshot.stage === "final"), true);
   assert.equal(proof.agentConversations.length >= 14, true);
   assert.equal(proof.agentConversations.every((conversation) => conversation.inputContext && conversation.result), true);
@@ -560,7 +561,11 @@ async function waitForFeatureTickets(projectId, parentTicketId, count) {
 }
 
 function resolveDemoFeatureTickets(tickets) {
-  const remaining = [...tickets];
+  const skipped = tickets.filter((ticket) => (ticket.assignedRole || ticket.assigned_role || "") !== "developer");
+  const remaining = tickets.filter((ticket) => (ticket.assignedRole || ticket.assigned_role || "") === "developer");
+  if (remaining.length < 4) {
+    throw new Error(`Expected at least 4 developer feature tickets, found ${remaining.length}`);
+  }
   const pick = (label, keywords, fallbackIndex) => {
     const ranked = remaining
       .map((ticket) => ({ ticket, score: scoreTicketIntent(ticket, keywords) }))
@@ -577,7 +582,7 @@ function resolveDemoFeatureTickets(tickets) {
   const recurrence = pick("recurrence", ["recurr", "repeat", "daily", "weekly"], 0);
   const reminders = pick("reminders", ["reminder", "notification", "notify"], 0);
   const final = pick("final integration", ["integrat", "final", "end-to-end", "complete"], 0);
-  return { vertical, recurrence, reminders, final, extras: remaining };
+  return { vertical, recurrence, reminders, final, extras: remaining, skipped };
 }
 
 function scoreTicketIntent(ticket, keywords) {
@@ -873,6 +878,7 @@ function collectProof() {
   const parentTickets = tickets.filter((ticket) => ticket.title === "Build a calendar application with frontend and backend");
   const parent = parentTickets[0];
   const featureTickets = parent ? store.listTickets(project.id, { parentTicketId: parent.id }) : [];
+  const demoFeatureTickets = featureTickets.filter((ticket) => (ticket.assignedRole || ticket.assigned_role || "") === "developer");
   const artifacts = project ? store.listArtifacts(project.id, { limit: 200 }) : [];
   const runObservability = project ? collectRunObservability(project.id) : { summary: {}, runs: [] };
   return {
@@ -887,8 +893,9 @@ function collectProof() {
     tickets,
     parentTickets,
     featureTickets,
-    reviewCount: featureTickets.reduce((count, ticket) => count + (store.getTicket(project.id, ticket.id)?.reviews.length || 0), 0),
-    validationCount: featureTickets.reduce((count, ticket) => count + (store.getTicket(project.id, ticket.id)?.validations.length || 0), 0),
+    demoFeatureTickets,
+    reviewCount: demoFeatureTickets.reduce((count, ticket) => count + (store.getTicket(project.id, ticket.id)?.reviews.length || 0), 0),
+    validationCount: demoFeatureTickets.reduce((count, ticket) => count + (store.getTicket(project.id, ticket.id)?.validations.length || 0), 0),
     doneTickets: tickets.filter((ticket) => ticket.state === "DONE"),
     artifacts,
     workLogs: artifacts
