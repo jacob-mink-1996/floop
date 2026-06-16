@@ -1170,9 +1170,10 @@ ${roleGuidance}
 Before finishing:
 1. Inspect the execution context file.
 2. Complete the ${execution.role} lane work in the worktree.
-3. If you changed repository files, run git status, stage the intended files, and commit the work on the current branch.
-4. Summarize what you changed, verified, and what remains.
-5. Write a JSON object to ${runtime.resultPath} with:
+3. Use bounded commands only. Do not leave local servers, test watchers, or smoke checks running indefinitely; wrap server checks with timeouts or use in-process tests that close listeners.
+4. If you changed repository files, run git status, stage the intended files, and commit the work on the current branch.
+5. Summarize what you changed, verified, and what remains.
+6. Write a JSON object to ${runtime.resultPath} with:
 ${resultContract}
 
 If you are blocked or incomplete, say so explicitly in the JSON outcome fields instead of pretending success.`;

@@ -142,6 +142,7 @@ process.stdin.on("end", () => {
     assert.match(readFileSync(new URL(finalMessageArtifact.uri), "utf8"), /Final agent message/);
     assert.match(readFileSync(new URL(stdoutArtifact.uri), "utf8"), /fake codex stdout/);
     assert.match(readFileSync(promptPath, "utf8"), /Refinement policy: user approved/);
+    assert.match(readFileSync(promptPath, "utf8"), /Use bounded commands only/);
   } finally {
     store.close();
     rmSync(fixtureDir, { recursive: true, force: true });
