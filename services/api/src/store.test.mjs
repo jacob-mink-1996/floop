@@ -914,6 +914,46 @@ test("store preserves evidence lane suffixes for long implementation branch name
   store.close();
 });
 
+test("store bases reviewer lanes on generated implementation branches when ticket target has no branch", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  const repo = store.listRepos("project_floop")[0];
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "autonomous_with_review",
+  });
+
+  const ticket = store.createTicket("project_floop", {
+    title: "Build calendar vertical slice",
+    brief: "Generated child ticket without an explicit branch.",
+    state: "READY",
+    repoTargets: [
+      {
+        repoId: repo.id,
+        baseRef: "main",
+        targetScopeMd: "Generated implementation ticket.",
+      },
+    ],
+  });
+
+  const developer = store.createExecution("project_floop", ticket.id, {
+    role: "developer",
+    reason: "Complete generated child implementation.",
+  });
+  store.completeExecution("project_floop", developer.id, {
+    outcome: "completed",
+    summaryMd: "Generated implementation branch is ready.",
+  });
+
+  const updated = store.getTicket("project_floop", ticket.id);
+  const reviewer = updated.executions.find((execution) => execution.role === "reviewer");
+
+  assert.ok(reviewer);
+  assert.equal(reviewer.worktrees[0].baseRef, developer.worktrees[0].branchName);
+  assert.match(reviewer.worktrees[0].branchName, /-reviewer-iter-1$/);
+  assert.notEqual(reviewer.worktrees[0].baseRef, reviewer.worktrees[0].branchName);
+
+  store.close();
+});
+
 test("store gates routine evidence lane dispatch by interaction mode", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
 

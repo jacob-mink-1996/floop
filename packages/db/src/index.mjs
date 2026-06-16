@@ -817,7 +817,7 @@ function planExecutionWorktrees(database, projectId, ticket, execution, timestam
     execution.role === "developer" ? `iter-${execution.iteration}` : `${execution.role}-iter-${execution.iteration}`;
 
   return repoTargets.map((target) => {
-    const plannedBranch = planExecutionBranchName(ticket, target, execution);
+    const plannedBranch = planExecutionBranchName(database, projectId, ticket, target, execution);
     return {
       id: `worktree_${randomUUID()}`,
       projectId,
@@ -844,19 +844,62 @@ function planExecutionWorktrees(database, projectId, ticket, execution, timestam
   });
 }
 
-function planExecutionBranchName(ticket, target, execution) {
-  const ticketBranch = target.branchName || defaultWorktreeBranchName(ticket, execution.role, 1);
+function planExecutionBranchName(database, projectId, ticket, target, execution) {
+  const ticketBranch = target.branchName || defaultWorktreeBranchName(ticket, "developer", 1);
   if (execution.role === "reviewer" || execution.role === "validator" || Number(execution.iteration) > 1) {
+    const sourceBranch = resolveEvidenceLaneBaseRef(database, projectId, ticket.id, target.repoId, execution.role);
+    const baseRef = sourceBranch || ticketBranch;
     const suffix = `-${execution.role}-iter-${execution.iteration}`;
     return {
-      branchName: appendBranchSuffix(ticketBranch, suffix),
-      baseRef: ticketBranch,
+      branchName: appendBranchSuffix(baseRef, suffix),
+      baseRef,
     };
   }
   return {
     branchName: ticketBranch,
     baseRef: target.baseRef,
   };
+}
+
+function resolveEvidenceLaneBaseRef(database, projectId, ticketId, repoId, role) {
+  if (role === "validator") {
+    const reviewerBranch = latestCompletedWorktreeBranch(database, projectId, ticketId, repoId, ["reviewer"]);
+    if (reviewerBranch) {
+      return reviewerBranch;
+    }
+  }
+  if (role === "reviewer" || role === "validator") {
+    return latestCompletedWorktreeBranch(database, projectId, ticketId, repoId, [
+      "product_manager",
+      "architect",
+      "developer",
+      "integrator",
+    ]);
+  }
+  return "";
+}
+
+function latestCompletedWorktreeBranch(database, projectId, ticketId, repoId, roles) {
+  if (!roles.length) {
+    return "";
+  }
+  const placeholders = roles.map(() => "?").join(", ");
+  const row = database
+    .prepare(
+      `select w.branch_name as branchName
+       from worktrees w
+       join executions e on e.project_id = w.project_id and e.id = w.execution_id
+       where w.project_id = ?
+         and w.ticket_id = ?
+         and w.repo_id = ?
+         and e.status = 'completed'
+         and e.outcome = 'completed'
+         and e.role in (${placeholders})
+       order by e.finished_at desc, e.iteration desc, w.updated_at desc
+       limit 1`,
+    )
+    .get(projectId, ticketId, repoId, ...roles);
+  return row?.branchName || "";
 }
 
 function defaultWorktreeBranchName(ticket, role = "developer", iteration = 1) {
