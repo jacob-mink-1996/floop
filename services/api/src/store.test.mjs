@@ -866,6 +866,49 @@ test("store auto-routes evidence lanes after non-developer worker completion", (
   store.close();
 });
 
+test("store preserves evidence lane suffixes for long implementation branch names", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  const repo = store.listRepos("project_floop")[0];
+  const longBranchName = "floop-3-calendar-vertical-slice-node-api-and-team-schedule-ui";
+  assert.equal(longBranchName.length, 61);
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "autonomous_with_review",
+  });
+
+  const ticket = store.createTicket("project_floop", {
+    title: "Calendar vertical slice: Node API and Team schedule UI",
+    brief: "Exercise long branch review routing.",
+    state: "READY",
+    repoTargets: [
+      {
+        repoId: repo.id,
+        baseRef: "main",
+        branchName: longBranchName,
+        targetScopeMd: "Long branch implementation.",
+      },
+    ],
+  });
+
+  const developer = store.createExecution("project_floop", ticket.id, {
+    role: "developer",
+    reason: "Complete long branch implementation.",
+  });
+  store.completeExecution("project_floop", developer.id, {
+    outcome: "completed",
+    summaryMd: "Implementation branch is ready.",
+  });
+
+  const updated = store.getTicket("project_floop", ticket.id);
+  const reviewer = updated.executions.find((execution) => execution.role === "reviewer");
+
+  assert.ok(reviewer);
+  assert.equal(reviewer.worktrees[0].baseRef, longBranchName);
+  assert.match(reviewer.worktrees[0].branchName, /-reviewer-iter-1$/);
+  assert.notEqual(reviewer.worktrees[0].branchName, `${longBranchName}-r`.slice(0, 63));
+
+  store.close();
+});
+
 test("store gates routine evidence lane dispatch by interaction mode", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
 

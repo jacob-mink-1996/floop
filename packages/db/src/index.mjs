@@ -847,8 +847,9 @@ function planExecutionWorktrees(database, projectId, ticket, execution, timestam
 function planExecutionBranchName(ticket, target, execution) {
   const ticketBranch = target.branchName || defaultWorktreeBranchName(ticket, execution.role, 1);
   if (execution.role === "reviewer" || execution.role === "validator" || Number(execution.iteration) > 1) {
+    const suffix = `-${execution.role}-iter-${execution.iteration}`;
     return {
-      branchName: `${ticketBranch}-${execution.role}-iter-${execution.iteration}`.slice(0, 63),
+      branchName: appendBranchSuffix(ticketBranch, suffix),
       baseRef: ticketBranch,
     };
   }
@@ -863,7 +864,14 @@ function defaultWorktreeBranchName(ticket, role = "developer", iteration = 1) {
   if (role === "developer") {
     return base.slice(0, 63);
   }
-  return `${base}-${role}-iter-${iteration}`.slice(0, 63);
+  return appendBranchSuffix(base, `-${role}-iter-${iteration}`);
+}
+
+function appendBranchSuffix(base, suffix, maxLength = 63) {
+  const normalizedSuffix = suffix.startsWith("-") ? suffix : `-${suffix}`;
+  const prefixLength = Math.max(1, maxLength - normalizedSuffix.length);
+  const prefix = String(base).slice(0, prefixLength).replace(/[-_/]+$/g, "") || "work";
+  return `${prefix}${normalizedSuffix}`.slice(0, maxLength);
 }
 
 function normalizeRepoTargets(database, projectId, repoTargets) {
