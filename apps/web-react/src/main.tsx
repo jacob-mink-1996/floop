@@ -33,6 +33,7 @@ import {
   mergeTicket,
   removeDependency,
   restartTicket,
+  respondAgentMessage,
   startExecution,
   transitionTicket,
   updateAgentMessage,
@@ -625,6 +626,7 @@ function App() {
               onFullRefresh={refresh}
               repos={repos}
               tickets={board?.columns.flatMap((column) => column.tickets) || []}
+              agentMessages={agentMessages}
             />
           </Dialog.Content>
         </Dialog.Portal>
@@ -1012,6 +1014,8 @@ function RunSubwayItem({
       {open ? (
         <div className="log-dock">
           <p>{run.summary || "No run summary recorded."}</p>
+          {run.kind === "execution" ? <AgentTraceSummary run={run} /> : null}
+          <LogChip label="work log" value={run.workLogArtifactUri} />
           <LogChip label="stdout" value={run.stdoutArtifactUri} />
           <LogChip label="stderr" value={run.stderrArtifactUri} />
           {run.worktreePaths.map((path) => (
@@ -1026,6 +1030,28 @@ function RunSubwayItem({
           ) : null}
         </div>
       ) : null}
+    </article>
+  );
+}
+
+function AgentTraceSummary({ run }: { run: RunObservability["runs"][number] }) {
+  const progress = run.agentProgressSignalCount || 0;
+  const questions = run.agentQuestionSignalCount || 0;
+  const summary =
+    run.agentTraceSummary ||
+    (progress > 0
+      ? "Progress recorded without question-like output."
+      : "No explicit progress signals found in agent output.");
+  return (
+    <article className={`agent-trace-summary ${questions > 0 ? "has-questions" : ""}`}>
+      <div>
+        <span>Trace</span>
+        <strong>{summary}</strong>
+      </div>
+      <div className="agent-trace-metrics">
+        <span><strong>{progress}</strong> progress</span>
+        <span><strong>{questions}</strong> questions</span>
+      </div>
     </article>
   );
 }
@@ -1799,6 +1825,7 @@ function TicketDetailPanel({
   onFullRefresh,
   repos,
   tickets,
+  agentMessages,
 }: {
   projectId: string;
   ticket: TicketDetail | null;
@@ -1808,11 +1835,23 @@ function TicketDetailPanel({
   onFullRefresh: () => Promise<void>;
   repos: Repo[];
   tickets: BoardTicket[];
+  agentMessages: AgentMessage[];
 }) {
   const action = nextActionForTicket(ticket || selectedTicket);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [isEditing, setEditing] = useState(false);
+  const inputRequests = useMemo(
+    () =>
+      agentMessages.filter(
+        (message) =>
+          message.intent === "request_input" &&
+          message.status === "pending" &&
+          typeof message.target?.ticketId === "string" &&
+          message.target.ticketId === ticket?.id,
+      ),
+    [agentMessages, ticket?.id],
+  );
   useEffect(() => {
     setEditing(false);
   }, [ticket?.id]);
@@ -1862,6 +1901,17 @@ function TicketDetailPanel({
               onRefresh={onRefresh}
             />
           </section>
+          {inputRequests.length ? (
+            <UnblockRequestPanel
+              projectId={projectId}
+              ticket={ticket}
+              request={inputRequests[0]}
+              busy={busy}
+              onRun={runAction}
+              onRefresh={onRefresh}
+              onFullRefresh={onFullRefresh}
+            />
+          ) : null}
           <section className="detail-section">
             <div className="section-heading">
               <h3>Overview</h3>
@@ -2266,6 +2316,94 @@ function WorktreeAndArtifactSection({
           </article>
         ))}
       </div>
+    </section>
+  );
+}
+
+function UnblockRequestPanel({
+  projectId,
+  ticket,
+  request,
+  busy,
+  onRun,
+  onRefresh,
+  onFullRefresh,
+}: {
+  projectId: string;
+  ticket: TicketDetail;
+  request: AgentMessage;
+  busy: string;
+  onRun: (label: string, work: () => Promise<void>) => Promise<void>;
+  onRefresh: (ticketId?: string) => Promise<void>;
+  onFullRefresh: () => Promise<void>;
+}) {
+  const responders = Array.isArray(request.metadata?.suggestedResponders)
+    ? request.metadata.suggestedResponders.filter((value): value is string => typeof value === "string")
+    : [];
+  const blockedKind = typeof request.metadata?.blockedKind === "string" ? request.metadata.blockedKind : "needs input";
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    await onRun("Submitting unblock response", async () => {
+      await respondAgentMessage(projectId, request.id, {
+        responseMd: String(form.get("responseMd") || ""),
+        responderKind: String(form.get("responderKind") || "human"),
+        responderRef: String(form.get("responderRef") || "operator"),
+        continueExecution: form.get("continueExecution") === "on",
+      });
+      formElement.reset();
+      await onRefresh(ticket.id);
+      await onFullRefresh();
+    });
+  }
+
+  return (
+    <section className="unblock-panel">
+      <div className="unblock-summary">
+        <div>
+          <p className="kicker">Needs Input</p>
+          <h3>{request.summary || `${ticket.key} needs input`}</h3>
+        </div>
+        <span>{blockedKind.replace(/[_-]/g, " ")}</span>
+      </div>
+      <p>{request.body || "The agent needs a response before this ticket can continue."}</p>
+      {responders.length ? (
+        <div className="responder-strip" aria-label="Suggested responders">
+          {responders.map((responder) => (
+            <span key={responder}>{prettyRole(responder as RoleName)}</span>
+          ))}
+        </div>
+      ) : null}
+      <form className="unblock-form" onSubmit={handleSubmit}>
+        <label>
+          <span>Response</span>
+          <textarea name="responseMd" rows={3} required placeholder="Give the missing decision, constraint, credential status, or next instruction." />
+        </label>
+        <div className="action-grid">
+          <label>
+            <span>Responder</span>
+            <select name="responderKind" defaultValue="human">
+              <option value="human">Human</option>
+              <option value="product_manager">PM agent</option>
+              <option value="architect">Architect agent</option>
+              <option value="developer">Developer agent</option>
+            </select>
+          </label>
+          <label>
+            <span>Reference</span>
+            <input name="responderRef" defaultValue="operator" />
+          </label>
+        </div>
+        <label className="checkbox-row">
+          <input name="continueExecution" type="checkbox" defaultChecked />
+          <span>Continue this lane after submitting</span>
+        </label>
+        <button className="primary-button" type="submit" disabled={Boolean(busy)}>
+          {busy || "Submit and continue"}
+        </button>
+      </form>
     </section>
   );
 }

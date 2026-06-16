@@ -37,13 +37,17 @@ test("execution driver runs configured adapter commands and persists completion 
     const completed = store.getExecution("project_floop", execution.id);
     const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
     const stdoutArtifact = completed.artifacts.find((artifact) => artifact.label === "Adapter stdout");
+    const workLogArtifact = completed.artifacts.find((artifact) => artifact.label === "Agent work log");
 
     assert.equal(completed.outcome, "completed");
     assert.equal(completed.ticketState, "REVIEWING");
     assert.equal(ticket.state, "REVIEWING");
     assert.equal(existsSync(execution.worktrees[0].path), true);
     assert.ok(stdoutArtifact);
+    assert.ok(workLogArtifact);
     assert.match(readFileSync(new URL(stdoutArtifact.uri), "utf8"), /driver stdout ok/);
+    assert.match(readFileSync(new URL(workLogArtifact.uri), "utf8"), /Progress signals:/);
+    assert.equal(workLogArtifact.metadata.agentWork.questionSignalCount, 0);
     assert.equal(stdoutArtifact.metadata.floopDurability.storageMode, "managed_local_file");
     assert.equal(stdoutArtifact.metadata.floopDurability.cleanupPolicy, "retain_until_project_delete");
   } finally {
@@ -144,6 +148,93 @@ process.stdin.on("end", () => {
   }
 });
 
+test("execution driver resolves codex follow-up repo slugs to repo ids", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-codex-followup-driver-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const fakeCodexPath = join(fixtureDir, "fake-followup-codex.js");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    fakeCodexPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({
+      outcome: "followup_created",
+      summaryMd: "Created follow-up from fake codex.",
+      followupTickets: [
+        {
+          title: "Implement child from slug",
+          brief: "Uses repoSlug instead of repoId.",
+          assignedRole: "developer",
+          repoTargets: [
+            {
+              repoSlug: "floop",
+              baseRef: "main",
+              branchName: "child-from-slug",
+              targetScopeMd: "Child implementation."
+            }
+          ]
+        }
+      ]
+    }),
+  );
+});
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    const repo = store.listRepos("project_floop")[0];
+    const parent = store.createTicket("project_floop", {
+      title: "Parent follow-up by slug",
+      brief: "Codex should be able to refer to the repo by slug.",
+      assignedRole: "product_manager",
+      state: "READY",
+      repoTargets: [{ repoId: repo.id, baseRef: "main", branchName: "parent-followup-by-slug" }],
+    });
+    store.updateRoleProfile("project_floop", "product_manager", {
+      adapter: "codex",
+      model: "codex-latest",
+      config: {
+        executable: fakeCodexPath,
+      },
+    });
+    store.updateProjectPolicy("project_floop", {
+      refinementMode: "autonomous",
+      agentCreatedTicketDefaultState: "READY",
+    });
+
+    const execution = store.createExecution("project_floop", parent.id, {
+      role: "product_manager",
+      reason: "Create child follow-up tickets.",
+    });
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+
+    await driver.pollOnce();
+
+    const completed = store.getExecution("project_floop", execution.id);
+    const childSummary = store.listTickets("project_floop", { parentTicketId: parent.id }).at(-1);
+    const child = store.getTicket("project_floop", childSummary.id);
+
+    assert.equal(completed.outcome, "followup_created");
+    assert.equal(child.title, "Implement child from slug");
+    assert.equal(child.repoTargets.length, 1);
+    assert.equal(child.repoTargets[0].repoId, repo.id);
+    assert.equal(child.repoTargets[0].branchName, "child-from-slug");
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("execution driver can persist embedded review evidence from the codex reviewer lane", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-reviewer-codex-driver-"));
   const workspaceRoot = join(fixtureDir, "workspace");
@@ -227,6 +318,7 @@ process.stdin.on("end", () => {
     assert.equal(ticket.reviews[0].verdict, "passed");
     assert.equal(ticket.reviews[0].artifacts[0].label, "Reviewer notes");
     assert.match(readFileSync(new URL(stdoutArtifact.uri), "utf8"), /review contract present/);
+    assert.match(readFileSync(promptPath, "utf8"), /Review plan, Evidence inspected, Findings, and Decision/);
     assert.match(readFileSync(promptPath, "utf8"), /review\.verdict: one of passed, rework, blocked/);
   } finally {
     store.close();
@@ -237,23 +329,56 @@ process.stdin.on("end", () => {
 test("execution driver can persist embedded validation evidence from the validator lane", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-validator-driver-"));
   const workspaceRoot = join(fixtureDir, "workspace");
+  const fakeCodexPath = join(fixtureDir, "fake-validator-codex.js");
   const store = createStore({
     filename: join(fixtureDir, "floop.sqlite"),
     seedDemo: true,
     workspaceRoot,
   });
 
+  writeFileSync(
+    fakeCodexPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+});
+process.stdin.on("end", () => {
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({
+      outcome: "completed",
+      summaryMd: "Validator execution completed.",
+      validation: {
+        verdict: "passed",
+        summaryMd: "Validation plan: run the project test command. Checks run: npm test. Why sufficient: covers the ticket behavior. Result: passed.",
+        commandProfile: "ci",
+        commands: ["npm test"],
+        repoIds: ["repo_project_floop_floop"],
+        artifacts: [{ kind: "log", label: "Validation output", uri: "file:///tmp/validation-output.log" }]
+      }
+    }),
+  );
+  process.stdout.write(prompt.includes("Validation plan") ? "validation guidance present\\n" : "validation guidance missing\\n");
+});
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
   try {
     store.updateProjectPolicy("project_floop", {
       requireReviewer: false,
       requireValidator: true,
+      requiredValidationCommandProfileForMerge: "ci",
       interactionMode: "autonomous_with_review",
     });
     store.updateRoleProfile("project_floop", "validator", {
-      adapter: "shell",
-      model: "fixture",
+      adapter: "codex",
+      model: "codex-latest",
       config: {
-        command: `"${process.execPath}" -e "const fs=require('node:fs'); fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({ outcome: 'completed', summaryMd: 'Validator execution completed.', validation: { verdict: 'passed', summaryMd: 'Validation checks passed.', commandProfile: 'ci', commands: ['npm test'], repoIds: ['repo_project_floop_floop'], artifacts: [{ kind: 'log', label: 'Validation output', uri: 'file:///tmp/validation-output.log' }] } }));"`,
+        executable: fakeCodexPath,
       },
     });
 
@@ -276,6 +401,8 @@ test("execution driver can persist embedded validation evidence from the validat
 
     const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
     const completed = store.getExecution("project_floop", validatorExecution.id);
+    const stdoutArtifact = completed.artifacts.find((artifact) => artifact.label === "Adapter stdout");
+    const promptPath = join(workspaceRoot, ".floop", "executions", validatorExecution.id, "prompt.md");
 
     assert.equal(completed.outcome, "completed");
     assert.equal(ticket.validations.length, 1);
@@ -283,6 +410,86 @@ test("execution driver can persist embedded validation evidence from the validat
     assert.deepEqual(ticket.validations[0].commands, ["npm test"]);
     assert.equal(ticket.validations[0].artifacts[0].label, "Validation output");
     assert.equal(ticket.state, "READY_TO_MERGE");
+    assert.match(readFileSync(new URL(stdoutArtifact.uri), "utf8"), /validation guidance present/);
+    assert.match(readFileSync(promptPath, "utf8"), /Choose the validation strategy from the ticket brief/);
+    assert.match(readFileSync(promptPath, "utf8"), /Validation plan, Checks run, Why sufficient, and Result/);
+    assert.match(readFileSync(promptPath, "utf8"), /metadata\.demoEvidence true/);
+    assert.match(readFileSync(promptPath, "utf8"), /set validation\.commandProfile to "ci"/);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test("execution driver recovers hyphenated git metadata read-only blocked completions", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-git-metadata-recovery-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const repoRoot = join(fixtureDir, "repo");
+  const fakeCodexPath = join(fixtureDir, "fake-blocked-codex.js");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    fakeCodexPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync("RECOVERED.md", "# Recovered work\\n", "utf8");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
+    outcome: "blocked",
+    blockedKind: "git-metadata-readonly",
+    summaryMd: "Work is present but the agent could not write git metadata."
+  }));
+});
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    execFileSync("git", ["init", "-b", "main", repoRoot]);
+    execFileSync("git", ["-C", repoRoot, "config", "user.name", "Floop Test"]);
+    execFileSync("git", ["-C", repoRoot, "config", "user.email", "floop@example.com"]);
+    writeFileSync(join(repoRoot, "README.md"), "# Floop Repo\n", "utf8");
+    execFileSync("git", ["-C", repoRoot, "add", "README.md"]);
+    execFileSync("git", ["-C", repoRoot, "commit", "-m", "seed repo"]);
+
+    store.updateRepo("project_floop", "repo_project_floop_floop", {
+      name: "floop",
+      localPath: repoRoot,
+      remoteUrl: "",
+      defaultBranch: "main",
+      isPrimary: true,
+    });
+    store.updateProjectPolicy("project_floop", {
+      requireReviewer: false,
+      requireValidator: false,
+    });
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "codex",
+      model: "codex-latest",
+      config: {
+        executable: fakeCodexPath,
+      },
+    });
+
+    const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Recover git metadata blocked work.",
+    });
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+
+    await driver.pollOnce();
+
+    const completed = store.getExecution("project_floop", execution.id);
+    const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+    assert.equal(completed.outcome, "completed");
+    assert.equal(completed.blockedKind, "");
+    assert.equal(ticket.state, "READY_TO_MERGE");
+    assert.match(completed.summaryMd, /Floop recovered/);
   } finally {
     store.close();
     rmSync(fixtureDir, { recursive: true, force: true });

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { reviewDto, validationRunDto } from "../../contracts/src/index.mjs";
+import { compactTicketSummary } from "./ticket-summary.mjs";
 
 export function createEvidenceCommands({
   database,
@@ -91,8 +92,10 @@ export function createEvidenceCommands({
         reasonCode: transitionReason.reasonCode || "review_completed",
       });
       const ticketSummary =
-        review.summaryMd ||
-        `${ticket.key} review ${verdict === "passed" ? "passed" : verdict === "rework" ? "requested rework" : "blocked"}`;
+        compactTicketSummary(
+          review.summaryMd,
+          `${ticket.key} review ${verdict === "passed" ? "passed" : verdict === "rework" ? "requested rework" : "blocked"}`,
+        );
 
       withTransaction(database, () => {
         database
@@ -168,6 +171,14 @@ export function createEvidenceCommands({
           ticketId,
           reason: `${ticket.key} review passed; Floop routed the validator lane.`,
         });
+      } else if (verdict === "rework") {
+        startAutoRoutedLaneExecution({
+          store: getStore(),
+          database,
+          projectId,
+          ticketId,
+          reason: `${ticket.key} review requested rework; Floop routed the previous working lane.`,
+        });
       }
 
       return reviewDto(getReviewsByTicketId(database, projectId, [ticketId]).get(ticketId)[0]);
@@ -214,8 +225,10 @@ export function createEvidenceCommands({
       const nextState = deriveTicketStateForValidationVerdict(policy, verdict);
       const summaryMd = optionalText(input.summaryMd);
       const ticketSummary =
-        summaryMd ||
-        `${ticket.key} validation ${verdict === "passed" ? "passed" : verdict === "failed" ? "found rework" : "blocked"}`;
+        compactTicketSummary(
+          summaryMd,
+          `${ticket.key} validation ${verdict === "passed" ? "passed" : verdict === "failed" ? "found rework" : "blocked"}`,
+        );
       const commandProfile = optionalText(input.commandProfile);
       const commandList = input.commands || [];
       const artifacts = input.artifacts || [];
@@ -225,6 +238,7 @@ export function createEvidenceCommands({
           ? buildMergePolicyBlocks(policy, getLatestReviewRow(database, projectId, ticketId), {
               verdict,
               command_profile: commandProfile,
+              artifacts,
             })
           : [];
       const transitionReason = deriveValidationEventReason({
@@ -294,6 +308,16 @@ export function createEvidenceCommands({
           ...transitionReason,
         });
       });
+
+      if (verdict === "failed") {
+        startAutoRoutedLaneExecution({
+          store: getStore(),
+          database,
+          projectId,
+          ticketId,
+          reason: `${ticket.key} validation found rework; Floop routed the previous working lane with validation evidence.`,
+        });
+      }
 
       return commands.listValidations(projectId, ticketId);
     },

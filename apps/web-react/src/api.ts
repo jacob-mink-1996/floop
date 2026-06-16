@@ -215,6 +215,22 @@ export async function updateAgentMessage(
   return payload.message;
 }
 
+export async function respondAgentMessage(
+  projectId: string,
+  messageId: string,
+  input: { responseMd: string; responderKind?: string; responderRef?: string; continueExecution?: boolean },
+): Promise<AgentMessage> {
+  const payload = await fetchJson<{ message: AgentMessage }>(
+    `/api/v1/projects/${projectId}/agent-messages/${messageId}/respond`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  return payload.message;
+}
+
 export async function updateProject(projectId: string, input: ProjectUpdateInput): Promise<Project> {
   const payload = await fetchJson<{ project: Project }>(`/api/v1/projects/${projectId}`, {
     method: "PATCH",

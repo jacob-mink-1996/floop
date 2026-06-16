@@ -1,6 +1,7 @@
 import {
   parseCreateProjectInput,
   parseCreateAgentMessageInput,
+  parseRespondAgentMessageInput,
   parseUpdateAgentMessageInput,
   parseUpdateProjectInput,
   parseUpdateProjectPolicyInput,
@@ -74,6 +75,15 @@ export function handleProjectRoute(route, url, body, store) {
           route.params.projectId,
           route.params.messageId,
           parseUpdateAgentMessageInput(body),
+        ),
+        "message",
+      );
+    case "projectAgentMessageResponse":
+      return respondMaybe(
+        store.respondAgentMessage(
+          route.params.projectId,
+          route.params.messageId,
+          parseRespondAgentMessageInput(body),
         ),
         "message",
       );

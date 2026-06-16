@@ -73,6 +73,7 @@ export const agentMessageIntents = [
   "submit_ceremony_input",
   "raise_risk",
   "submit_artifact",
+  "request_input",
   "request_status",
 ];
 

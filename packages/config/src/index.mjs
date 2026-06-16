@@ -5,6 +5,7 @@ export function defaultProjectPolicy() {
     requireReviewer: true,
     requireValidator: true,
     requireHumanApprovalBeforeMerge: true,
+    requireDemoEvidenceBeforeMerge: true,
     requiredValidationCommandProfileForMerge: "",
     maxParallelExecutions: 3,
     maxParallelMerges: 1,

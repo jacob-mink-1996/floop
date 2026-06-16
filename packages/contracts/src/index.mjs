@@ -470,6 +470,7 @@ export function parseUpdateProjectPolicyInput(body) {
     requireReviewer: optionalBoolean(body, "requireReviewer"),
     requireValidator: optionalBoolean(body, "requireValidator"),
     requireHumanApprovalBeforeMerge: optionalBoolean(body, "requireHumanApprovalBeforeMerge"),
+    requireDemoEvidenceBeforeMerge: optionalBoolean(body, "requireDemoEvidenceBeforeMerge"),
     requiredValidationCommandProfileForMerge: optionalPatchedString(body, "requiredValidationCommandProfileForMerge"),
   });
 
@@ -544,6 +545,16 @@ export function parseUpdateAgentMessageInput(body) {
     status,
     promotedKind: optionalPatchedString(body, "promotedKind"),
     promotedRef: optionalPatchedString(body, "promotedRef"),
+  });
+}
+
+export function parseRespondAgentMessageInput(body) {
+  assertObject(body);
+  return compactObject({
+    responseMd: requiredString(body, "responseMd"),
+    responderKind: optionalPatchedString(body, "responderKind"),
+    responderRef: optionalPatchedString(body, "responderRef"),
+    continueExecution: hasOwn(body, "continueExecution") ? optionalBoolean(body, "continueExecution") : true,
   });
 }
 

@@ -372,6 +372,7 @@ test("project policy and role profiles can be patched through the API", async ()
         requireReviewer: false,
         requireValidator: false,
         requireHumanApprovalBeforeMerge: false,
+        requireDemoEvidenceBeforeMerge: false,
         requiredValidationCommandProfileForMerge: "ci",
         maxParallelExecutions: 6,
         maxParallelMerges: 2,
@@ -419,6 +420,7 @@ test("project policy and role profiles can be patched through the API", async ()
     assert.equal(updatePolicyBody.policy.maxParallelMerges, 2);
     assert.equal(updatePolicyBody.policy.interactionMode, "operator_approved");
     assert.equal(updatePolicyBody.policy.requireReviewer, false);
+    assert.equal(updatePolicyBody.policy.requireDemoEvidenceBeforeMerge, false);
     assert.equal(updatePolicyBody.policy.requiredValidationCommandProfileForMerge, "ci");
     assert.equal(updatePolicyBody.policy.ceremonyAutomation.enabled, true);
     assert.equal(updatePolicyBody.policy.ceremonyAutomation.triggers.daily_triage.minIntervalMinutes, 120);
@@ -540,6 +542,81 @@ test("run observability endpoint combines execution and ceremony runs", async ()
     assert.equal(executionRun.worktreePaths.length > 0, true);
     assert.equal(Boolean(executionRun.movementReason.summary), true);
     assert.equal(runsBody.observability.runs.some((run) => run.kind === "ceremony" && run.needsAttention), true);
+  });
+});
+
+test("blocked execution input requests can be answered through the API", async () => {
+  await withServer(async (baseUrl) => {
+    const executionResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2/executions`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          role: "developer",
+          reason: "Start work that needs an operator decision.",
+        }),
+      },
+    );
+    const executionBody = await executionResponse.json();
+    assert.equal(executionResponse.status, 201);
+
+    const completeResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/executions/${executionBody.execution.id}/complete`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          outcome: "blocked",
+          summaryMd: "Need a product decision.",
+          remainingWorkMd: "Choose whether reminders are in-app only or browser notifications.",
+          blockedKind: "needs_human_input",
+        }),
+      },
+    );
+    assert.equal(completeResponse.status, 200);
+
+    const requestsResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages?intent=request_input&status=pending`,
+    );
+    const requestsBody = await requestsResponse.json();
+    const request = requestsBody.messages.find(
+      (message) => message.target.executionId === executionBody.execution.id,
+    );
+
+    assert.equal(requestsResponse.status, 200);
+    assert.ok(request);
+    assert.equal(request.target.ticketId, "ticket_project_floop_2");
+    assert.equal(request.metadata.blockedKind, "needs_human_input");
+
+    const response = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages/${request.id}/respond`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          responseMd: "Use in-app reminders first; browser notifications are out of scope.",
+          responderKind: "human",
+          responderRef: "jacob",
+          continueExecution: true,
+        }),
+      },
+    );
+    const responseBody = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(responseBody.message.status, "accepted");
+    assert.equal(responseBody.message.promotedKind, "execution");
+
+    const ticketResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2`);
+    const ticketBody = await ticketResponse.json();
+    const continuedExecution = ticketBody.ticket.executions.find(
+      (execution) => execution.role === "developer" && execution.iteration === 2,
+    );
+
+    assert.equal(ticketResponse.status, 200);
+    assert.equal(ticketBody.ticket.state, "WORKING");
+    assert.ok(continuedExecution);
+    assert.equal(continuedExecution.status, "running");
   });
 });
 

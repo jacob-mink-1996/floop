@@ -253,6 +253,7 @@ export function createSqliteStore(options = {}) {
     deriveTicketStateForMergeStatus,
     describeMergePolicyBlock,
     getArtifactsByMergeRunId,
+    getArtifactsByValidationRunId,
     getLatestMergeRunRow,
     getLatestReviewRow,
     getLatestValidationRunRow,
@@ -415,6 +416,8 @@ function startAutoRoutedLaneExecution({ store, database, projectId, ticketId, re
     nextRole = "reviewer";
   } else if (ticket.state === "VALIDATING") {
     nextRole = "validator";
+  } else if (ticket.state === "REWORK") {
+    nextRole = resolveReworkExecutionRole(database, projectId, ticket);
   } else {
     return null;
   }
@@ -477,6 +480,21 @@ function startAutoRoutedLaneExecution({ store, database, projectId, ticketId, re
   }
 }
 
+function resolveReworkExecutionRole(database, projectId, ticket) {
+  const latestWorkingExecution = database
+    .prepare(
+      `select role
+       from executions
+       where project_id = ?
+         and ticket_id = ?
+         and role not in ('reviewer', 'validator')
+       order by coalesce(finished_at, started_at) desc, started_at desc, iteration desc
+       limit 1`,
+    )
+    .get(projectId, ticket.id);
+  return latestWorkingExecution?.role || ticket.assigned_role || "developer";
+}
+
 function mapProject(database, row) {
   const policy = getProjectPolicyRow(database, row.id);
   const roleProfiles = database
@@ -502,6 +520,9 @@ function mapProjectPolicy(row) {
     requireReviewer: Boolean(row.require_reviewer),
     requireValidator: Boolean(row.require_validator),
     requireHumanApprovalBeforeMerge: Boolean(row.require_human_approval_before_merge),
+    requireDemoEvidenceBeforeMerge: row.require_demo_evidence_before_merge === undefined
+      ? true
+      : Boolean(row.require_demo_evidence_before_merge),
     requiredValidationCommandProfileForMerge: row.required_validation_command_profile_for_merge || "",
     maxParallelExecutions: Number(row.max_parallel_executions),
     maxParallelMerges: Number(row.max_parallel_merges),
@@ -795,29 +816,46 @@ function planExecutionWorktrees(database, projectId, ticket, execution, timestam
   const worktreeLeaf =
     execution.role === "developer" ? `iter-${execution.iteration}` : `${execution.role}-iter-${execution.iteration}`;
 
-  return repoTargets.map((target) => ({
-    id: `worktree_${randomUUID()}`,
-    projectId,
-    repoId: target.repoId,
-    ticketId: ticket.id,
-    executionId: execution.id,
-    repoName: target.repoName,
-    path: resolve(
-      project.workspace_root,
-      ".floop",
-      "worktrees",
-      ticket.key.toLowerCase(),
-      target.repoSlug,
-      worktreeLeaf,
-    ),
-    branchName: target.branchName || defaultWorktreeBranchName(ticket, execution.role, execution.iteration),
+  return repoTargets.map((target) => {
+    const plannedBranch = planExecutionBranchName(ticket, target, execution);
+    return {
+      id: `worktree_${randomUUID()}`,
+      projectId,
+      repoId: target.repoId,
+      ticketId: ticket.id,
+      executionId: execution.id,
+      repoName: target.repoName,
+      path: resolve(
+        project.workspace_root,
+        ".floop",
+        "worktrees",
+        ticket.key.toLowerCase(),
+        target.repoSlug,
+        worktreeLeaf,
+      ),
+      branchName: plannedBranch.branchName,
+      baseRef: plannedBranch.baseRef,
+      status: "active",
+      isDirty: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      cleanedAt: null,
+    };
+  });
+}
+
+function planExecutionBranchName(ticket, target, execution) {
+  const ticketBranch = target.branchName || defaultWorktreeBranchName(ticket, execution.role, 1);
+  if (execution.role === "reviewer" || execution.role === "validator" || Number(execution.iteration) > 1) {
+    return {
+      branchName: `${ticketBranch}-${execution.role}-iter-${execution.iteration}`.slice(0, 63),
+      baseRef: ticketBranch,
+    };
+  }
+  return {
+    branchName: ticketBranch,
     baseRef: target.baseRef,
-    status: "active",
-    isDirty: false,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    cleanedAt: null,
-  }));
+  };
 }
 
 function defaultWorktreeBranchName(ticket, role = "developer", iteration = 1) {
@@ -1102,11 +1140,12 @@ function insertProjectPolicy(database, projectId, policy, timestamp) {
     .prepare(
       `insert into project_policies (
         id, project_id, require_reviewer, require_validator,
-        require_human_approval_before_merge, required_validation_command_profile_for_merge,
+        require_human_approval_before_merge, require_demo_evidence_before_merge,
+        required_validation_command_profile_for_merge,
         max_parallel_executions, max_parallel_merges, max_auto_continue_iterations,
         interaction_mode, refinement_mode, agent_created_ticket_default_state, ceremony_automation_json,
         created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       `policy_${slugify(projectId)}`,
@@ -1114,6 +1153,7 @@ function insertProjectPolicy(database, projectId, policy, timestamp) {
       policy.requireReviewer ? 1 : 0,
       policy.requireValidator ? 1 : 0,
       policy.requireHumanApprovalBeforeMerge ? 1 : 0,
+      policy.requireDemoEvidenceBeforeMerge === false ? 0 : 1,
       policy.requiredValidationCommandProfileForMerge || "",
       policy.maxParallelExecutions,
       policy.maxParallelMerges ?? 1,

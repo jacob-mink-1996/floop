@@ -638,6 +638,11 @@ export function buildMergeStatus(database, ticket, worktrees = []) {
   const latestRun = getLatestMergeRunRow(database, ticket.projectId, ticket.id);
   const latestReview = getLatestReviewRow(database, ticket.projectId, ticket.id);
   const latestValidation = getLatestValidationRunRow(database, ticket.projectId, ticket.id);
+  const latestValidationArtifacts =
+    latestValidation ? getArtifactsByValidationRunId(database, [latestValidation.id]).get(latestValidation.id) || [] : [];
+  const latestValidationWithArtifacts = latestValidation
+    ? { ...latestValidation, artifacts: latestValidationArtifacts }
+    : null;
   const latestRunArtifacts =
     latestRun ? getArtifactsByMergeRunId(database, [latestRun.id]).get(latestRun.id) || [] : [];
   const requiresHumanApproval =
@@ -648,7 +653,7 @@ export function buildMergeStatus(database, ticket, worktrees = []) {
           "requireHumanApprovalBeforeMerge",
           "require_human_approval_before_merge",
         );
-  const mergePolicyBlocks = buildMergePolicyBlocks(policy, latestReview, latestValidation);
+  const mergePolicyBlocks = buildMergePolicyBlocks(policy, latestReview, latestValidationWithArtifacts);
   const mergePolicyBlock = mergePolicyBlocks[0]?.message || "";
   const mergeable = ticket.state === "READY_TO_MERGE" && !mergePolicyBlock;
   const uncleanedWorktreeCount = worktrees.filter((worktree) => worktree.status !== "cleaned").length;
@@ -776,6 +781,11 @@ export function mapTicketStateToBoardState(ticketState) {
 export function buildMergePolicyBlocks(policy, latestReview, latestValidation) {
   const requireReviewer = readPolicyBoolean(policy, "requireReviewer", "require_reviewer");
   const requireValidator = readPolicyBoolean(policy, "requireValidator", "require_validator");
+  const requireDemoEvidence = readPolicyBoolean(
+    policy,
+    "requireDemoEvidenceBeforeMerge",
+    "require_demo_evidence_before_merge",
+  );
   const requiredValidationCommandProfile = optionalPolicyText(
     policy.requiredValidationCommandProfileForMerge || policy.required_validation_command_profile_for_merge,
   );
@@ -804,8 +814,31 @@ export function buildMergePolicyBlocks(policy, latestReview, latestValidation) {
       actualCommandProfile: latestValidation?.command_profile || "",
     });
   }
+  if (requireValidator && requireDemoEvidence && latestValidation?.verdict === "passed" && !hasDemoEvidence(latestValidation)) {
+    blocks.push({
+      code: "demo_evidence_required",
+      source: "validation",
+      message: "Latest validation must include demo evidence before merge",
+    });
+  }
 
   return blocks;
+}
+
+function hasDemoEvidence(validation) {
+  return (validation?.artifacts || []).some((artifact) => {
+    const kind = String(artifact.kind || "").toLowerCase();
+    const label = String(artifact.label || "").toLowerCase();
+    const metadata = artifact.metadata || {};
+    return (
+      kind === "demo" ||
+      kind === "recording" ||
+      kind === "screenshot" ||
+      metadata.demoEvidence === true ||
+      metadata.floopDemoEvidence === true ||
+      label.includes("demo")
+    );
+  });
 }
 
 function requiredProjectPolicy(database, projectId) {

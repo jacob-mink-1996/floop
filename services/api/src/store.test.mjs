@@ -90,6 +90,7 @@ test("store updates project policy and role profiles", () => {
     requireReviewer: false,
     requireValidator: false,
     requireHumanApprovalBeforeMerge: false,
+    requireDemoEvidenceBeforeMerge: false,
     maxParallelExecutions: 5,
     maxParallelMerges: 2,
     maxAutoContinueIterations: 8,
@@ -119,6 +120,7 @@ test("store updates project policy and role profiles", () => {
   assert.equal(updatedPolicy.requireReviewer, false);
   assert.equal(updatedPolicy.requireValidator, false);
   assert.equal(updatedPolicy.requireHumanApprovalBeforeMerge, false);
+  assert.equal(updatedPolicy.requireDemoEvidenceBeforeMerge, false);
   assert.equal(updatedPolicy.requiredValidationCommandProfileForMerge, "");
   assert.equal(updatedPolicy.maxParallelExecutions, 5);
   assert.equal(updatedPolicy.maxParallelMerges, 2);
@@ -838,6 +840,31 @@ test("store auto-routes next execution lanes after implementation and review com
   store.close();
 });
 
+test("store auto-routes evidence lanes after non-developer worker completion", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "autonomous_with_review",
+  });
+
+  const architecture = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "architect",
+    reason: "Finish architecture and let Floop route review.",
+  });
+  store.completeExecution("project_floop", architecture.id, {
+    outcome: "completed",
+    summaryMd: "Architecture notes are ready for independent review.",
+  });
+
+  const ticketAfterArchitecture = store.getTicket("project_floop", "ticket_project_floop_2");
+  assert.equal(ticketAfterArchitecture.state, "REVIEWING");
+  const reviewerExecution = ticketAfterArchitecture.executions.find((execution) => execution.role === "reviewer");
+  assert.ok(reviewerExecution);
+  assert.match(reviewerExecution.worktrees[0].branchName, /reviewer-iter-1$/);
+  assert.equal(reviewerExecution.worktrees[0].baseRef, architecture.worktrees[0].branchName);
+
+  store.close();
+});
+
 test("store gates routine evidence lane dispatch by interaction mode", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
 
@@ -1045,6 +1072,55 @@ test("store acts on broad agent inbox messages in fully autonomous mode", () => 
   store.close();
 });
 
+test("store creates and answers ticket unblock requests from blocked executions", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "autonomous_with_review",
+  });
+
+  const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Start work that needs input.",
+  });
+  store.completeExecution("project_floop", execution.id, {
+    outcome: "blocked",
+    summaryMd: "Need a product decision.",
+    remainingWorkMd: "Choose whether reminders are in-app only or browser notifications.",
+    blockedKind: "needs_human_input",
+  });
+
+  const request = store
+    .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+    .find((message) => message.target.executionId === execution.id);
+  assert.ok(request);
+  assert.equal(request.target.ticketId, "ticket_project_floop_2");
+  assert.equal(request.metadata.blockedKind, "needs_human_input");
+  assert.equal(store.getTicket("project_floop", "ticket_project_floop_2").state, "BLOCKED");
+
+  const answered = store.respondAgentMessage("project_floop", request.id, {
+    responseMd: "Use in-app reminders first; browser notifications are out of scope.",
+    responderKind: "human",
+    responderRef: "jacob",
+    continueExecution: true,
+  });
+  const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+  const continuedExecution = ticket.executions.find((item) => item.role === "developer" && item.iteration === 2);
+
+  assert.equal(answered.status, "accepted");
+  assert.equal(answered.promotedKind, "execution");
+  assert.ok(continuedExecution);
+  assert.equal(continuedExecution.status, "running");
+  assert.equal(ticket.state, "WORKING");
+  assert.equal(
+    store
+      .listAgentMessages("project_floop", { intent: "comment_on_ticket", status: "attached" })
+      .some((message) => message.metadata.responseToMessageId === request.id),
+    true,
+  );
+
+  store.close();
+});
+
 test("store can persist a review directly from reviewer execution completion", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   store.updateProjectPolicy("project_floop", {
@@ -1124,6 +1200,70 @@ test("store can persist validation directly from validator execution completion"
   assert.equal(ticketAfterValidation.state, "READY_TO_MERGE");
   assert.equal(ticketAfterValidation.validations.length, 1);
   assert.equal(ticketAfterValidation.validations[0].artifacts[0].label, "Validation output");
+
+  store.close();
+});
+
+test("store keeps ticket summaries compact while preserving full agent evidence", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: true,
+    requireHumanApprovalBeforeMerge: false,
+    requireDemoEvidenceBeforeMerge: true,
+    interactionMode: "autonomous_with_review",
+  });
+
+  const longImplementationSummary = [
+    "Implementation plan: built the calendar workflow and updated the API surface for the feature.",
+    "",
+    "Details:",
+    "- Added multiple files.",
+    "- Ran local checks.",
+    "- Prepared validation notes.",
+  ].join("\n");
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Finish implementation with verbose evidence.",
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: longImplementationSummary,
+  });
+
+  const ticketAfterImplementation = store.getTicket("project_floop", "ticket_project_floop_2");
+  assert.equal(store.getExecution("project_floop", implementation.id).summaryMd, longImplementationSummary);
+  assert.equal(ticketAfterImplementation.latestSummary.includes("\n"), false);
+  assert.equal(ticketAfterImplementation.latestSummary.length <= 140, true);
+
+  const longValidationSummary = [
+    "Validation plan: run API checks, inspect the browser demo path, and capture demo evidence before merge.",
+    "",
+    "Checks run: npm test, browser smoke, and artifact inspection.",
+    "",
+    "Why sufficient: the checks cover the acceptance criteria and the demo artifact proves the workflow is present.",
+    "",
+    "Result: passed.",
+  ].join("\n");
+  const validatorExecution = ticketAfterImplementation.executions.find((execution) => execution.role === "validator");
+  store.completeExecution("project_floop", validatorExecution.id, {
+    outcome: "completed",
+    summaryMd: "Validator execution completed.",
+    validation: {
+      verdict: "passed",
+      commandProfile: "ci",
+      commands: ["npm test"],
+      repoIds: ["repo_project_floop_floop"],
+      summaryMd: longValidationSummary,
+      artifacts: [{ kind: "demo", label: "Calendar demo evidence", uri: "file:///tmp/calendar-demo.md" }],
+    },
+  });
+
+  const ticketAfterValidation = store.getTicket("project_floop", "ticket_project_floop_2");
+  assert.equal(ticketAfterValidation.validations[0].summaryMd, longValidationSummary);
+  assert.equal(ticketAfterValidation.latestSummary.includes("\n"), false);
+  assert.equal(ticketAfterValidation.latestSummary.length <= 140, true);
+  assert.match(ticketAfterValidation.latestSummary, /^Validation plan:/);
 
   store.close();
 });
@@ -1448,6 +1588,102 @@ test("store enforces merge validation-profile policy before merge", () => {
       }),
     /Latest validation must use ci profile before merge/,
   );
+
+  store.close();
+});
+
+test("store requires validator demo evidence before merge when policy is enabled", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: true,
+    requireHumanApprovalBeforeMerge: false,
+    requireDemoEvidenceBeforeMerge: true,
+    interactionMode: "autonomous_with_review",
+  });
+
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Prepare demo evidence merge policy test.",
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation completed for demo evidence policy test.",
+  });
+
+  const validatorExecution = store
+    .getTicket("project_floop", "ticket_project_floop_2")
+    .executions.find((execution) => execution.role === "validator");
+  store.completeExecution("project_floop", validatorExecution.id, {
+    outcome: "completed",
+    summaryMd: "Validation passed without demo evidence.",
+    validation: {
+      verdict: "passed",
+      commandProfile: "ci",
+      commands: ["npm test"],
+      repoIds: ["repo_project_floop_floop"],
+      summaryMd: "Checks passed, but no demo artifact was attached.",
+      artifacts: [{ kind: "log", label: "Validation output", uri: "file:///tmp/validation.log" }],
+    },
+  });
+
+  const mergeStatus = store.getMergeStatus("project_floop", "ticket_project_floop_2");
+  assert.equal(mergeStatus.ticketState, "READY_TO_MERGE");
+  assert.equal(mergeStatus.canMerge, false);
+  assert.equal(mergeStatus.blockingReasons[0].code, "demo_evidence_required");
+  assert.match(mergeStatus.statusSummary, /demo evidence/);
+  assert.equal(store.getTicket("project_floop", "ticket_project_floop_2").events.at(-1).reasonCode, "demo_evidence_required");
+
+  assert.throws(
+    () =>
+      store.mergeTicket("project_floop", "ticket_project_floop_2", {
+        strategy: "squash",
+      }),
+    /Latest validation must include demo evidence before merge/,
+  );
+
+  store.close();
+});
+
+test("store routes validator failures back to the previous working lane", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: true,
+    interactionMode: "autonomous_with_review",
+  });
+
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Implement before validator rework.",
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation ready for validation.",
+  });
+
+  const validatorExecution = store
+    .getTicket("project_floop", "ticket_project_floop_2")
+    .executions.find((execution) => execution.role === "validator");
+  store.completeExecution("project_floop", validatorExecution.id, {
+    outcome: "completed",
+    summaryMd: "Validator found missing demo behavior.",
+    validation: {
+      verdict: "failed",
+      commandProfile: "ci",
+      commands: ["npm test"],
+      repoIds: ["repo_project_floop_floop"],
+      summaryMd: "The feature is not demoable yet. Rework the implementation and rerun validation.",
+      artifacts: [{ kind: "log", label: "Validation failure", uri: "file:///tmp/validation-failure.log" }],
+    },
+  });
+
+  const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+  const developerRuns = ticket.executions.filter((execution) => execution.role === "developer");
+  assert.equal(ticket.state, "WORKING");
+  assert.equal(developerRuns.length, 2);
+  assert.equal(developerRuns[0].status, "running");
+  assert.match(developerRuns[0].summaryMd || ticket.latestSummary, /validation found rework|routed/i);
 
   store.close();
 });

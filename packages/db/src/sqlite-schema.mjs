@@ -20,6 +20,7 @@ create table if not exists project_policies (
   require_reviewer integer not null default 1,
   require_validator integer not null default 1,
   require_human_approval_before_merge integer not null default 1,
+  require_demo_evidence_before_merge integer not null default 1,
   required_validation_command_profile_for_merge text not null default '',
   max_parallel_executions integer not null default 1,
   max_parallel_merges integer not null default 1,

@@ -350,12 +350,19 @@ function developerCommand() {
         } else {
         const worktree = process.env.FLOOP_WORKTREE_PATH;
         const ticketKey = process.env.FLOOP_TICKET_KEY.toLowerCase();
+        console.log("[agent] inspect context " + process.env.FLOOP_CONTEXT_PATH);
+        console.log("[agent] enter worktree " + worktree);
         fs.mkdirSync(path.join(worktree, "demo"), { recursive: true });
+        console.log("[agent] create implementation artifact demo/" + ticketKey + ".md");
         fs.writeFileSync(path.join(worktree, "demo", ticketKey + ".md"), "# " + process.env.FLOOP_TICKET_TITLE + "\\n\\nImplemented by the local developer agent.\\n\\nProof timestamp: " + new Date().toISOString() + "\\n");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".developer.log", "developer agent entered worktree " + worktree + "\\ncreated demo/" + ticketKey + ".md\\n");
+        console.log("[agent] stage changed files");
         execFileSync("git", ["-C", worktree, "add", "-A"]);
+        console.log("[agent] commit implementation");
         execFileSync("git", ["-C", worktree, "commit", "-m", "Implement " + process.env.FLOOP_TICKET_KEY]);
+        console.log("[agent] verify durable evidence paths");
         sleep(3200);
+        console.log("[agent] write result JSON " + process.env.FLOOP_RESULT_PATH);
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
           outcome: "completed",
           summaryMd: "Developer agent changed the local repo and committed evidence.",
@@ -398,8 +405,11 @@ function reviewerCommand() {
             payload: { participant: role, ceremonyType: type, note: "reviewer" }
           }));
         } else {
+        console.log("[agent] inspect developer execution evidence");
         sleep(2600);
+        console.log("[agent] review changed artifacts");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".review.md", "reviewer inspected execution artifacts at " + new Date().toISOString() + "\\nreview passed\\n");
+        console.log("[agent] write passed review result");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
           outcome: "completed",
           summaryMd: "Reviewer agent inspected the developer evidence.",
@@ -434,8 +444,11 @@ function validatorCommand() {
             payload: { participant: role, ceremonyType: type, note: "validator" }
           }));
         } else {
+        console.log("[agent] inspect reviewer-approved change");
         sleep(2600);
+        console.log("[agent] run local validation check");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".validation.log", "validator ran local evidence check at " + new Date().toISOString() + "\\nlocal validation passed\\n");
+        console.log("[agent] write passed validation result");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
           outcome: "completed",
           summaryMd: "Validator agent ran the local evidence check.",
@@ -711,7 +724,9 @@ async function openDeveloperRunProof(page) {
   await developerRun.click();
   const proofDock = page.locator(".log-dock").first();
   await proofDock.waitFor({ state: "visible", timeout: 5000 });
-  await proofDock.scrollIntoViewIfNeeded();
+  const traceSummary = proofDock.locator(".agent-trace-summary").first();
+  await traceSummary.waitFor({ state: "visible", timeout: 5000 });
+  await traceSummary.scrollIntoViewIfNeeded();
 }
 
 async function refresh(page) {

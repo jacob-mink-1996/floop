@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { executionDto, worktreeDto } from "../../contracts/src/index.mjs";
+import { compactTicketSummary } from "./ticket-summary.mjs";
 
 export function createExecutionCommands({
   database,
@@ -353,9 +354,10 @@ export function createExecutionCommands({
         reasonCode: transitionReason.reasonCode || "execution_completed",
       });
       const ticketSummary =
-        summaryMd ||
-        remainingWorkMd ||
-        `${ticket.key} ${execution.role} iteration ${execution.iteration} ${outcome.replace(/_/g, " ")}`;
+        compactTicketSummary(
+          summaryMd || remainingWorkMd,
+          `${ticket.key} ${execution.role} iteration ${execution.iteration} ${outcome.replace(/_/g, " ")}`,
+        );
 
       withTransaction(database, () => {
         database
@@ -420,13 +422,22 @@ export function createExecutionCommands({
         });
       }
 
-      if (outcome === "completed" && execution.role === "developer") {
+      if (outcome === "completed" && isWorkerLaneRole(execution.role)) {
         startAutoRoutedLaneExecution({
           store,
           database,
           projectId,
           ticketId: execution.ticket_id,
           reason: `${ticket.key} implementation completed; Floop routed the next evidence lane.`,
+        });
+      }
+
+      if (outcome === "blocked") {
+        createBlockedInputRequest(store, projectId, ticket, execution, {
+          summaryMd,
+          remainingWorkMd,
+          expectedNextEvidenceMd,
+          blockedKind,
         });
       }
 
@@ -481,8 +492,8 @@ export function createExecutionCommands({
           summaryMd: optionalText(input.reason, "Continuation requested"),
           remainingWorkMd: optionalText(input.reason),
         });
-      } else if (execution.outcome !== "needs_continue") {
-        throw new Error("Execution must be active or marked needs_continue before continuing");
+      } else if (execution.outcome !== "needs_continue" && execution.outcome !== "blocked") {
+        throw new Error("Execution must be active, blocked, or marked needs_continue before continuing");
       }
 
       return commands.createExecution(projectId, execution.ticket_id, {
@@ -585,6 +596,67 @@ export function createExecutionCommands({
   };
 
   return commands;
+}
+
+function isWorkerLaneRole(role) {
+  return role !== "reviewer" && role !== "validator";
+}
+
+function createBlockedInputRequest(store, projectId, ticket, execution, completion) {
+  const existing = store
+    .listAgentMessages(projectId, { intent: "request_input", status: "pending", limit: 100 })
+    ?.find((message) => message.target?.executionId === execution.id);
+  if (existing) {
+    return existing;
+  }
+
+  const blockedKind = completion.blockedKind || "needs_human_input";
+  return store.createAgentMessage(projectId, {
+    actor: "floop",
+    source: "execution_blocked",
+    intent: "request_input",
+    target: {
+      ticketId: ticket.id,
+      executionId: execution.id,
+      role: execution.role,
+    },
+    summary: `${ticket.key} needs input`,
+    body:
+      completion.remainingWorkMd ||
+      completion.expectedNextEvidenceMd ||
+      completion.summaryMd ||
+      `${ticket.key} is blocked and needs input before ${execution.role} can continue.`,
+    metadata: {
+      blockedKind,
+      role: execution.role,
+      suggestedResponders: suggestedRespondersForBlockedKind(blockedKind, execution.role),
+      formSchema: {
+        fields: [
+          {
+            id: "responseMd",
+            type: "textarea",
+            label: "Response",
+            required: true,
+            placeholder: "Give the agent the missing decision, detail, credential status, or constraint.",
+          },
+        ],
+        submitLabel: "Submit and continue",
+      },
+    },
+  });
+}
+
+function suggestedRespondersForBlockedKind(blockedKind, role) {
+  if (blockedKind === "needs_policy_override") {
+    return ["product_manager", "architect"];
+  }
+  if (blockedKind === "needs_environment_fix") {
+    return ["developer", "integrator"];
+  }
+  if (role === "validator") {
+    return ["developer", "architect"];
+  }
+  return ["product_manager", "architect", "developer"];
 }
 
 function boundedLimit(value, defaultLimit, maxLimit) {

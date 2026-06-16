@@ -175,6 +175,9 @@ export function createProjectCommands({
       applyBooleanPatch(updates, changedFields, input, existing, "requireHumanApprovalBeforeMerge", {
         column: "require_human_approval_before_merge",
       });
+      applyBooleanPatch(updates, changedFields, input, existing, "requireDemoEvidenceBeforeMerge", {
+        column: "require_demo_evidence_before_merge",
+      });
       applyTextPatch(updates, changedFields, input, existing, "requiredValidationCommandProfileForMerge", {
         column: "required_validation_command_profile_for_merge",
       });

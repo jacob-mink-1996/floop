@@ -56,6 +56,8 @@ function buildRunFeed(store, projectId, filters = {}) {
 
 function executionRunItem(store, projectId, execution) {
   const artifacts = execution.artifacts || [];
+  const workLogArtifact = findArtifact(artifacts, "Agent work log");
+  const agentWork = workLogArtifact?.metadata?.agentWork || {};
   const movementReason = latestTicketMovementReason(store, projectId, execution.ticketId);
   return {
     id: `execution:${execution.id}`,
@@ -73,6 +75,10 @@ function executionRunItem(store, projectId, execution) {
     claimStatus: claimStatus(execution),
     claimExpiresAt: execution.claimExpiresAt || "",
     retryAttemptCount: retryAttemptCount(execution.summaryMd),
+    workLogArtifactUri: workLogArtifact?.uri || "",
+    agentTraceSummary: typeof agentWork.summary === "string" ? agentWork.summary : "",
+    agentProgressSignalCount: Number.isInteger(agentWork.progressSignalCount) ? agentWork.progressSignalCount : 0,
+    agentQuestionSignalCount: Number.isInteger(agentWork.questionSignalCount) ? agentWork.questionSignalCount : 0,
     stdoutArtifactUri: findArtifactUri(artifacts, "stdout"),
     stderrArtifactUri: findArtifactUri(artifacts, "stderr"),
     worktreePaths: (execution.worktrees || []).map((worktree) => worktree.path).filter(Boolean),
@@ -184,8 +190,13 @@ function retryAttemptCount(summary = "") {
 }
 
 function findArtifactUri(artifacts, stream) {
-  const artifact = artifacts.find((item) => item.label?.toLowerCase().includes(stream));
+  const artifact = findArtifact(artifacts, stream);
   return artifact?.uri || "";
+}
+
+function findArtifact(artifacts, label) {
+  const normalized = String(label || "").toLowerCase();
+  return artifacts.find((item) => item.label?.toLowerCase().includes(normalized));
 }
 
 function latestTicketMovementReason(store, projectId, ticketId) {

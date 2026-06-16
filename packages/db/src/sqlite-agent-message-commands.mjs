@@ -187,6 +187,73 @@ export function createAgentMessageCommands({
 
       return commands.getAgentMessage(projectId, messageId);
     },
+
+    respondAgentMessage(projectId, messageId, input) {
+      const existing = commands.getAgentMessage(projectId, messageId);
+      if (!existing) {
+        return null;
+      }
+      if (existing.intent !== "request_input") {
+        throw new Error("Only input requests can be responded to");
+      }
+      if (existing.status !== "pending") {
+        throw new Error("Input request is no longer pending");
+      }
+
+      const store = getStore();
+      const responseMd = requiredText(input.responseMd, "responseMd");
+      const responderKind = optionalText(input.responderKind, "human");
+      const responderRef = optionalText(input.responderRef, "operator");
+      const executionId = typeof existing.target?.executionId === "string" ? existing.target.executionId : "";
+      const ticketId = typeof existing.target?.ticketId === "string" ? existing.target.ticketId : "";
+      const updated = commands.updateAgentMessage(projectId, messageId, {
+        status: "attached",
+        promotedKind: "ticket_event",
+        promotedRef: ticketId,
+        reasonSource: responderKind,
+      });
+
+      const responseMessage = store.createAgentMessage(projectId, {
+        actor: responderRef,
+        source: responderKind,
+        intent: "comment_on_ticket",
+        target: { ticketId, executionId, responseToMessageId: messageId },
+        summary: `Response to ${existing.summary}`,
+        body: responseMd,
+        metadata: {
+          responseToMessageId: messageId,
+          responderKind,
+          responderRef,
+          unblockResponse: true,
+        },
+      });
+      commands.updateAgentMessage(projectId, responseMessage.id, {
+        status: "attached",
+        promotedKind: "ticket_event",
+        promotedRef: ticketId,
+        reasonSource: responderKind,
+      });
+
+      if (input.continueExecution !== false && executionId) {
+        try {
+          const continued = store.continueExecution(projectId, executionId, {
+            reason: `Unblock response from ${responderRef}: ${responseMd}`,
+          });
+          if (continued) {
+            commands.updateAgentMessage(projectId, messageId, {
+              status: "accepted",
+              promotedKind: "execution",
+              promotedRef: continued.id,
+              reasonSource: responderKind,
+            });
+          }
+        } catch {
+          // The response remains attached even if the lane cannot continue automatically.
+        }
+      }
+
+      return commands.getAgentMessage(projectId, messageId) || updated;
+    },
   };
 
   return commands;

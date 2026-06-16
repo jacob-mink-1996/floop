@@ -405,6 +405,7 @@ function PolicyForm({
       requireReviewer: form.get("requireReviewer") === "on",
       requireValidator: form.get("requireValidator") === "on",
       requireHumanApprovalBeforeMerge: form.get("requireHumanApprovalBeforeMerge") === "on",
+      requireDemoEvidenceBeforeMerge: form.get("requireDemoEvidenceBeforeMerge") === "on",
       requiredValidationCommandProfileForMerge: String(form.get("requiredValidationCommandProfileForMerge") || ""),
       maxParallelExecutions: Number(form.get("maxParallelExecutions") || 1),
       maxParallelMerges: Number(form.get("maxParallelMerges") || 1),
@@ -424,6 +425,7 @@ function PolicyForm({
       <div className="toggle-list">
         <label><input name="requireReviewer" type="checkbox" defaultChecked={policy?.requireReviewer ?? true} /> Require reviewer</label>
         <label><input name="requireValidator" type="checkbox" defaultChecked={policy?.requireValidator ?? true} /> Require validator</label>
+        <label><input name="requireDemoEvidenceBeforeMerge" type="checkbox" defaultChecked={policy?.requireDemoEvidenceBeforeMerge ?? true} /> Demo evidence</label>
         <label><input name="requireHumanApprovalBeforeMerge" type="checkbox" defaultChecked={policy?.requireHumanApprovalBeforeMerge ?? true} /> Human approval</label>
       </div>
       <div className="mode-list mode-list-primary">

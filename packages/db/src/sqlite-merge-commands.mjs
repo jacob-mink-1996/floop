@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mergeQueueItemDto, mergeRunDto } from "../../contracts/src/index.mjs";
+import { compactTicketSummary } from "./ticket-summary.mjs";
 
 export function createMergeCommands({
   database,
@@ -10,6 +11,7 @@ export function createMergeCommands({
   deriveTicketStateForMergeStatus,
   describeMergePolicyBlock,
   getArtifactsByMergeRunId,
+  getArtifactsByValidationRunId,
   getLatestMergeRunRow,
   getLatestReviewRow,
   getLatestValidationRunRow,
@@ -116,7 +118,9 @@ export function createMergeCommands({
 
       const policy = requiredProjectPolicy(database, projectId);
       const latestReview = getLatestReviewRow(database, projectId, ticketId);
-      const latestValidation = getLatestValidationRunRow(database, projectId, ticketId);
+      const latestValidation = withValidationArtifacts(
+        getLatestValidationRunRow(database, projectId, ticketId),
+      );
       const requiresHumanApproval =
         policy.interaction_mode === "fully_autonomous"
           ? false
@@ -240,8 +244,10 @@ export function createMergeCommands({
       const failureKind = optionalText(input.failureKind);
       const artifacts = input.artifacts || [];
       const ticketSummary =
-        summaryMd ||
-        `${ticket.key} merge ${status === "completed" ? "completed" : status === "blocked" ? "blocked" : "needs rework"}`;
+        compactTicketSummary(
+          summaryMd,
+          `${ticket.key} merge ${status === "completed" ? "completed" : status === "blocked" ? "blocked" : "needs rework"}`,
+        );
       const nextState = deriveTicketStateForMergeStatus(status);
       const transitionReason = deriveMergeEventReason(status, failureKind);
       assertAutomaticTicketTransition({
@@ -319,7 +325,9 @@ export function createMergeCommands({
       const policy = requiredProjectPolicy(database, projectId);
       const status = optionalText(input.status, "completed");
       const latestReview = getLatestReviewRow(database, projectId, ticketId);
-      const latestValidation = getLatestValidationRunRow(database, projectId, ticketId);
+      const latestValidation = withValidationArtifacts(
+        getLatestValidationRunRow(database, projectId, ticketId),
+      );
       const requiresHumanApproval =
         policy.interaction_mode === "fully_autonomous"
           ? false
@@ -342,8 +350,10 @@ export function createMergeCommands({
       const timestamp = now();
       const summaryMd = optionalText(input.summaryMd);
       const ticketSummary =
-        summaryMd ||
-        `${ticket.key} merge ${status === "completed" ? "completed" : status === "blocked" ? "blocked" : "needs rework"}`;
+        compactTicketSummary(
+          summaryMd,
+          `${ticket.key} merge ${status === "completed" ? "completed" : status === "blocked" ? "blocked" : "needs rework"}`,
+        );
       const mergeRun = {
         id: `merge_${randomUUID()}`,
         projectId,
@@ -394,6 +404,16 @@ export function createMergeCommands({
   };
 
   return commands;
+
+  function withValidationArtifacts(validation) {
+    if (!validation) {
+      return null;
+    }
+    return {
+      ...validation,
+      artifacts: getArtifactsByValidationRunId(database, [validation.id]).get(validation.id) || [],
+    };
+  }
 }
 
 function boundedLimit(value, defaultLimit, maxLimit) {

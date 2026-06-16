@@ -24,6 +24,7 @@ export type AgentMessageIntent =
   | "submit_ceremony_input"
   | "raise_risk"
   | "submit_artifact"
+  | "request_input"
   | "request_status";
 export type AgentMessageStatus = "pending" | "accepted" | "dismissed" | "converted" | "attached";
 
@@ -53,6 +54,7 @@ export type ProjectPolicy = {
   requireReviewer: boolean;
   requireValidator: boolean;
   requireHumanApprovalBeforeMerge: boolean;
+  requireDemoEvidenceBeforeMerge: boolean;
   requiredValidationCommandProfileForMerge: string;
   maxParallelExecutions: number;
   maxParallelMerges: number;
@@ -100,6 +102,7 @@ export type ProjectPolicyInput = {
   requireReviewer: boolean;
   requireValidator: boolean;
   requireHumanApprovalBeforeMerge: boolean;
+  requireDemoEvidenceBeforeMerge: boolean;
   requiredValidationCommandProfileForMerge: string;
   maxParallelExecutions: number;
   maxParallelMerges: number;
@@ -267,6 +270,10 @@ export type RunObservabilityItem = {
   claimStatus: string;
   claimExpiresAt: string;
   retryAttemptCount: number;
+  workLogArtifactUri: string;
+  agentTraceSummary: string;
+  agentProgressSignalCount: number;
+  agentQuestionSignalCount: number;
   stdoutArtifactUri: string;
   stderrArtifactUri: string;
   worktreePaths: string[];

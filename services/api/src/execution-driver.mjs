@@ -169,7 +169,7 @@ class ExecutionDriver {
           cwd: execution.worktrees[0]?.path || project.workspaceRoot,
           env: buildExecutionEnv(project, ticket, execution, runtime),
         });
-        const completion = await buildCompletionPayload(result, runtime, execution);
+        const completion = await buildCompletionPayload(result, runtime, execution, ticket);
         lastCompletion = completion;
 
         if (completion.outcome === "failed" && isRetryableExecutionFailure(completion.failureKind) && attempt < this.maxAttempts) {
@@ -386,6 +386,7 @@ async function prepareRuntimeArtifacts(project, ticket, execution) {
   const resultPath = join(executionRoot, "result.json");
   const promptPath = join(executionRoot, "prompt.md");
   const finalMessagePath = join(artifactRoot, "agent-final-message.md");
+  const workLogPath = join(artifactRoot, "agent-work-log.md");
   const stdoutPath = join(artifactRoot, "stdout.log");
   const stderrPath = join(artifactRoot, "stderr.log");
 
@@ -410,6 +411,7 @@ async function prepareRuntimeArtifacts(project, ticket, execution) {
     resultPath,
     promptPath,
     finalMessagePath,
+    workLogPath,
     stdoutPath,
     stderrPath,
   };
@@ -512,13 +514,34 @@ function runProcess(command, args, { cwd, env, shell = false, stdin = "", stdout
   });
 }
 
-async function buildCompletionPayload(result, runtime, execution) {
+async function buildCompletionPayload(result, runtime, execution, ticket) {
   await writeFile(runtime.stdoutPath, result.stdout || "", "utf8");
   await writeFile(runtime.stderrPath, result.stderr || "", "utf8");
 
   const fileResult = result.result || (await readResultFile(runtime.resultPath));
-  const normalized = normalizeCompletionResult(fileResult, execution);
+  const normalized = await recoverGitMetadataBlockedCompletion(
+    normalizeCompletionArtifacts(normalizeCompletionResult(fileResult, execution, ticket), execution),
+    execution,
+  );
+  const finalMessage = await readOptionalFile(runtime.finalMessagePath);
+  const workLog = buildAgentWorkLog({
+    execution,
+    exitCode: result.exitCode,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    finalMessage,
+    normalized,
+  });
+  await writeFile(runtime.workLogPath, workLog.markdown, "utf8");
   const artifacts = [
+    {
+      kind: "report",
+      label: "Agent work log",
+      uri: pathToFileURL(runtime.workLogPath).href,
+      metadata: {
+        agentWork: workLog.metadata,
+      },
+    },
     {
       kind: "log",
       label: "Adapter stdout",
@@ -532,7 +555,7 @@ async function buildCompletionPayload(result, runtime, execution) {
     ...(normalized.artifacts || []),
   ];
 
-  if (await fileExists(runtime.finalMessagePath)) {
+  if (finalMessage) {
     artifacts.push({
       kind: "report",
       label: "Agent final message",
@@ -584,7 +607,143 @@ async function readResultFile(filename) {
   }
 }
 
-function normalizeCompletionResult(result, execution = null) {
+async function readOptionalFile(filename) {
+  try {
+    return await readFile(filename, "utf8");
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  }
+}
+
+function buildAgentWorkLog({ execution, exitCode, stdout, stderr, finalMessage, normalized }) {
+  const signals = classifyAgentWorkSignals({ stdout, stderr, finalMessage });
+  const summary = summarizeAgentWorkSignals(signals, normalized, exitCode);
+  const markdown = [
+    `# Agent work log`,
+    ``,
+    `Execution: ${execution.ticketKey || execution.ticketId} ${execution.role} iteration ${execution.iteration}`,
+    `Outcome: ${normalized.outcome || "unknown"}`,
+    `Exit code: ${exitCode}`,
+    `Summary: ${normalized.summaryMd || "No result summary recorded."}`,
+    ``,
+    `## Signal summary`,
+    ``,
+    `- Progress signals: ${signals.progress.length}`,
+    `- Question signals: ${signals.questions.length}`,
+    `- Stderr lines: ${signals.stderrLines.length}`,
+    `- Final message present: ${finalMessage.trim() ? "yes" : "no"}`,
+    ``,
+    `## Progress signals`,
+    ``,
+    ...formatSignalLines(signals.progress),
+    ``,
+    `## Question signals`,
+    ``,
+    ...formatSignalLines(signals.questions),
+    ``,
+    `## Stdout tail`,
+    ``,
+    "```",
+    tailText(stdout),
+    "```",
+    ``,
+    `## Stderr tail`,
+    ``,
+    "```",
+    tailText(stderr),
+    "```",
+    ``,
+    `## Final message tail`,
+    ``,
+    "```",
+    tailText(finalMessage),
+    "```",
+    ``,
+  ].join("\n");
+
+  return {
+    markdown,
+    metadata: {
+      summary,
+      progressSignalCount: signals.progress.length,
+      questionSignalCount: signals.questions.length,
+      stderrLineCount: signals.stderrLines.length,
+      finalMessagePresent: Boolean(finalMessage.trim()),
+      hasQuestionSignals: signals.questions.length > 0,
+    },
+  };
+}
+
+function classifyAgentWorkSignals({ stdout, stderr, finalMessage }) {
+  const lines = [
+    ...tagLines(stdout, "stdout"),
+    ...tagLines(stderr, "stderr"),
+    ...tagLines(finalMessage, "final"),
+  ];
+  const progress = lines.filter((line) => isProgressSignal(line.text)).slice(-12);
+  const questions = lines.filter((line) => isQuestionSignal(line.text)).slice(-12);
+  return {
+    progress,
+    questions,
+    stderrLines: tagLines(stderr, "stderr"),
+  };
+}
+
+function tagLines(text, source) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((text) => ({ source, text }));
+}
+
+function isProgressSignal(line) {
+  return /\b(inspect(?:ed|ing)?|read|created|wrote|changed|updated|committed|verified|validated|reviewed|passed|completed|artifact|worktree|git|result)\b/i.test(line);
+}
+
+function isQuestionSignal(line) {
+  if (/\b(no blocking questions|no questions|without questions?)\b/i.test(line)) {
+    return false;
+  }
+  return /\?\s*$|\b(clarify|question|need input|need more information|please provide|cannot proceed|waiting for|blocked by missing)\b/i.test(line);
+}
+
+function summarizeAgentWorkSignals(signals, normalized, exitCode) {
+  if (signals.questions.length > 0 && signals.progress.length === 0) {
+    return "Question-like output without clear progress signals.";
+  }
+  if (signals.questions.length > 0) {
+    return "Progress recorded, with question-like output to inspect.";
+  }
+  if (signals.progress.length > 0) {
+    return "Progress recorded without question-like output.";
+  }
+  if (exitCode !== 0 || normalized.outcome === "failed") {
+    return "No progress signals; inspect failure output.";
+  }
+  return "No explicit progress signals found in agent output.";
+}
+
+function formatSignalLines(lines) {
+  if (lines.length === 0) {
+    return ["- None detected."];
+  }
+  return lines.map((line) => `- ${line.source}: ${line.text}`);
+}
+
+function tailText(text, maxLines = 24, maxChars = 4000) {
+  const value = String(text || "").trim();
+  if (!value) {
+    return "(empty)";
+  }
+  const lines = value.split(/\r?\n/).slice(-maxLines).join("\n");
+  return lines.length > maxChars ? lines.slice(lines.length - maxChars) : lines;
+}
+
+function normalizeCompletionResult(result, execution = null, ticket = null) {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     return {
       outcome: "completed",
@@ -618,11 +777,11 @@ function normalizeCompletionResult(result, execution = null) {
     artifacts: normalizeArtifacts(result.artifacts),
     review: normalizeEmbeddedReviewResult(result.review),
     validation: normalizeEmbeddedValidationResult(result.validation),
-    followupTickets: normalizeFollowupTickets(result.followupTickets),
+    followupTickets: normalizeFollowupTickets(result.followupTickets, ticket),
   };
 }
 
-function normalizeFollowupTickets(value) {
+function normalizeFollowupTickets(value, parentTicket = null) {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -640,25 +799,49 @@ function normalizeFollowupTickets(value) {
       state: typeof ticket.state === "string" ? ticket.state : "",
       priority: typeof ticket.priority === "string" ? ticket.priority : "",
       assignedRole: typeof ticket.assignedRole === "string" ? ticket.assignedRole : "",
-      repoTargets: normalizeRepoTargets(ticket.repoTargets),
+      repoTargets: normalizeRepoTargets(ticket.repoTargets, parentTicket?.repoTargets || []),
     }))
     .filter((ticket) => ticket.title && ticket.brief);
 }
 
-function normalizeRepoTargets(value) {
+function normalizeRepoTargets(value, referenceTargets = []) {
   if (!Array.isArray(value)) {
     return [];
   }
 
   return value
     .filter((target) => target && typeof target === "object" && !Array.isArray(target))
-    .map((target) => ({
-      repoId: typeof target.repoId === "string" ? target.repoId : "",
-      baseRef: typeof target.baseRef === "string" ? target.baseRef : "",
-      branchName: typeof target.branchName === "string" ? target.branchName : "",
-      targetScopeMd: typeof target.targetScopeMd === "string" ? target.targetScopeMd : "",
-    }))
+    .map((target) => {
+      const reference = resolveReferenceRepoTarget(target, referenceTargets);
+      return {
+        repoId: typeof target.repoId === "string" && target.repoId ? target.repoId : reference?.repoId || "",
+        baseRef: typeof target.baseRef === "string" && target.baseRef ? target.baseRef : reference?.baseRef || "",
+        branchName: typeof target.branchName === "string" ? target.branchName : "",
+        targetScopeMd: typeof target.targetScopeMd === "string" ? target.targetScopeMd : "",
+      };
+    })
     .filter((target) => target.repoId);
+}
+
+function resolveReferenceRepoTarget(target, referenceTargets) {
+  const references = Array.isArray(referenceTargets) ? referenceTargets : [];
+  const identifier = [target.repoId, target.repoSlug, target.repoName, target.name, target.slug]
+    .find((value) => typeof value === "string" && value.trim())
+    ?.trim();
+  if (!identifier && references.length === 1) {
+    return references[0];
+  }
+  if (!identifier) {
+    return null;
+  }
+  return (
+    references.find(
+      (reference) =>
+        reference.repoId === identifier ||
+        reference.repoSlug === identifier ||
+        reference.repoName === identifier,
+    ) || null
+  );
 }
 
 function normalizeEmbeddedReviewResult(review) {
@@ -783,6 +966,119 @@ function normalizeArtifacts(value) {
     : [];
 }
 
+function normalizeCompletionArtifacts(completion, execution) {
+  return {
+    ...completion,
+    artifacts: normalizeArtifactUris(completion.artifacts, execution),
+    review: completion.review
+      ? {
+          ...completion.review,
+          artifacts: normalizeArtifactUris(completion.review.artifacts, execution),
+        }
+      : completion.review,
+    validation: completion.validation
+      ? {
+          ...completion.validation,
+          artifacts: normalizeArtifactUris(completion.validation.artifacts, execution),
+        }
+      : completion.validation,
+  };
+}
+
+async function recoverGitMetadataBlockedCompletion(completion, execution) {
+  if (completion.outcome !== "blocked" || !isGitMetadataReadOnlyBlockedKind(completion.blockedKind)) {
+    return completion;
+  }
+
+  const recoveredCommits = [];
+  for (const worktree of execution.worktrees || []) {
+    const status = await runProcess("git", ["-C", worktree.path, "status", "--porcelain=v1"], {
+      cwd: worktree.path,
+      env: process.env,
+    });
+    if (status.exitCode !== 0 || !hasCommittableStatus(status.stdout)) {
+      continue;
+    }
+
+    const add = await runProcess(
+      "git",
+      ["-C", worktree.path, "add", "-A", "--", ".", ":(exclude).floop-worktree.json"],
+      {
+        cwd: worktree.path,
+        env: process.env,
+      },
+    );
+    if (add.exitCode !== 0) {
+      continue;
+    }
+
+    const staged = await runProcess("git", ["-C", worktree.path, "diff", "--cached", "--name-only"], {
+      cwd: worktree.path,
+      env: process.env,
+    });
+    if (staged.exitCode !== 0 || !staged.stdout.trim()) {
+      continue;
+    }
+
+    const commitMessage = `${execution.ticketKey || execution.ticketId}: ${execution.ticketTitle || "Agent work"}`;
+    const commit = await runProcess("git", ["-C", worktree.path, "commit", "-m", commitMessage], {
+      cwd: worktree.path,
+      env: process.env,
+    });
+    if (commit.exitCode === 0) {
+      const sha = await runProcess("git", ["-C", worktree.path, "rev-parse", "--short", "HEAD"], {
+        cwd: worktree.path,
+        env: process.env,
+      });
+      recoveredCommits.push(`${worktree.repoSlug || worktree.repoId}: ${sha.stdout.trim()}`);
+    }
+  }
+
+  if (recoveredCommits.length === 0) {
+    return completion;
+  }
+
+  return {
+    ...completion,
+    outcome: "completed",
+    blockedKind: "",
+    remainingWorkMd: "",
+    expectedNextEvidenceMd: completion.expectedNextEvidenceMd || "Recovered by Floop committing the dirty worktree after adapter completion.",
+    summaryMd: `${completion.summaryMd || "Agent completed work but could not commit from its sandbox."}\n\nFloop recovered the sandbox Git metadata limitation by committing the dirty worktree after adapter completion:\n${recoveredCommits.map((item) => `- ${item}`).join("\n")}`,
+  };
+}
+
+function isGitMetadataReadOnlyBlockedKind(value) {
+  return ["git_metadata_read_only", "git-metadata-readonly", "git_metadata_readonly", "git-metadata-read-only"].includes(
+    String(value || "").trim().toLowerCase(),
+  );
+}
+
+function hasCommittableStatus(statusText) {
+  return String(statusText || "")
+    .split(/\r?\n/)
+    .some((line) => line.trim() && !line.endsWith(".floop-worktree.json"));
+}
+
+function normalizeArtifactUris(artifacts, execution) {
+  return (artifacts || []).map((artifact) => ({
+    ...artifact,
+    uri: normalizeArtifactUri(artifact.uri, execution),
+  }));
+}
+
+function normalizeArtifactUri(uri, execution) {
+  const value = String(uri || "").trim();
+  if (!value) {
+    return value;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
+    return value;
+  }
+  const basePath = execution?.worktrees?.[0]?.path || process.cwd();
+  return pathToFileURL(resolve(basePath, value)).href;
+}
+
 function isArtifactLike(value) {
   return Boolean(
     value &&
@@ -793,7 +1089,7 @@ function isArtifactLike(value) {
   );
 }
 
-function buildCodexArgs(adapterRun, { project, execution, runtime }) {
+function buildCodexArgs(adapterRun, { project, ticket, execution, runtime }) {
   const args = [
     "exec",
     "-C",
@@ -805,9 +1101,16 @@ function buildCodexArgs(adapterRun, { project, execution, runtime }) {
     adapterRun.sandbox,
     "-c",
     `approval_policy=${JSON.stringify(adapterRun.approvalPolicy)}`,
-    "-o",
-    runtime.finalMessagePath,
   ];
+
+  for (const target of ticket.repoTargets || []) {
+    if (target.repoLocalPath) {
+      args.push("--add-dir", target.repoLocalPath);
+      args.push("--add-dir", join(target.repoLocalPath, ".git"));
+    }
+  }
+
+  args.push("-o", runtime.finalMessagePath);
 
   if (shouldPassCodexModel(adapterRun.model)) {
     args.push("-m", adapterRun.model);
@@ -832,13 +1135,17 @@ function buildCodexPrompt(project, ticket, execution, adapterRun, runtime) {
 
   const preamble = adapterRun.promptPreamble ? `${adapterRun.promptPreamble}\n\n` : "";
   const resultContract = buildCodexResultContract(execution.role, runtime.resultPath);
+  const roleGuidance = buildCodexRoleGuidance(execution.role, project.policy || {});
   const refinementPolicy = describeRefinementMode(project.policy?.refinementMode);
+  const requiredValidationCommandProfile =
+    project.policy?.requiredValidationCommandProfileForMerge || "none";
   return `${preamble}You are the ${execution.role} lane for Floop ticket ${ticket.key}.
 
 Operate inside the provided worktree and make the required code changes directly.
 
 Project: ${project.name}
 Refinement policy: ${refinementPolicy}
+Required validation command profile before merge: ${requiredValidationCommandProfile}
 Ticket: ${ticket.key} - ${ticket.title}
 Brief: ${ticket.brief}
 Acceptance criteria:
@@ -856,14 +1163,79 @@ ${worktrees || "- none"}
 Execution context JSON: ${runtime.contextPath}
 Required result JSON output path: ${runtime.resultPath}
 
+Lane guidance:
+${roleGuidance}
+
 Before finishing:
 1. Inspect the execution context file.
 2. Complete the ${execution.role} lane work in the worktree.
-3. Summarize what you changed, verified, and what remains.
-4. Write a JSON object to ${runtime.resultPath} with:
+3. If you changed repository files, run git status, stage the intended files, and commit the work on the current branch.
+4. Summarize what you changed, verified, and what remains.
+5. Write a JSON object to ${runtime.resultPath} with:
 ${resultContract}
 
 If you are blocked or incomplete, say so explicitly in the JSON outcome fields instead of pretending success.`;
+}
+
+function buildCodexRoleGuidance(role, policy = {}) {
+  if (role === "architect") {
+    return [
+      "- Define the smallest useful technical plan, boundaries, risks, and validation approach for the ticket.",
+      "- Prefer durable project artifacts such as docs, diagrams, or follow-up tickets when they help the next lane act.",
+      "- Do not implement production code unless the ticket explicitly asks the architect lane to do so.",
+    ].join("\n");
+  }
+
+  if (role === "product_manager") {
+    return [
+      "- Turn broad goals into executable tickets when the work is too large or underspecified for one implementation lane.",
+      "- Prefer thin vertical slices that can be implemented, reviewed, validated, and merged independently.",
+      "- For each follow-up ticket, include assignedRole, priority, brief, acceptanceCriteriaMd, definitionOfDoneMd, and repoTargets when repo work is needed.",
+      "- Do not implement code in this lane unless the ticket explicitly asks for product-owned artifacts.",
+    ].join("\n");
+  }
+
+  if (role === "developer") {
+    return [
+      "- Implement the ticket against its brief, acceptance criteria, definition of done, and repo targets.",
+      "- Keep the change scoped to the ticket while leaving the repo runnable and coherent.",
+      "- Add or update focused tests when the ticket changes behavior.",
+      "- Run the strongest relevant local checks you can reasonably run before committing.",
+      "- Emit concrete progress in stdout or the final message so Floop can show proof that work happened.",
+    ].join("\n");
+  }
+
+  if (role === "reviewer") {
+    return [
+      "- Review independently against the ticket brief, acceptance criteria, definition of done, and the actual repo diff.",
+      "- Inspect implementation, tests, and relevant runtime behavior rather than relying only on the developer summary.",
+      "- In review.summaryMd, include short sections for Review plan, Evidence inspected, Findings, and Decision.",
+      "- Use review.verdict \"passed\" only when there are no blocking implementation, scope, or test issues.",
+      "- Put concrete issues in review.findings with severity, category, title, and filePath or lineNumber when available.",
+    ].join("\n");
+  }
+
+  if (role === "validator") {
+    const requiredProfile = policy.requiredValidationCommandProfileForMerge || "";
+    return [
+      "- Validate independently; do not just trust the implementation or review summary.",
+      "- Choose the validation strategy from the ticket brief, acceptance criteria, definition of done, repo state, and available scripts.",
+      "- Prefer the strongest local checks that fit the ticket. For code tickets this often includes the project test command, but targeted smoke checks, browser/API checks, or direct artifact inspection may be stronger for the acceptance criteria.",
+      "- For docs, planning, architecture, or other non-code tickets, validate the required deliverables directly instead of forcing an unrelated test suite.",
+      "- In validation.summaryMd, include short sections for Validation plan, Checks run, Why sufficient, and Result.",
+      "- Include demo evidence as a validation artifact whenever the ticket changes product behavior or user-visible workflow. Demo evidence can be a screenshot, recording, demo notes, API transcript, or another artifact marked with kind \"demo\" or metadata.demoEvidence true.",
+      "- If the feature is not demoable or the evidence shows missing work, set validation.verdict to \"failed\" and explain the rework needed so Floop can route the previous working lane again.",
+      requiredProfile
+        ? `- When validation passes, set validation.commandProfile to "${requiredProfile}" because this project requires that profile before merge.`
+        : "- Set validation.commandProfile to a short label for the validation strategy you actually used.",
+      "- Set validation.verdict \"passed\" only when the selected checks pass, include validation.commands for commands actually run, and include validation.repoIds for validated repo targets.",
+    ].join("\n");
+  }
+
+  return [
+    "- Complete the lane work requested by the ticket and execution role.",
+    "- Keep the result scoped, observable, and explicit about any remaining work or blockers.",
+  ].join("\n");
 }
 
 function buildCodexResultContract(role, resultPath) {
@@ -898,6 +1270,7 @@ The JSON file at ${resultPath} should include the top-level execution outcome pl
    - validation.commands: optional array of commands you ran
    - validation.repoIds: optional array of repo ids you validated
    - validation.artifacts: optional array of { kind, label, uri, metadata } for durable validation evidence
+   - validation.artifacts should include demo evidence before merge when the ticket changes product behavior; mark it with kind "demo" or metadata.demoEvidence true
 
 The JSON file at ${resultPath} should include the top-level execution outcome plus the nested validation result.`;
   }
