@@ -270,24 +270,10 @@ async function runWalkthrough(page, appUrl) {
   await pause(1000);
   await demoCalendarApp(page, appUrl, "vertical");
 
-  await startFeatureExecution(project.id, demoTickets.recurrence.title);
-  await startFeatureExecution(project.id, demoTickets.reminders.title);
-  await refresh(page);
-  await clickByText(page, "Board");
-  await page.getByText("Working").first().waitFor();
-  await pause(1800);
-  await waitDuringIdle("parallel recurrence full loop", () =>
-    waitForTicketState(demoTickets.recurrence.title, "READY_TO_MERGE", featureLoopWaitMs()),
-  );
-  await waitDuringIdle("parallel reminders full loop", () =>
-    waitForTicketState(demoTickets.reminders.title, "READY_TO_MERGE", featureLoopWaitMs()),
-  );
-  await mergeTicketNow(project.id, demoTickets.recurrence.title);
-  await mergeTicketNow(project.id, demoTickets.reminders.title);
-  await waitForTicketState(demoTickets.recurrence.title, "DONE", 15_000);
-  await waitForTicketState(demoTickets.reminders.title, "DONE", 15_000);
-  await refresh(page);
-  await pause(1000);
+  await runTicketLoopFromUi(page, demoTickets.recurrence.title);
+  await waitForTicketState(demoTickets.recurrence.title, "DONE", 45_000);
+  await runTicketLoopFromUi(page, demoTickets.reminders.title);
+  await waitForTicketState(demoTickets.reminders.title, "DONE", 45_000);
 
   await runTicketLoopFromUi(page, demoTickets.final.title);
   await waitForTicketState(demoTickets.final.title, "DONE", 45_000);
