@@ -634,6 +634,111 @@ process.stdin.on("end", () => {
   }
 });
 
+test("execution driver recovers passed validator evidence from git metadata needs-continue completions", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-validator-git-metadata-recovery-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const repoRoot = join(fixtureDir, "repo");
+  const fakeCodexPath = join(fixtureDir, "fake-validator-needs-continue-codex.js");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    fakeCodexPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.mkdirSync("artifacts", { recursive: true });
+fs.writeFileSync("artifacts/validator-validation.json", JSON.stringify({ demoEvidence: true }) + "\\n", "utf8");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
+    outcome: "needs_continue",
+    summaryMd: "Validation passed, but the lane could not create the requested Git commit because the linked worktree Git metadata is mounted read-only while creating index.lock.",
+    remainingWorkMd: "Commit artifacts/validator-validation.json from an environment with writable Git metadata.",
+    expectedNextEvidenceMd: "A Git commit containing the validator evidence artifact.",
+    validation: {
+      verdict: "passed",
+      summaryMd: "Validation passed; only the Git metadata commit step was blocked.",
+      commandProfile: "ci",
+      commands: ["npm test"],
+      repoIds: ["repo_project_floop_floop"],
+      artifacts: [{
+        kind: "demo",
+        label: "Validator demo evidence",
+        uri: "artifacts/validator-validation.json",
+        metadata: { demoEvidence: true, commandProfile: "ci" }
+      }]
+    }
+  }));
+});
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    execFileSync("git", ["init", "-b", "main", repoRoot]);
+    execFileSync("git", ["-C", repoRoot, "config", "user.name", "Floop Test"]);
+    execFileSync("git", ["-C", repoRoot, "config", "user.email", "floop@example.com"]);
+    writeFileSync(join(repoRoot, "README.md"), "# Floop Repo\n", "utf8");
+    execFileSync("git", ["-C", repoRoot, "add", "README.md"]);
+    execFileSync("git", ["-C", repoRoot, "commit", "-m", "seed repo"]);
+
+    store.updateRepo("project_floop", "repo_project_floop_floop", {
+      name: "floop",
+      localPath: repoRoot,
+      remoteUrl: "",
+      defaultBranch: "main",
+      isPrimary: true,
+    });
+    store.updateTicket("project_floop", "ticket_project_floop_2", {
+      repoTargets: [{ repoId: "repo_project_floop_floop", baseRef: "main", branchName: "main" }],
+    });
+    store.updateProjectPolicy("project_floop", {
+      requireReviewer: false,
+      requireValidator: true,
+      requireDemoEvidenceBeforeMerge: true,
+      requiredValidationCommandProfileForMerge: "ci",
+    });
+    store.updateRoleProfile("project_floop", "validator", {
+      adapter: "codex",
+      model: "codex-latest",
+      config: {
+        executable: fakeCodexPath,
+      },
+    });
+
+    const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Finish implementation before validator recovery.",
+    });
+    store.completeExecution("project_floop", implementation.id, {
+      outcome: "completed",
+      summaryMd: "Implementation completed before validation.",
+    });
+    const validatorExecution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "validator",
+      reason: "Recover passed validation evidence after Git metadata lock failure.",
+    });
+
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+    await driver.pollOnce();
+
+    const completed = store.getExecution("project_floop", validatorExecution.id);
+    const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+    assert.equal(completed.outcome, "completed");
+    assert.equal(ticket.validations.length, 1);
+    assert.equal(ticket.validations[0].verdict, "passed");
+    assert.equal(ticket.state, "READY_TO_MERGE");
+    assert.match(completed.summaryMd, /Floop recovered/);
+    assert.match(execFileSync("git", ["-C", repoRoot, "log", "--oneline", "--all"], { encoding: "utf8" }), /FLOOP-2/);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("execution driver materializes a real git worktree when the target repo exists", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-git-worktree-"));
   const workspaceRoot = join(fixtureDir, "workspace");

@@ -1184,7 +1184,7 @@ function normalizeCompletionArtifacts(completion, execution) {
 }
 
 async function recoverGitMetadataBlockedCompletion(completion, execution) {
-  if (completion.outcome !== "blocked" || !isGitMetadataReadOnlyBlockedKind(completion.blockedKind)) {
+  if (!isRecoverableGitMetadataCompletion(completion)) {
     return completion;
   }
 
@@ -1249,6 +1249,26 @@ async function recoverGitMetadataBlockedCompletion(completion, execution) {
 function isGitMetadataReadOnlyBlockedKind(value) {
   return ["git_metadata_read_only", "git-metadata-readonly", "git_metadata_readonly", "git-metadata-read-only"].includes(
     String(value || "").trim().toLowerCase(),
+  );
+}
+
+function isRecoverableGitMetadataCompletion(completion) {
+  if (completion.outcome === "blocked" && isGitMetadataReadOnlyBlockedKind(completion.blockedKind)) {
+    return true;
+  }
+
+  if (completion.outcome !== "needs_continue") {
+    return false;
+  }
+
+  const text = [
+    completion.summaryMd,
+    completion.remainingWorkMd,
+    completion.expectedNextEvidenceMd,
+  ].join("\n").toLowerCase();
+  return (
+    (text.includes("git metadata") || text.includes("index.lock")) &&
+    (text.includes("read-only") || text.includes("read only") || text.includes("mounted read-only"))
   );
 }
 
