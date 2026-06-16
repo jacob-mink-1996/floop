@@ -1217,13 +1217,16 @@ function buildCodexRoleGuidance(role, policy = {}) {
 
   if (role === "validator") {
     const requiredProfile = policy.requiredValidationCommandProfileForMerge || "";
+    const requiredDemoEvidence = Boolean(policy.requireDemoEvidenceBeforeMerge);
     return [
       "- Validate independently; do not just trust the implementation or review summary.",
       "- Choose the validation strategy from the ticket brief, acceptance criteria, definition of done, repo state, and available scripts.",
       "- Prefer the strongest local checks that fit the ticket. For code tickets this often includes the project test command, but targeted smoke checks, browser/API checks, or direct artifact inspection may be stronger for the acceptance criteria.",
       "- For docs, planning, architecture, or other non-code tickets, validate the required deliverables directly instead of forcing an unrelated test suite.",
       "- In validation.summaryMd, include short sections for Validation plan, Checks run, Why sufficient, and Result.",
-      "- Include demo evidence as a validation artifact whenever the ticket changes product behavior or user-visible workflow. Demo evidence can be a screenshot, recording, demo notes, API transcript, or another artifact marked with kind \"demo\" or metadata.demoEvidence true.",
+      requiredDemoEvidence
+        ? "- This project requires demo evidence before merge. Include at least one validation artifact marked with kind \"demo\" or metadata.demoEvidence true, even for documentation, planning, or architecture tickets. For non-UI work, use demo notes, an inspection transcript, or another concise proof artifact."
+        : "- Include demo evidence as a validation artifact whenever the ticket changes product behavior or user-visible workflow. Demo evidence can be a screenshot, recording, demo notes, API transcript, or another artifact marked with kind \"demo\" or metadata.demoEvidence true.",
       "- If the feature is not demoable or the evidence shows missing work, set validation.verdict to \"failed\" and explain the rework needed so Floop can route the previous working lane again.",
       requiredProfile
         ? `- When validation passes, set validation.commandProfile to "${requiredProfile}" because this project requires that profile before merge.`
@@ -1270,7 +1273,7 @@ The JSON file at ${resultPath} should include the top-level execution outcome pl
    - validation.commands: optional array of commands you ran
    - validation.repoIds: optional array of repo ids you validated
    - validation.artifacts: optional array of { kind, label, uri, metadata } for durable validation evidence
-   - validation.artifacts should include demo evidence before merge when the ticket changes product behavior; mark it with kind "demo" or metadata.demoEvidence true
+   - validation.artifacts should include demo evidence before merge when project policy requires demo evidence or when the ticket changes product behavior; mark it with kind "demo" or metadata.demoEvidence true
 
 The JSON file at ${resultPath} should include the top-level execution outcome plus the nested validation result.`;
   }

@@ -371,6 +371,7 @@ process.stdin.on("end", () => {
     store.updateProjectPolicy("project_floop", {
       requireReviewer: false,
       requireValidator: true,
+      requireDemoEvidenceBeforeMerge: true,
       requiredValidationCommandProfileForMerge: "ci",
       interactionMode: "autonomous_with_review",
     });
@@ -413,6 +414,7 @@ process.stdin.on("end", () => {
     assert.match(readFileSync(new URL(stdoutArtifact.uri), "utf8"), /validation guidance present/);
     assert.match(readFileSync(promptPath, "utf8"), /Choose the validation strategy from the ticket brief/);
     assert.match(readFileSync(promptPath, "utf8"), /Validation plan, Checks run, Why sufficient, and Result/);
+    assert.match(readFileSync(promptPath, "utf8"), /This project requires demo evidence before merge/);
     assert.match(readFileSync(promptPath, "utf8"), /metadata\.demoEvidence true/);
     assert.match(readFileSync(promptPath, "utf8"), /set validation\.commandProfile to "ci"/);
   } finally {
