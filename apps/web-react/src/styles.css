@@ -2504,6 +2504,70 @@ textarea {
   background: var(--panel-warm);
 }
 
+.active-agent-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--blue);
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel-warm) 84%, var(--blue) 16%);
+}
+
+.active-agent-head,
+.active-agent-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.active-agent-head h3 {
+  margin: 0;
+}
+
+.active-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.active-agent-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.active-agent-actions .danger-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.work-pulse {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--blue);
+  background: var(--blue);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 30%, transparent);
+  animation: work-pulse 1.35s ease-out infinite;
+}
+
+.quiet-link {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.quiet-link:hover {
+  color: var(--text);
+}
+
+@keyframes work-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 34%, transparent); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
 .ticket-cockpit-grid {
   display: grid;
   grid-template-columns: minmax(260px, 0.95fr) minmax(380px, 1.55fr);
@@ -2960,6 +3024,7 @@ textarea {
   .repo-mode-list,
   .path-suggestions > div,
   .fact-grid,
+  .active-agent-grid,
   .settings-overview,
   .settings-primary,
   .evidence-list,

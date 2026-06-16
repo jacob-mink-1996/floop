@@ -7,7 +7,7 @@ import {
 } from "../../../../packages/contracts/src/index.mjs";
 import { respondCreated, respondMaybe } from "./shared.mjs";
 
-export function handleExecutionRoute(route, _url, body, store) {
+export function handleExecutionRoute(route, _url, body, store, context = {}) {
   switch (route.name) {
     case "ticketExecutions":
       if (route.method === "GET") {
@@ -46,10 +46,15 @@ export function handleExecutionRoute(route, _url, body, store) {
         "execution",
       );
     case "executionCancel":
-      return respondMaybe(
-        store.cancelExecution(route.params.projectId, route.params.executionId, body || {}),
-        "execution",
-      );
+      {
+        const execution = store.cancelExecution(route.params.projectId, route.params.executionId, body || {});
+        context.executionDriver?.cancelExecution?.(
+          route.params.projectId,
+          route.params.executionId,
+          body?.reason || "Execution cancelled by operator",
+        );
+        return respondMaybe(execution, "execution");
+      }
     case "ticketReviews":
       if (route.method === "GET") {
         const reviews = store.listReviews(route.params.projectId, route.params.ticketId);

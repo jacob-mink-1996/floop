@@ -5,10 +5,11 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Tabs from "@radix-ui/react-tabs";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { DndContext, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent } from "@dnd-kit/core";
-import { Check, ChevronLeft, ChevronRight, FileText, Menu, Moon, Pencil, Plus, RefreshCw, SlidersHorizontal, Sparkles, Sun, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, FileText, Menu, Moon, Pencil, Plus, RefreshCw, SlidersHorizontal, Sparkles, Square, Sun, X } from "lucide-react";
 import {
   ApiError,
   applyCeremony,
+  cancelExecution,
   completeExecution,
   addDependency,
   cleanWorktree,
@@ -1775,7 +1776,9 @@ function BoardLane({
 function TicketCard({ ticket, selected, onClick }: { ticket: BoardTicket; selected: boolean; onClick: () => void }) {
   const action = nextActionForTicket(ticket);
   const phases = ticketPhaseItems(ticket);
+  const hasActiveAgent = ticket.activeExecutionCount > 0;
   const exceptionChips = [
+    hasActiveAgent ? `${ticket.activeExecutionClaimed ? "Agent" : "Queued"} ${ticket.activeExecutionRole ? prettyRole(ticket.activeExecutionRole as RoleName) : "active"}` : "",
     ticket.priority === "high" ? "High" : "",
     ticket.state === "BLOCKED" ? "Blocked" : "",
     ticket.state === "REWORK" ? "Rework" : "",
@@ -1841,6 +1844,7 @@ function TicketDetailPanel({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [isEditing, setEditing] = useState(false);
+  const activeExecution = ticket?.executions.find((execution) => execution.status === "running");
   const inputRequests = useMemo(
     () =>
       agentMessages.filter(
@@ -1891,6 +1895,17 @@ function TicketDetailPanel({
       ) : (
         <div className="detail-stack">
           {error ? <div className="status is-error">{error}</div> : null}
+          {activeExecution ? (
+            <ActiveAgentPanel
+              projectId={projectId}
+              ticket={ticket}
+              execution={activeExecution}
+              busy={busy}
+              onRun={runAction}
+              onRefresh={onRefresh}
+              onFullRefresh={onFullRefresh}
+            />
+          ) : null}
           <section className="ticket-cockpit">
             <TicketCockpit ticket={ticket} action={action} />
             <TicketActionForm
@@ -2042,6 +2057,72 @@ function TicketCockpit({ ticket, action }: { ticket: TicketDetail; action: { lab
         </div>
       </div>
     </div>
+  );
+}
+
+function ActiveAgentPanel({
+  projectId,
+  ticket,
+  execution,
+  busy,
+  onRun,
+  onRefresh,
+  onFullRefresh,
+}: {
+  projectId: string;
+  ticket: TicketDetail;
+  execution: NonNullable<TicketDetail["executions"][number]>;
+  busy: string;
+  onRun: (label: string, work: () => Promise<void>) => Promise<void>;
+  onRefresh: (ticketId?: string) => Promise<void>;
+  onFullRefresh: () => Promise<void>;
+}) {
+  const worktree = execution.worktrees?.[0] || ticket.worktrees.find((candidate) => candidate.executionId === execution.id);
+  const jsonlArtifact = execution.artifacts?.find((artifact) => artifact.label === "Adapter events JSONL");
+  const logArtifacts = (execution.artifacts || []).filter((artifact) => artifact.kind === "log").slice(0, 3);
+  const claimLabel = execution.claimed
+    ? execution.claimExpiresAt
+      ? `Claimed until ${formatDate(execution.claimExpiresAt)}`
+      : "Claimed"
+    : "Waiting for worker claim";
+
+  async function handleStop() {
+    await onRun("Stopping agent", async () => {
+      await cancelExecution(projectId, execution.id, {
+        reason: `Stopped active ${prettyRole(execution.role)} lane from ${ticket.key}.`,
+      });
+      await onRefresh(ticket.id);
+      await onFullRefresh();
+    });
+  }
+
+  return (
+    <section className="active-agent-panel">
+      <div className="active-agent-head">
+        <div>
+          <p className="kicker">Agent Working</p>
+          <h3>{prettyRole(execution.role)} iteration {execution.iteration}</h3>
+        </div>
+        <span className="work-pulse" aria-label="Agent is active" />
+      </div>
+      <div className="active-agent-grid">
+        <Fact label="State" value={claimLabel} />
+        <Fact label="Branch" value={worktree?.branchName || "Preparing"} />
+        <Fact label="Worktree" value={worktree?.status || "Active"} />
+        <Fact label="Logs" value={jsonlArtifact ? "JSONL" : logArtifacts.length ? "Text" : "Starting"} />
+      </div>
+      <div className="active-agent-actions">
+        <button className="danger-button" type="button" disabled={Boolean(busy)} onClick={handleStop}>
+          <Square size={14} />
+          Stop agent
+        </button>
+        {logArtifacts.map((artifact) => (
+          <a key={artifact.id} className="quiet-link" href={artifact.uri} target="_blank" rel="noreferrer">
+            {artifact.label}
+          </a>
+        ))}
+      </div>
+    </section>
   );
 }
 

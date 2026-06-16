@@ -61,22 +61,47 @@ class ExecutionDriver {
     }
 
     if (this.inFlight.size > 0) {
-      await Promise.allSettled(this.inFlight.values());
+      for (const entry of this.inFlight.values()) {
+        try {
+          this.store.cancelExecution(entry.projectId, entry.executionId, {
+            reason: "Execution cancelled because the Floop worker stopped.",
+          });
+        } catch {
+          // Best-effort shutdown; cancellation may already have been recorded.
+        }
+        entry.cancel("Execution cancelled because the Floop worker stopped.");
+      }
+      await Promise.allSettled([...this.inFlight.values()].map((entry) => entry.promise));
     }
+  }
+
+  cancelExecution(projectId, executionId, reason = "Execution cancelled by operator") {
+    const entry = this.inFlight.get(executionId);
+    if (!entry || entry.projectId !== projectId) {
+      return false;
+    }
+    entry.cancel(reason);
+    return true;
   }
 
   async pollOnce() {
     const executions = this.store.listActiveExecutions();
     const runnable = executions.filter((execution) => !this.inFlight.has(execution.id));
     const started = runnable.map((execution) => {
-      const promise = this.runExecution(execution)
+      const controller = new AbortController();
+      const promise = this.runExecution(execution, controller)
         .catch((error) => {
           this.logger.error?.("[floop-driver] execution failed", error);
         })
         .finally(() => {
           this.inFlight.delete(execution.id);
         });
-      this.inFlight.set(execution.id, promise);
+      this.inFlight.set(execution.id, {
+        projectId: execution.projectId,
+        executionId: execution.id,
+        promise,
+        cancel: (reason) => abortController(controller, reason),
+      });
       return promise;
     });
 
@@ -94,7 +119,7 @@ class ExecutionDriver {
     await this.pollOnce();
   }
 
-  async runExecution(execution) {
+  async runExecution(execution, controller) {
     const claimedExecution = this.store.claimExecution(execution.projectId, execution.id, {
       claimToken: this.claimToken,
       leaseMs: this.leaseMs,
@@ -128,7 +153,23 @@ class ExecutionDriver {
         }),
       this.leaseMs);
       try {
-        await this.runExecutionAttempts({ execution: freshExecution, ticket, project, adapterRun });
+        const stopCancellationWatcher = startCancellationWatcher(() => {
+          const latest = this.store.getExecution(execution.projectId, execution.id);
+          if (latest?.finishedAt || latest?.status === "cancelled") {
+            abortController(controller, `${freshExecution.ticketKey} execution was cancelled.`);
+          }
+        }, 500);
+        try {
+          await this.runExecutionAttempts({
+            execution: freshExecution,
+            ticket,
+            project,
+            adapterRun,
+            signal: controller.signal,
+          });
+        } finally {
+          stopCancellationWatcher();
+        }
       } finally {
         stopLeaseHeartbeat();
       }
@@ -153,7 +194,7 @@ class ExecutionDriver {
     }
   }
 
-  async runExecutionAttempts({ execution, ticket, project, adapterRun }) {
+  async runExecutionAttempts({ execution, ticket, project, adapterRun, signal }) {
     let lastCompletion = null;
     let lastError = null;
 
@@ -168,6 +209,7 @@ class ExecutionDriver {
           runtime,
           cwd: execution.worktrees[0]?.path || project.workspaceRoot,
           env: buildExecutionEnv(project, ticket, execution, runtime),
+          signal,
         });
         const completion = await buildCompletionPayload(result, runtime, execution, ticket);
         lastCompletion = completion;
@@ -188,6 +230,10 @@ class ExecutionDriver {
           completion.summaryMd = appendRetrySummary(completion.summaryMd, attempt, "completed");
         }
 
+        const latestExecution = this.store.getExecution(execution.projectId, execution.id);
+        if (!latestExecution || latestExecution.finishedAt) {
+          return;
+        }
         this.store.completeExecution(execution.projectId, execution.id, completion);
         return;
       } catch (error) {
@@ -235,6 +281,24 @@ function backoffForAttempt(baseMs, attempt) {
 
 function sleep(milliseconds) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+function abortController(controller, reason) {
+  if (!controller.signal.aborted) {
+    controller.abort(new Error(reason));
+  }
+}
+
+function startCancellationWatcher(check, intervalMs) {
+  const timer = setInterval(() => {
+    try {
+      check();
+    } catch {
+      // Cancellation polling is best effort; the main execution path owns failures.
+    }
+  }, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 function startLeaseHeartbeat(renew, leaseMs) {
@@ -390,6 +454,7 @@ async function prepareRuntimeArtifacts(project, ticket, execution) {
   const workLogPath = join(artifactRoot, "agent-work-log.md");
   const stdoutPath = join(artifactRoot, "stdout.log");
   const stderrPath = join(artifactRoot, "stderr.log");
+  const agentEventsPath = join(artifactRoot, "agent-events.jsonl");
 
   await mkdir(dirname(contextPath), { recursive: true });
   await mkdir(dirname(stdoutPath), { recursive: true });
@@ -415,6 +480,7 @@ async function prepareRuntimeArtifacts(project, ticket, execution) {
     workLogPath,
     stdoutPath,
     stderrPath,
+    agentEventsPath,
   };
 }
 
@@ -438,6 +504,11 @@ function buildExecutionEnv(project, ticket, execution, runtime) {
 
 async function executeAdapterRun(adapterRun, options) {
   if (adapterRun.kind === "mock") {
+    await writeJsonlEvent(options.runtime.agentEventsPath, {
+      event: "adapter.completed",
+      adapter: "mock",
+      exitCode: 0,
+    });
     return {
       exitCode: 0,
       stdout: "mock adapter completed",
@@ -456,35 +527,64 @@ async function executeAdapterRun(adapterRun, options) {
       stdin: prompt,
       stdoutPath: options.runtime.stdoutPath,
       stderrPath: options.runtime.stderrPath,
+      jsonlPath: options.runtime.agentEventsPath,
+      signal: options.signal,
+      metadata: buildProcessMetadata(adapterRun, options),
     });
   }
 
   return runShellCommand(adapterRun.command, options);
 }
 
-function runShellCommand(command, { cwd, env, runtime }) {
+function runShellCommand(command, { cwd, env, runtime, signal }) {
   return runProcess(command, [], {
     cwd,
     env,
     shell: true,
     stdoutPath: runtime.stdoutPath,
     stderrPath: runtime.stderrPath,
+    jsonlPath: runtime.agentEventsPath,
+    signal,
+    metadata: { adapter: "shell", command },
   });
 }
 
-function runProcess(command, args, { cwd, env, shell = false, stdin = "", stdoutPath = "", stderrPath = "" }) {
+function runProcess(
+  command,
+  args,
+  { cwd, env, shell = false, stdin = "", stdoutPath = "", stderrPath = "", jsonlPath = "", signal, metadata = {} },
+) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(command, args, {
       cwd,
       env,
       shell,
       stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
 
     let stdout = "";
     let stderr = "";
+    let cancelled = false;
+    let cancelReason = "";
+    let killTimer = null;
     let stdoutWrite = stdoutPath ? writeFile(stdoutPath, "", "utf8") : Promise.resolve();
     let stderrWrite = stderrPath ? writeFile(stderrPath, "", "utf8") : Promise.resolve();
+    let jsonlWrite = jsonlPath ? writeFile(jsonlPath, "", "utf8") : Promise.resolve();
+    const record = (event) => {
+      if (!jsonlPath) return;
+      jsonlWrite = jsonlWrite.then(() => appendJsonlEvent(jsonlPath, event));
+    };
+
+    record({
+      event: "process.started",
+      pid: child.pid || null,
+      cwd,
+      shell,
+      command,
+      args,
+      ...metadata,
+    });
 
     if (stdin) {
       child.stdin?.end(stdin);
@@ -494,25 +594,96 @@ function runProcess(command, args, { cwd, env, shell = false, stdin = "", stdout
       const text = chunk.toString();
       stdout += text;
       if (stdoutPath) stdoutWrite = stdoutWrite.then(() => appendFile(stdoutPath, text, "utf8"));
+      record({ event: "process.output", stream: "stdout", bytes: chunk.length, text });
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString();
       stderr += text;
       if (stderrPath) stderrWrite = stderrWrite.then(() => appendFile(stderrPath, text, "utf8"));
+      record({ event: "process.output", stream: "stderr", bytes: chunk.length, text });
     });
-    child.on("error", rejectPromise);
+
+    const cancel = () => {
+      cancelled = true;
+      cancelReason = signal?.reason instanceof Error ? signal.reason.message : String(signal?.reason || "cancelled");
+      record({ event: "process.cancel_requested", reason: cancelReason, pid: child.pid || null });
+      killChildProcessTree(child, "SIGTERM");
+      killTimer = setTimeout(() => {
+        record({ event: "process.kill_requested", reason: cancelReason, pid: child.pid || null });
+        killChildProcessTree(child, "SIGKILL");
+      }, 3000);
+      killTimer.unref?.();
+    };
+
+    if (signal?.aborted) {
+      cancel();
+    } else {
+      signal?.addEventListener("abort", cancel, { once: true });
+    }
+
+    child.on("error", (error) => {
+      record({ event: "process.error", message: error.message });
+      rejectPromise(error);
+    });
     child.on("close", (code) => {
-      Promise.all([stdoutWrite, stderrWrite])
+      if (killTimer) clearTimeout(killTimer);
+      signal?.removeEventListener("abort", cancel);
+      record({
+        event: "process.closed",
+        exitCode: code ?? 1,
+        cancelled,
+        cancelReason,
+      });
+      Promise.all([stdoutWrite, stderrWrite, jsonlWrite])
         .then(() => {
           resolvePromise({
-            exitCode: code ?? 1,
+            exitCode: cancelled && code === null ? 130 : code ?? 1,
             stdout,
             stderr,
+            cancelled,
+            cancelReason,
           });
         })
         .catch(rejectPromise);
     });
   });
+}
+
+function buildProcessMetadata(adapterRun, options) {
+  return {
+    adapter: adapterRun.kind,
+    role: options.execution.role,
+    ticketKey: options.execution.ticketKey,
+    executionId: options.execution.id,
+  };
+}
+
+function killChildProcessTree(child, signal) {
+  if (!child.pid || child.killed) {
+    return;
+  }
+  try {
+    if (process.platform !== "win32") {
+      process.kill(-child.pid, signal);
+      return;
+    }
+  } catch {
+    // Fall back to killing the direct child below.
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // Process may already be gone.
+  }
+}
+
+async function writeJsonlEvent(filename, event) {
+  await mkdir(dirname(filename), { recursive: true });
+  await writeFile(filename, `${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`, "utf8");
+}
+
+function appendJsonlEvent(filename, event) {
+  return appendFile(filename, `${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`, "utf8");
 }
 
 async function buildCompletionPayload(result, runtime, execution, ticket) {
@@ -554,6 +725,15 @@ async function buildCompletionPayload(result, runtime, execution, ticket) {
       label: "Adapter stderr",
       uri: pathToFileURL(runtime.stderrPath).href,
     },
+    {
+      kind: "log",
+      label: "Adapter events JSONL",
+      uri: pathToFileURL(runtime.agentEventsPath).href,
+      metadata: {
+        format: "jsonl",
+        harness: "floop-execution-driver",
+      },
+    },
     ...(normalized.artifacts || []),
   ];
 
@@ -563,6 +743,19 @@ async function buildCompletionPayload(result, runtime, execution, ticket) {
       label: "Agent final message",
       uri: pathToFileURL(runtime.finalMessagePath).href,
     });
+  }
+
+  if (result.cancelled) {
+    return {
+      outcome: "failed",
+      summaryMd: result.cancelReason || "Adapter process was cancelled before it reported a final result.",
+      remainingWorkMd: normalized.remainingWorkMd || "",
+      expectedNextEvidenceMd: normalized.expectedNextEvidenceMd || "",
+      failureKind: "cancelled",
+      blockedKind: normalized.blockedKind || "",
+      artifacts,
+      followupTickets: normalized.followupTickets,
+    };
   }
 
   if (result.exitCode !== 0 || missingResult) {

@@ -422,6 +422,22 @@ export async function completeExecution(
   return payload.execution;
 }
 
+export async function cancelExecution(
+  projectId: string,
+  executionId: string,
+  input: { reason: string },
+): Promise<Execution> {
+  const payload = await fetchJson<{ execution: Execution }>(
+    `/api/v1/projects/${projectId}/executions/${executionId}/cancel`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  return payload.execution;
+}
+
 export async function createReview(
   projectId: string,
   ticketId: string,

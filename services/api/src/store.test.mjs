@@ -602,6 +602,11 @@ test("store persists execution history and routes ticket state from outcomes", (
   assert.equal(started.worktrees[0].repoSlug, "floop");
   assert.match(started.worktrees[0].path, /\/\.floop\/worktrees\/floop-2\/floop\/iter-1$/);
   assert.equal(started.worktrees[0].status, "active");
+  const listedActiveTicket = store
+    .listTickets("project_floop")
+    .find((ticket) => ticket.id === "ticket_project_floop_2");
+  assert.equal(listedActiveTicket.activeExecutionCount, 1);
+  assert.equal(listedActiveTicket.activeExecutionRole, "developer");
 
   const completed = store.completeExecution("project_floop", started.id, {
     outcome: "completed",

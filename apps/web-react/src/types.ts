@@ -144,6 +144,9 @@ export type BoardTicket = {
   latestSummary: string;
   latestReviewVerdict: string;
   latestValidationVerdict: string;
+  activeExecutionCount: number;
+  activeExecutionRole: string;
+  activeExecutionClaimed: boolean;
   repoCount: number;
   dependencyCount: number;
   eventCount: number;
@@ -180,6 +183,12 @@ export type RepoTarget = {
 
 export type Execution = {
   id: string;
+  projectId: string;
+  ticketId: string;
+  ticketKey: string;
+  ticketTitle: string;
+  ticketState: string;
+  agentProfileId: string;
   role: RoleName;
   iteration: number;
   status: string;
@@ -189,8 +198,12 @@ export type Execution = {
   expectedNextEvidenceMd?: string;
   failureKind?: string;
   blockedKind?: string;
+  claimed?: boolean;
+  claimExpiresAt?: string;
   startedAt: string;
   finishedAt: string;
+  artifacts?: Artifact[];
+  worktrees?: Worktree[];
 };
 
 export type Review = {
@@ -232,7 +245,10 @@ export type TicketDependency = {
 
 export type Worktree = {
   id: string;
+  projectId: string;
   repoId: string;
+  ticketId: string;
+  executionId: string;
   repoSlug: string;
   repoName: string;
   executionRole: RoleName;

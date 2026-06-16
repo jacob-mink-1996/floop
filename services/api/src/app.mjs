@@ -59,7 +59,7 @@ export function createFloopServer(options = {}) {
       }
 
       const body = await readJsonBody(request);
-      const result = handleRoute(route, url, body, store);
+      const result = handleRoute(route, url, body, store, options);
       sendJson(response, result.status, result.body);
     } catch (error) {
       const status = error instanceof RequestError ? error.status : inferErrorStatus(error);
@@ -73,7 +73,7 @@ export function createFloopServer(options = {}) {
   });
 }
 
-function handleRoute(route, url, body, store) {
+function handleRoute(route, url, body, store, context = {}) {
   switch (route.name) {
     case "health":
       return {
@@ -110,7 +110,7 @@ function handleRoute(route, url, body, store) {
         handleProjectRoute(route, url, body, store) ||
         handleRepoRoute(route, url, body, store) ||
         handleTicketRoute(route, url, body, store) ||
-        handleExecutionRoute(route, url, body, store) ||
+        handleExecutionRoute(route, url, body, store, context) ||
         handleMergeRoute(route, url, body, store) ||
         handleCeremonyRoute(route, url, body, store) ||
         handleFeedRoute(route, url, body, store) ||

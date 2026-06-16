@@ -910,6 +910,74 @@ test("execution driver renews claims while a long-running execution is still act
   }
 });
 
+test("execution driver terminates adapter processes when execution is cancelled", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-driver-cancel-process-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const startedPath = join(fixtureDir, "adapter-started.txt");
+  const stoppedPath = join(fixtureDir, "adapter-stopped.txt");
+  const fakeAdapterPath = join(fixtureDir, "fake-long-adapter.js");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    fakeAdapterPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(startedPath)}, String(process.pid));
+process.on("SIGTERM", () => {
+  fs.writeFileSync(${JSON.stringify(stoppedPath)}, "stopped");
+  process.exit(0);
+});
+setInterval(() => {}, 1000);
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "shell",
+      model: "fixture",
+      config: {
+        command: `"${process.execPath}" "${fakeAdapterPath}"`,
+      },
+    });
+
+    const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Start a cancellable adapter.",
+    });
+    const driver = createExecutionDriver({ store, logger: silentLogger(), leaseMs: 40 });
+
+    const pollPromise = driver.pollOnce();
+    await waitForFile(startedPath);
+    store.cancelExecution("project_floop", execution.id, {
+      reason: "Operator cancelled the active adapter.",
+    });
+    await pollPromise;
+
+    const cancelled = store.getExecution("project_floop", execution.id);
+    assert.equal(cancelled.status, "cancelled");
+    assert.equal(cancelled.failureKind, "cancelled");
+    assert.equal(readFileSync(stoppedPath, "utf8"), "stopped");
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+async function waitForFile(filename, timeoutMs = 2000) {
+  const startedAt = Date.now();
+  while (!existsSync(filename)) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for ${filename}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function silentLogger() {
   return {
     error() {},

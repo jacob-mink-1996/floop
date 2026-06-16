@@ -43,7 +43,6 @@ async function startFloopApi(repoRoot) {
   const host = resolveHost(desktopEnv.FLOOP_HOST);
   const port = resolvePort(desktopEnv.FLOOP_PORT);
   const store = createStore();
-  apiServer = createFloopServer({ store, host, port });
   executionDriver = createExecutionDriver({
     store,
     pollIntervalMs: Number.parseInt(process.env.FLOOP_EXECUTION_POLL_MS || "2000", 10),
@@ -61,6 +60,7 @@ async function startFloopApi(repoRoot) {
     pollIntervalMs: Number.parseInt(process.env.FLOOP_CEREMONY_PARTICIPANT_POLL_MS || "2000", 10),
     maxParallel: Number.parseInt(process.env.FLOOP_CEREMONY_PARTICIPANT_MAX_PARALLEL || "4", 10),
   });
+  apiServer = createFloopServer({ store, host, port, executionDriver });
 
   executionDriver.start();
   mergeDriver.start();

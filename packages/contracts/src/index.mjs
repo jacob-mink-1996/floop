@@ -305,6 +305,9 @@ export function boardTicketDto(ticket) {
     latestSummary: ticket.latestSummary,
     latestReviewVerdict: ticket.latestReviewVerdict || "",
     latestValidationVerdict: ticket.latestValidationVerdict || "",
+    activeExecutionCount: Number(ticket.activeExecutionCount || 0),
+    activeExecutionRole: ticket.activeExecutionRole || "",
+    activeExecutionClaimed: Boolean(ticket.activeExecutionClaimed),
     updatedAt: ticket.updatedAt,
   };
 }
@@ -338,6 +341,9 @@ export function ticketSummaryDto(ticket, options = {}) {
     latestSummary: ticket.latestSummary,
     latestReviewVerdict: options.latestReviewVerdict || "",
     latestValidationVerdict: options.latestValidationVerdict || "",
+    activeExecutionCount: Number(options.activeExecutionCount || 0),
+    activeExecutionRole: options.activeExecutionRole || "",
+    activeExecutionClaimed: Boolean(options.activeExecutionClaimed),
     repoCount: (options.repoTargets || []).length,
     dependencyCount: options.dependencyCount || 0,
     eventCount: options.eventCount || 0,

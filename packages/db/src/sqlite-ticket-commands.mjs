@@ -48,6 +48,7 @@ export function createTicketCommands({
       const tickets = listTicketRows(database, projectId, filters);
       const ticketIds = tickets.map((ticket) => ticket.id);
       const repoTargetsByTicketId = getRepoTargetsByTicketId(database, ticketIds);
+      const executionsByTicketId = getExecutionsByTicketId(database, projectId, ticketIds);
       const latestReviewVerdictsByTicketId = getLatestReviewVerdictsByTicketId(database, projectId, ticketIds);
       const latestValidationVerdictsByTicketId = getLatestValidationVerdictsByTicketId(
         database,
@@ -72,13 +73,22 @@ export function createTicketCommands({
       );
 
       return tickets.map((ticket) =>
-        ticketSummaryDto(mapTicket(ticket), {
-          repoTargets: repoTargetsByTicketId.get(ticket.id) || [],
-          latestReviewVerdict: latestReviewVerdictsByTicketId.get(ticket.id) || "",
-          latestValidationVerdict: latestValidationVerdictsByTicketId.get(ticket.id) || "",
-          eventCount: eventCountsByTicketId.get(ticket.id) || 0,
-          dependencyCount: dependencyCountsByTicketId.get(ticket.id) || 0,
-        }),
+        {
+          const activeExecutions = (executionsByTicketId.get(ticket.id) || []).filter(
+            (execution) => execution.status === "running",
+          );
+          const activeExecution = activeExecutions[0];
+          return ticketSummaryDto(mapTicket(ticket), {
+            repoTargets: repoTargetsByTicketId.get(ticket.id) || [],
+            latestReviewVerdict: latestReviewVerdictsByTicketId.get(ticket.id) || "",
+            latestValidationVerdict: latestValidationVerdictsByTicketId.get(ticket.id) || "",
+            activeExecutionCount: activeExecutions.length,
+            activeExecutionRole: activeExecution?.role || "",
+            activeExecutionClaimed: Boolean(activeExecution?.claimToken),
+            eventCount: eventCountsByTicketId.get(ticket.id) || 0,
+            dependencyCount: dependencyCountsByTicketId.get(ticket.id) || 0,
+          });
+        }
       );
     },
 
