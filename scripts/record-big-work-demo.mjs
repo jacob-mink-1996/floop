@@ -657,11 +657,13 @@ async function mergeTicketNow(projectId, title) {
   for (const target of detail.repoTargets) {
     const repo = store.listRepos(projectId).find((candidate) => candidate.id === target.repoId);
     assert.ok(repo, `Expected repo ${target.repoId}`);
+    const sourceBranch = selectMergeSourceBranch(detail, target.repoId) || target.branchName;
+    assert.ok(sourceBranch, `Expected merge source branch for ${detail.key} repo ${target.repoId}`);
     try {
-      execFileSync("git", ["-C", repo.localPath, "merge", "--squash", target.branchName], { encoding: "utf8" });
+      execFileSync("git", ["-C", repo.localPath, "merge", "--squash", sourceBranch], { encoding: "utf8" });
     } catch (error) {
       throw new Error(
-        `Failed to squash merge ${target.branchName} into ${repo.localPath}\nSTDOUT:\n${error.stdout || ""}\nSTDERR:\n${error.stderr || ""}`,
+        `Failed to squash merge ${sourceBranch} into ${repo.localPath}\nSTDOUT:\n${error.stdout || ""}\nSTDERR:\n${error.stderr || ""}`,
       );
     }
     const hasStagedChanges = execFileSync("git", ["-C", repo.localPath, "diff", "--cached", "--name-only"], { encoding: "utf8" }).trim();
@@ -683,6 +685,25 @@ async function mergeTicketNow(projectId, title) {
       },
     ],
   });
+}
+
+function selectMergeSourceBranch(ticket, repoId) {
+  const roleRank = new Map([
+    ["developer", 1],
+    ["reviewer", 2],
+    ["validator", 3],
+  ]);
+  return [...(ticket.worktrees || [])]
+    .filter((worktree) => worktree.repoId === repoId && worktree.branchName && worktree.status !== "cleaned")
+    .map((worktree) => ({ worktree, rank: roleRank.get(worktree.executionRole) || 0 }))
+    .filter((item) => item.rank > 0)
+    .sort((left, right) => {
+      if (right.rank !== left.rank) return right.rank - left.rank;
+      if (right.worktree.executionIteration !== left.worktree.executionIteration) {
+        return right.worktree.executionIteration - left.worktree.executionIteration;
+      }
+      return String(right.worktree.updatedAt || "").localeCompare(String(left.worktree.updatedAt || ""));
+    })[0]?.worktree.branchName;
 }
 
 async function demoCalendarApp(page, floopUrl, stage) {
