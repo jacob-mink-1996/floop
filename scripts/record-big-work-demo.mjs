@@ -277,10 +277,10 @@ async function runWalkthrough(page, appUrl) {
   await page.getByText("Working").first().waitFor();
   await pause(1800);
   await waitDuringIdle("parallel recurrence full loop", () =>
-    waitForTicketState(demoTickets.recurrence.title, "READY_TO_MERGE", agentWaitMs(30_000, 900_000)),
+    waitForTicketState(demoTickets.recurrence.title, "READY_TO_MERGE", featureLoopWaitMs()),
   );
   await waitDuringIdle("parallel reminders full loop", () =>
-    waitForTicketState(demoTickets.reminders.title, "READY_TO_MERGE", agentWaitMs(30_000, 900_000)),
+    waitForTicketState(demoTickets.reminders.title, "READY_TO_MERGE", featureLoopWaitMs()),
   );
   await mergeTicketNow(project.id, demoTickets.recurrence.title);
   await mergeTicketNow(project.id, demoTickets.reminders.title);
@@ -475,17 +475,17 @@ async function runTicketLoopFromUi(page, title) {
   }
   await pause(1600);
   await waitDuringIdle(`${title} developer implementation`, () =>
-    waitForTicketAtOrPast(title, "REVIEWING", agentWaitMs(30_000, 900_000)),
+    waitForTicketAtOrPast(title, "REVIEWING", featureLoopWaitMs()),
   );
   await tryRevealTicketState(page, title, "Reviewing");
   await pause(1000);
   await waitDuringIdle(`${title} independent review`, () =>
-    waitForTicketAtOrPast(title, "VALIDATING", agentWaitMs(30_000, 900_000)),
+    waitForTicketAtOrPast(title, "VALIDATING", featureLoopWaitMs()),
   );
   await tryRevealTicketState(page, title, "Validating");
   await pause(1000);
   await waitDuringIdle(`${title} independent validation`, () =>
-    waitForTicketState(title, "READY_TO_MERGE", agentWaitMs(30_000, 900_000)),
+    waitForTicketState(title, "READY_TO_MERGE", featureLoopWaitMs()),
   );
   await revealTicketState(page, title, "Ready to merge");
   await pause(1000);
@@ -600,6 +600,10 @@ function scoreTicketIntent(ticket, keywords) {
 
 function agentWaitMs(fixtureMs, codexMs) {
   return agentMode === "codex" ? codexMs : fixtureMs;
+}
+
+function featureLoopWaitMs() {
+  return agentWaitMs(30_000, 1_800_000);
 }
 
 async function waitDuringIdle(label, action) {
