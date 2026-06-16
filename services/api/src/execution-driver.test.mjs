@@ -149,6 +149,61 @@ process.stdin.on("end", () => {
   }
 });
 
+test("execution driver fails successful adapters that omit result JSON", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-codex-missing-result-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const fakeCodexPath = join(fixtureDir, "fake-missing-result-codex.js");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    fakeCodexPath,
+    `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stdout.write("finished without result json\\n");
+});
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    store.updateProjectPolicy("project_floop", {
+      interactionMode: "autonomous_with_review",
+    });
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "codex",
+      model: "codex-latest",
+      config: {
+        executable: fakeCodexPath,
+      },
+    });
+
+    const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Run a malformed adapter completion.",
+    });
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+
+    await driver.pollOnce();
+
+    const completed = store.getExecution("project_floop", execution.id);
+    const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+
+    assert.equal(completed.outcome, "failed");
+    assert.equal(completed.failureKind, "missing_result_json");
+    assert.match(completed.summaryMd, /did not write the required result JSON/);
+    assert.equal(ticket.state, "WORKING");
+    assert.equal(ticket.executions.some((item) => item.role === "reviewer"), false);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("execution driver resolves codex follow-up repo slugs to repo ids", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-codex-followup-driver-"));
   const workspaceRoot = join(fixtureDir, "workspace");

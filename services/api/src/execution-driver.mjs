@@ -518,9 +518,10 @@ async function buildCompletionPayload(result, runtime, execution, ticket) {
   await writeFile(runtime.stdoutPath, result.stdout || "", "utf8");
   await writeFile(runtime.stderrPath, result.stderr || "", "utf8");
 
-  const fileResult = result.result || (await readResultFile(runtime.resultPath));
+  const explicitResult = result.result || (await readResultFile(runtime.resultPath));
+  const missingResult = !explicitResult || typeof explicitResult !== "object" || Array.isArray(explicitResult);
   const normalized = await recoverGitMetadataBlockedCompletion(
-    normalizeCompletionArtifacts(normalizeCompletionResult(fileResult, execution, ticket), execution),
+    normalizeCompletionArtifacts(normalizeCompletionResult(explicitResult, execution, ticket), execution),
     execution,
   );
   const finalMessage = await readOptionalFile(runtime.finalMessagePath);
@@ -563,15 +564,17 @@ async function buildCompletionPayload(result, runtime, execution, ticket) {
     });
   }
 
-  if (result.exitCode !== 0) {
+  if (result.exitCode !== 0 || missingResult) {
     return {
       outcome: "failed",
       summaryMd:
-        normalized.summaryMd ||
-        `Adapter command exited with code ${result.exitCode}.${result.stderr ? `\n\n${result.stderr.trim()}` : ""}`,
+        missingResult
+          ? `Adapter command exited with code ${result.exitCode}, but did not write the required result JSON.`
+          : normalized.summaryMd ||
+            `Adapter command exited with code ${result.exitCode}.${result.stderr ? `\n\n${result.stderr.trim()}` : ""}`,
       remainingWorkMd: normalized.remainingWorkMd || "",
       expectedNextEvidenceMd: normalized.expectedNextEvidenceMd || "",
-      failureKind: normalized.failureKind || "adapter_command_failed",
+      failureKind: missingResult ? "missing_result_json" : normalized.failureKind || "adapter_command_failed",
       blockedKind: normalized.blockedKind || "",
       artifacts,
       followupTickets: normalized.followupTickets,
@@ -1204,6 +1207,7 @@ function buildCodexRoleGuidance(role, policy = {}) {
       "- Keep the change scoped to the ticket while leaving the repo runnable and coherent.",
       "- Add or update focused tests when the ticket changes behavior.",
       "- Run the strongest relevant local checks you can reasonably run before committing.",
+      "- Do not launch browser automation, MCP servers, or interactive tooling unless the ticket explicitly requires that tool; prefer direct file edits and bounded tests.",
       "- Emit concrete progress in stdout or the final message so Floop can show proof that work happened.",
     ].join("\n");
   }

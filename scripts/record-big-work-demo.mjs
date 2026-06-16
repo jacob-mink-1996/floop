@@ -373,6 +373,7 @@ function demoCodexPreamble() {
     "Keep the generated calendar project dependency-free unless the ticket explicitly requires otherwise.",
     "Codex demo executions may run in a sandbox where long-running local server checks can hang. Prefer in-process tests that close listeners, direct request/response assertions, or smoke checks wrapped with explicit timeouts.",
     "Never run watch modes, unbounded servers, or smoke commands that can wait indefinitely; every validation command should complete on its own.",
+    "Do not launch browser automation, MCP servers, or interactive tooling unless the ticket explicitly requires that tool; prefer direct file edits and bounded tests for implementation lanes.",
     "Emit concrete progress in stdout or your final message so Floop's work log can prove that work happened.",
   ].join("\n");
 }
