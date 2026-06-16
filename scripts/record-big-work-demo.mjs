@@ -113,8 +113,16 @@ try {
   assert.equal(proof.appDemoSnapshots.some((snapshot) => snapshot.stage === "final"), true);
   assert.equal(existsSync(join(targetRepoPath, "src", "server.mjs")), true);
   assert.equal(existsSync(join(targetRepoPath, "public", "index.html")), true);
-  assert.equal(existsSync(join(targetRepoPath, "src", "recurrence.mjs")), true);
-  assert.equal(existsSync(join(targetRepoPath, "src", "reminders.mjs")), true);
+  assert.equal(
+    existsSync(join(targetRepoPath, "src", "domain", "recurrence.mjs")) ||
+      existsSync(join(targetRepoPath, "src", "recurrence.mjs")),
+    true,
+  );
+  assert.equal(
+    existsSync(join(targetRepoPath, "src", "domain", "reminders.mjs")) ||
+      existsSync(join(targetRepoPath, "src", "reminders.mjs")),
+    true,
+  );
 
   await context.close();
   context = null;
