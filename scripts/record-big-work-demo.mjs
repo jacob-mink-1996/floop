@@ -291,6 +291,10 @@ async function runWalkthrough(page, appUrl) {
 
   await runTicketLoopFromUi(page, demoTickets.final.title);
   await waitForTicketState(demoTickets.final.title, "DONE", 45_000);
+  for (const extraTicket of demoTickets.extras) {
+    await runTicketLoopFromUi(page, extraTicket.title);
+    await waitForTicketState(extraTicket.title, "DONE", 45_000);
+  }
   await demoCalendarApp(page, appUrl, "final");
 
   await clickByText(page, "Cockpit");
@@ -586,8 +590,8 @@ function resolveDemoFeatureTickets(tickets) {
   const vertical = pick("vertical slice", ["vertical", "slice", "api", "frontend", "browser", "create", "event"], 0);
   const recurrence = pick("recurrence", ["recurr", "repeat", "daily", "weekly"], 0);
   const reminders = pick("reminders", ["reminder", "notification", "notify"], 0);
-  const final = pick("final integration", ["integrat", "final", "validation", "demo", "end-to-end"], 0);
-  return { vertical, recurrence, reminders, final };
+  const final = pick("final integration", ["integrat", "final", "end-to-end", "complete"], 0);
+  return { vertical, recurrence, reminders, final, extras: remaining };
 }
 
 function scoreTicketIntent(ticket, keywords) {
