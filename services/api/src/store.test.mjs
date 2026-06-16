@@ -768,13 +768,14 @@ test("store persists review and validation evidence and advances the ticket loop
 
   const validations = store.createValidation("project_floop", "ticket_project_floop_2", {
     executionId: started.id,
-    repoIds: ["repo_project_floop_floop"],
+    repoIds: ["floop"],
     commandProfile: "ci",
     commands: ["npm test", "npm run lint"],
     verdict: "passed",
     summaryMd: "Validation passed for the targeted repo.",
   });
   assert.equal(validations.length, 1);
+  assert.equal(validations[0].repoId, "repo_project_floop_floop");
   assert.equal(validations[0].repoSlug, "floop");
   assert.deepEqual(validations[0].commands, ["npm test", "npm run lint"]);
 

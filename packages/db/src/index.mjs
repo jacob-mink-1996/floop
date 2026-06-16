@@ -904,21 +904,22 @@ function normalizeValidationRepoIds(database, projectId, ticket, repoTargets, re
   }
 
   const seenRepoIds = new Set();
-  return candidateRepoIds.map((repoId) => {
-    const normalizedRepoId = requiredText(repoId, "repoId");
+  return candidateRepoIds.map((repoReference) => {
+    const normalizedRepoReference = requiredText(repoReference, "repoId");
+    const repo = database
+      .prepare("select id from repos where project_id = ? and (id = ? or slug = ? or name = ?)")
+      .get(projectId, normalizedRepoReference, normalizedRepoReference, normalizedRepoReference);
+    if (!repo) {
+      throw new Error(`Unknown validation repo target: ${normalizedRepoReference}`);
+    }
+    const normalizedRepoId = repo.id;
     if (seenRepoIds.has(normalizedRepoId)) {
       throw new Error(`Duplicate validation repo target: ${normalizedRepoId}`);
     }
     seenRepoIds.add(normalizedRepoId);
 
-    const repo = database
-      .prepare("select id from repos where project_id = ? and id = ?")
-      .get(projectId, normalizedRepoId);
-    if (!repo) {
-      throw new Error(`Unknown validation repo target: ${normalizedRepoId}`);
-    }
     if (targetedRepoIds.size > 0 && !targetedRepoIds.has(normalizedRepoId)) {
-      throw new Error(`Validation repo target is not attached to ${ticket.key}: ${normalizedRepoId}`);
+      throw new Error(`Validation repo target is not attached to ${ticket.key}: ${normalizedRepoReference}`);
     }
     return normalizedRepoId;
   });
