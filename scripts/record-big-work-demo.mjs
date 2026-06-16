@@ -121,7 +121,8 @@ try {
   browser = null;
 
   if (mode === "record") {
-    const videoPath = finalizeVideo(recordingDir);
+    const recordingDurationSeconds = Number(((Date.now() - recordingStartedAt) / 1000).toFixed(3));
+    const videoPath = finalizeVideo(recordingDir, proof.timeline.trimSuggestion, recordingDurationSeconds);
     writeFileSync(
       join(recordingDir, "proof.json"),
       JSON.stringify({ appUrl, fixtureRoot, targetRepoPath, videoPath, ...proof }, null, 2),
@@ -772,6 +773,7 @@ async function closeTicketDetail(page) {
   if ((await page.locator(".ticket-detail:visible").count()) === 0) return;
   await clickByText(page, "Close ticket detail");
   await page.locator(".ticket-detail").waitFor({ state: "hidden" });
+  await page.locator(".modal-scrim").waitFor({ state: "hidden", timeout: 5000 }).catch(() => {});
 }
 
 async function closeAnyOpenRunProof(page) {
@@ -1447,11 +1449,73 @@ function initializeCalendarRepo(targetRepoPath) {
   execFileSync("git", ["-C", targetRepoPath, "commit", "-m", "Seed calendar app"], { stdio: "ignore" });
 }
 
-function finalizeVideo(directory) {
+function finalizeVideo(directory, trimSuggestion = [], recordingDurationSeconds = 0) {
   const webm = findVideo(directory);
   const destination = join(directory, "floop-big-work-demo.webm");
-  renameSync(webm, destination);
+  const rawDestination = join(directory, "floop-big-work-demo.raw.webm");
+  if (trimSuggestion.length === 0) {
+    renameSync(webm, destination);
+    return destination;
+  }
+  renameSync(webm, rawDestination);
+  try {
+    renderTrimmedVideo(rawDestination, destination, trimSuggestion, recordingDurationSeconds);
+  } catch (error) {
+    console.warn(`Could not render trimmed demo video; keeping raw recording: ${error.message}`);
+    return rawDestination;
+  }
   return destination;
+}
+
+function renderTrimmedVideo(source, destination, trimSuggestion, recordingDurationSeconds) {
+  const keepRanges = buildKeepRanges(trimSuggestion, recordingDurationSeconds);
+  if (keepRanges.length === 0) {
+    throw new Error("idle ranges removed the full recording");
+  }
+  const trimFilters = keepRanges
+    .map((range, index) => {
+      const start = formatSeconds(range.start);
+      const end = Number.isFinite(range.end) ? `:end=${formatSeconds(range.end)}` : "";
+      return `[0:v]trim=start=${start}${end},setpts=PTS-STARTPTS[v${index}]`;
+    })
+    .join(";");
+  const concatInputs = keepRanges.map((_, index) => `[v${index}]`).join("");
+  const filter = `${trimFilters};${concatInputs}concat=n=${keepRanges.length}:v=1:a=0[v]`;
+  execFileSync(
+    "ffmpeg",
+    ["-y", "-i", source, "-filter_complex", filter, "-map", "[v]", "-an", "-c:v", "libvpx-vp9", "-b:v", "1.8M", destination],
+    { stdio: "ignore" },
+  );
+}
+
+function buildKeepRanges(trimSuggestion, recordingDurationSeconds) {
+  const sortedCuts = trimSuggestion
+    .map((range) => ({
+      start: Number(range.removeFromSeconds),
+      end: Number(range.removeToSeconds),
+    }))
+    .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start)
+    .sort((left, right) => left.start - right.start);
+  const keepRanges = [];
+  let cursor = 0;
+  for (const cut of sortedCuts) {
+    const start = Math.max(0, cut.start);
+    const end = Math.max(start, cut.end);
+    if (start - cursor > 0.25) {
+      keepRanges.push({ start: cursor, end: start });
+    }
+    cursor = Math.max(cursor, end);
+  }
+  if (!Number.isFinite(recordingDurationSeconds) || recordingDurationSeconds <= cursor + 0.25) {
+    keepRanges.push({ start: cursor, end: Number.POSITIVE_INFINITY });
+  } else {
+    keepRanges.push({ start: cursor, end: recordingDurationSeconds });
+  }
+  return keepRanges.filter((range) => !Number.isFinite(range.end) || range.end - range.start > 0.25);
+}
+
+function formatSeconds(value) {
+  return Number(value).toFixed(3);
 }
 
 function findVideo(directory) {
@@ -1505,6 +1569,7 @@ async function clickByText(page, text) {
 }
 
 async function refresh(page) {
+  await closeTicketDetail(page);
   await clickByText(page, "Refresh");
   await pause(500);
 }
