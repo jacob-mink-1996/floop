@@ -1327,9 +1327,14 @@ async function recoverGitMetadataBlockedCompletion(completion, execution) {
 }
 
 function isGitMetadataReadOnlyBlockedKind(value) {
-  return ["git_metadata_read_only", "git-metadata-readonly", "git_metadata_readonly", "git-metadata-read-only"].includes(
-    String(value || "").trim().toLowerCase(),
-  );
+  return [
+    "git_metadata_read_only",
+    "git-metadata-readonly",
+    "git_metadata_readonly",
+    "git-metadata-read-only",
+    "filesystem_read_only_git_metadata",
+    "filesystem-read-only-git-metadata",
+  ].includes(String(value || "").trim().toLowerCase());
 }
 
 function isRecoverableGitMetadataCompletion(completion) {

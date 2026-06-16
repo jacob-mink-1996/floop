@@ -559,7 +559,7 @@ process.stdin.on("end", () => {
   }
 });
 
-test("execution driver recovers hyphenated git metadata read-only blocked completions", async () => {
+test("execution driver recovers filesystem git metadata read-only blocked completions", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-git-metadata-recovery-"));
   const workspaceRoot = join(fixtureDir, "workspace");
   const repoRoot = join(fixtureDir, "repo");
@@ -579,7 +579,7 @@ process.stdin.resume();
 process.stdin.on("end", () => {
   fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
     outcome: "blocked",
-    blockedKind: "git-metadata-readonly",
+    blockedKind: "filesystem_read_only_git_metadata",
     summaryMd: "Work is present but the agent could not write git metadata."
   }));
 });
