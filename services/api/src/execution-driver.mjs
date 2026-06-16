@@ -265,6 +265,7 @@ function selectAdapterRun(profile, execution) {
         typeof profile.config?.approvalPolicy === "string" && profile.config.approvalPolicy.trim()
           ? profile.config.approvalPolicy.trim()
           : "never",
+      ignoreUserConfig: Boolean(profile.config?.ignoreUserConfig),
       promptPreamble:
         typeof profile.config?.promptPreamble === "string" ? profile.config.promptPreamble.trim() : "",
     };
@@ -1106,6 +1107,10 @@ function buildCodexArgs(adapterRun, { project, ticket, execution, runtime }) {
     "-c",
     `approval_policy=${JSON.stringify(adapterRun.approvalPolicy)}`,
   ];
+
+  if (adapterRun.ignoreUserConfig) {
+    args.push("--ignore-user-config");
+  }
 
   for (const target of ticket.repoTargets || []) {
     if (target.repoLocalPath) {

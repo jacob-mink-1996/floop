@@ -78,6 +78,10 @@ if (!process.argv.includes('-c') || !process.argv.includes('approval_policy="nev
   process.stderr.write("missing approval policy config override\\n");
   process.exit(2);
 }
+if (!process.argv.includes("--ignore-user-config")) {
+  process.stderr.write("missing ignore-user-config flag\\n");
+  process.exit(2);
+}
 const modelIndex = process.argv.indexOf("-m");
 if (modelIndex >= 0 && process.argv[modelIndex + 1] === "codex-latest") {
   process.stderr.write("legacy codex-latest model was passed explicitly\\n");
@@ -115,6 +119,7 @@ process.stdin.on("end", () => {
       model: "codex-latest",
       config: {
         executable: fakeCodexPath,
+        ignoreUserConfig: true,
         promptPreamble: "Focus on the Floop governed loop.",
       },
     });

@@ -361,6 +361,7 @@ function codexProfile(role, promptPreamble) {
       executable: process.env.FLOOP_BIG_WORK_CODEX_EXECUTABLE || "codex",
       sandbox: process.env.FLOOP_BIG_WORK_CODEX_SANDBOX || "workspace-write",
       approvalPolicy: process.env.FLOOP_BIG_WORK_CODEX_APPROVAL_POLICY || "never",
+      ignoreUserConfig: process.env.FLOOP_BIG_WORK_CODEX_IGNORE_USER_CONFIG !== "0",
       promptPreamble,
     },
   };
