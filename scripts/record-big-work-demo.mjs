@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright";
 
 import { createFloopServer } from "../services/api/src/app.mjs";
+import { createCeremonyAutomationDriver } from "../services/api/src/ceremony-automation-driver.mjs";
 import { createExecutionDriver } from "../services/api/src/execution-driver.mjs";
 import { createMergeDriver } from "../services/api/src/merge-driver.mjs";
 import { createStore } from "../services/api/src/store.mjs";
@@ -63,6 +64,7 @@ const appDemoSnapshots = [];
 const ceremonyShowcaseTypes = [];
 const externalAgentProof = [];
 let steeringCopyProof = null;
+let lifecycleAutomationProof = null;
 const timeline = {
   marks: [],
   idleRanges: [],
@@ -80,6 +82,7 @@ try {
   executionDriver = createExecutionDriver({ store, pollIntervalMs: 150, maxAttempts: 1, logger: demoLogger });
   mergeDriver = createMergeDriver({ store, pollIntervalMs: 10000, logger: demoLogger });
   executionDriver.start();
+  lifecycleAutomationProof = await buildLifecycleAutomationProof();
 
   if (mode === "record") {
     mkdirSync(recordingDir, { recursive: true });
@@ -114,12 +117,22 @@ try {
   assert.equal(proof.parentTickets.length, 1);
   assert.equal(proof.productAutopilotProof.enabled, true);
   assert.equal(proof.productAutopilotProof.ceremonyAutomationMode, "fully_automatic");
-  assert.equal(proof.productAutopilotProof.cadenceMinutes.refinement, 10);
-  assert.equal(proof.productAutopilotProof.cadenceMinutes.planning, 15);
-  assert.equal(proof.productAutopilotProof.cadenceMinutes.checkIn, 30);
-  assert.equal(proof.productAutopilotProof.cadenceMinutes.demo, 30);
-  assert.equal(proof.productAutopilotProof.cadenceMinutes.newWork, 60);
-  assert.equal(proof.productAutopilotProof.cadenceMinutes.retro, 180);
+  assert.deepEqual(proof.productAutopilotProof.lifecycleAutomation.reasonCodesByType, {
+    refinement: "messy_backlog_needs_refinement",
+    planning: "ready_backlog_needs_planning",
+    daily_triage: "blocked_or_rework_needs_triage",
+    review_demo_prep: "done_work_needs_demo_prep",
+    work_generation: "low_backlog_after_shipped_work_needs_generation",
+    retro: "repeated_blocked_or_rework_needs_retro",
+  });
+  assert.deepEqual(proof.productAutopilotProof.lifecycleAutomation.triggeredTypes.sort(), [
+    "daily_triage",
+    "planning",
+    "refinement",
+    "retro",
+    "review_demo_prep",
+    "work_generation",
+  ]);
   assert.equal(proof.featureTickets.length >= 4, true);
   assert.equal(proof.demoFeatureTickets.length >= 4, true);
   assert.equal(proof.executedFeatureTickets.length >= 1, true);
@@ -434,6 +447,122 @@ async function runCeremonyShowcase(page, projectId) {
   }
   await page.getByText("History").first().waitFor();
   await pause(1600);
+}
+
+async function buildLifecycleAutomationProof() {
+  const proofStore = createStore({
+    filename: ":memory:",
+    seedDemo: false,
+    workspaceRoot: join(fixtureRoot, "lifecycle-proof-workspace"),
+  });
+  try {
+    const project = proofStore.createProject({
+      name: "Lifecycle Proof",
+      slug: "lifecycle-proof",
+      workspaceRoot: join(fixtureRoot, "lifecycle-proof-workspace"),
+      defaultBaseBranch: "main",
+    });
+    proofStore.updateProjectPolicy(project.id, {
+      interactionMode: "fully_autonomous",
+      ceremonyAutomation: {
+        enabled: true,
+        mode: "fully_automatic",
+        triggers: {
+          refinement: {
+            enabled: true,
+            onTicketCreatedStates: ["DRAFT", "PROPOSED"],
+            minIntervalMinutes: 1,
+            participantRoles: ["product_manager", "architect", "developer", "reviewer"],
+            deciderRole: "product_manager",
+            consensusPolicy: "decider_synthesizes_objections",
+          },
+          planning: {
+            enabled: true,
+            onReadyQueueChanged: true,
+            onCapacityAvailable: true,
+            minIntervalMinutes: 1,
+            participantRoles: ["product_manager", "architect", "developer", "integrator"],
+            deciderRole: "integrator",
+            consensusPolicy: "decider_synthesizes_objections",
+          },
+          daily_triage: {
+            enabled: true,
+            onActiveWorkCheckIn: true,
+            onBlockedOrRework: true,
+            minIntervalMinutes: 1,
+            participantRoles: ["product_manager", "developer", "reviewer", "validator"],
+            deciderRole: "product_manager",
+            consensusPolicy: "blockers_and_stale_work_win",
+          },
+          review_demo_prep: {
+            enabled: true,
+            onDoneOrMergeReady: true,
+            minIntervalMinutes: 1,
+            participantRoles: ["product_manager", "reviewer", "validator", "integrator"],
+            deciderRole: "reviewer",
+            consensusPolicy: "only_evidence_backed_done_work_is_demoable",
+          },
+          work_generation: {
+            enabled: true,
+            onSprintEndPlanning: true,
+            onReadyBacklogBelow: 2,
+            minIntervalMinutes: 1,
+            participantRoles: ["product_manager", "architect", "developer", "reviewer"],
+            deciderRole: "product_manager",
+            consensusPolicy: "decider_synthesizes_objections",
+          },
+          retro: {
+            enabled: true,
+            onRepeatedBlockedOrReworkCount: 2,
+            onCycleComplete: true,
+            minIntervalMinutes: 1,
+            participantRoles: ["product_manager", "architect", "developer", "reviewer", "validator"],
+            deciderRole: "product_manager",
+            consensusPolicy: "recurring_systemic_risk_wins",
+          },
+        },
+      },
+    });
+
+    const states = [
+      ["Lifecycle proof draft", "PROPOSED"],
+      ["Lifecycle proof ready", "READY"],
+      ["Lifecycle proof shipped", "DONE"],
+      ["Lifecycle proof blocked", "BLOCKED"],
+      ["Lifecycle proof rework", "REWORK"],
+    ];
+    for (const [title, state] of states) {
+      proofStore.createTicket(project.id, {
+        title,
+        brief: `${title} ticket for state-driven ceremony proof.`,
+        assignedRole: "developer",
+        state,
+      });
+    }
+
+    const driver = createCeremonyAutomationDriver({ store: proofStore, pollIntervalMs: 25, logger: demoLogger });
+    const created = await driver.pollOnce();
+    const runs = proofStore.listCeremonyRuns(project.id) || [];
+    const lifecycleRuns = runs
+      .filter((run) => run.scope?.trigger === "lifecycle")
+      .map((run) => ({
+        id: run.id,
+        type: run.type,
+        status: run.status,
+        reasonCode: run.scope?.lifecycleReason?.code || "",
+        reasonSummary: run.scope?.lifecycleReason?.summary || "",
+        evidence: run.scope?.lifecycleReason?.evidence || {},
+      }));
+    return {
+      projectId: project.id,
+      createdCount: created.length,
+      triggeredTypes: lifecycleRuns.map((run) => run.type),
+      reasonCodesByType: Object.fromEntries(lifecycleRuns.map((run) => [run.type, run.reasonCode])),
+      lifecycleRuns,
+    };
+  } finally {
+    proofStore.close();
+  }
 }
 
 async function exerciseExternalAgentActions(page, projectId, repoId, dispatchTicket) {
@@ -1499,6 +1628,12 @@ function collectProof() {
       featureParentId: featureParent?.id || "",
       enabled: project?.policy?.interactionMode === "fully_autonomous",
       ceremonyAutomationMode: project?.policy?.ceremonyAutomation?.mode || "",
+      lifecycleAutomation: lifecycleAutomationProof || {
+        createdCount: 0,
+        triggeredTypes: [],
+        reasonCodesByType: {},
+        lifecycleRuns: [],
+      },
       cadenceMinutes: {
         refinement: project?.policy?.ceremonyAutomation?.triggers?.refinement?.minIntervalMinutes || 0,
         planning: project?.policy?.ceremonyAutomation?.triggers?.planning?.minIntervalMinutes || 0,
