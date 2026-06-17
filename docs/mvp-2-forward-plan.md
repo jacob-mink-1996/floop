@@ -340,6 +340,11 @@ Required proof:
 - Idle-trimmed video with proof manifest.
 - Final issue list showing known limitations, risks, and MVP 3 candidates.
 
+Release commands:
+
+- `npm run verify:mvp2` runs the fixture-backed MVP 2.0 release gate.
+- `npm run verify:mvp2:codex` runs the fixture gate plus authenticated Codex merge rework and full-loop big-work proof. This command must pass before MVP 2.0 is declared complete on a machine with Codex installed and logged in.
+
 ## MVP 2.0 Slice Backlog
 
 ### P0: Execution Ownership And Cancellation
