@@ -961,21 +961,65 @@ h3 {
   align-items: center;
 }
 
-.log-dock {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.run-action-drawer {
+  display: grid;
+  gap: 10px;
   margin-left: 44px;
   border: 1px solid var(--line);
-  padding: 9px;
+  padding: 10px;
   background: var(--panel);
 }
 
-.log-dock p {
-  flex-basis: 100%;
+.run-action-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.run-action-summary > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.run-action-summary span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.run-action-summary strong,
+.run-action-summary p {
+  overflow-wrap: anywhere;
+}
+
+.run-action-summary p {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.4;
+}
+
+.run-proof-links {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.run-proof-links summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.run-proof-links > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
 }
 
 .agent-trace-summary {
@@ -1055,7 +1099,6 @@ h3 {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 3px 7px;
-  flex-basis: 100%;
   border-top: 1px solid var(--line);
   padding-top: 8px;
 }
@@ -3240,8 +3283,12 @@ textarea {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .log-dock {
+  .run-action-drawer {
     margin-left: 0;
+  }
+
+  .run-action-summary {
+    grid-template-columns: 1fr;
   }
 
   .topbar {

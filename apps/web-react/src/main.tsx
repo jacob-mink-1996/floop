@@ -992,6 +992,9 @@ function RunSubwayItem({
   onSelectTicket: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const actionHint = runActionHint(run);
+  const proofCount = run.artifactCount || Number(Boolean(run.workLogArtifactUri)) + Number(Boolean(run.stdoutArtifactUri)) + Number(Boolean(run.stderrArtifactUri));
+  const hasProofLinks = Boolean(run.workLogArtifactUri || run.stdoutArtifactUri || run.stderrArtifactUri || run.worktreePaths.length);
   const phases: PhaseItem[] = [
     { id: "claim", label: "Claim", complete: run.claimStatus === "not_applicable" || run.claimStatus === "claimed", current: run.status === "running", tone: toneForStatus(run.claimStatus) },
     { id: "output", label: "Output", complete: Boolean(run.stdoutArtifactUri || run.stderrArtifactUri || run.artifactCount), tone: run.stdoutArtifactUri || run.stderrArtifactUri || run.artifactCount ? "done" : "neutral" },
@@ -1000,13 +1003,14 @@ function RunSubwayItem({
   ];
   return (
     <article className={`run-subway-item run-${run.kind} ${run.needsAttention ? "needs-attention" : ""}`}>
-      <button className="run-subway-main" type="button" onClick={() => setOpen((value) => !value)}>
+      <button className="run-subway-main" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <div className="run-marker">
           <span>{run.kind.slice(0, 1).toUpperCase()}</span>
         </div>
         <div className="run-copy">
           <span>{prettyState(run.kind)} · {prettyState(run.status)} · {formatDate(run.finishedAt || run.startedAt)}</span>
           <strong>{run.label}</strong>
+          <p>{actionHint}</p>
           <PhaseRail items={phases} compact />
         </div>
       </button>
@@ -1017,19 +1021,24 @@ function RunSubwayItem({
           </button>
         ) : null}
         {run.role ? <span>{prettyRole(run.role as RoleName)}</span> : null}
+        {proofCount ? <span>{proofCount} proofs</span> : null}
         {run.retryAttemptCount > 1 ? <span>{run.retryAttemptCount} attempts</span> : null}
         {run.pendingProposalCount ? <span>{run.pendingProposalCount} proposals</span> : null}
       </div>
       {open ? (
-        <div className="log-dock">
-          <p>{run.summary || "No run summary recorded."}</p>
-          {run.kind === "execution" ? <AgentTraceSummary run={run} /> : null}
-          <LogChip label="work log" value={run.workLogArtifactUri} />
-          <LogChip label="stdout" value={run.stdoutArtifactUri} />
-          <LogChip label="stderr" value={run.stderrArtifactUri} />
-          {run.worktreePaths.map((path) => (
-            <LogChip key={path} label="worktree" value={path} />
-          ))}
+        <div className="run-action-drawer">
+          <div className="run-action-summary">
+            <div>
+              <span>Next</span>
+              <strong>{actionHint}</strong>
+              <p>{run.summary || "No run summary recorded yet."}</p>
+            </div>
+            {run.ticketId ? (
+              <button className="primary-button" type="button" onClick={() => onSelectTicket(run.ticketId)}>
+                Open ticket
+              </button>
+            ) : null}
+          </div>
           {run.movementReason ? (
             <article className="movement-reason">
               <FileText size={15} />
@@ -1037,10 +1046,33 @@ function RunSubwayItem({
               <small>{run.movementReason.detail || run.movementReason.summary}</small>
             </article>
           ) : null}
+          {run.kind === "execution" ? <AgentTraceSummary run={run} /> : null}
+          {hasProofLinks ? (
+            <details className="run-proof-links">
+              <summary>Proof links</summary>
+              <div>
+                <LogChip label="work log" value={run.workLogArtifactUri} />
+                <LogChip label="stdout" value={run.stdoutArtifactUri} />
+                <LogChip label="stderr" value={run.stderrArtifactUri} />
+                {run.worktreePaths.map((path) => (
+                  <LogChip key={path} label="worktree" value={path} />
+                ))}
+              </div>
+            </details>
+          ) : null}
         </div>
       ) : null}
     </article>
   );
+}
+
+function runActionHint(run: RunObservability["runs"][number]) {
+  if (run.needsAttention) return run.ticketId ? "Needs review on the ticket." : "Needs operator attention.";
+  if (run.status === "running") return run.ticketId ? "Running now; open the ticket to steer or stop." : "Running now.";
+  if (run.status === "failed" || run.failureKind) return run.ticketId ? "Failed; open the ticket to recover." : "Failed; inspect proof.";
+  if (run.pendingProposalCount) return "Review pending ceremony proposals.";
+  if (run.finishedAt) return run.ticketId ? "Completed; open the ticket for evidence." : "Completed.";
+  return run.ticketId ? "Open the ticket for the next action." : "Waiting for activity.";
 }
 
 function AgentTraceSummary({ run }: { run: RunObservability["runs"][number] }) {
