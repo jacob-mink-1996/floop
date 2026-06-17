@@ -639,6 +639,136 @@ process.stdin.on("end", () => {
   }
 });
 
+test("execution driver routes reviewer rework back to developer with review evidence", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-review-rework-driver-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const reviewerAgentPath = join(fixtureDir, "reviewer-rework-agent.js");
+  const developerAgentPath = join(fixtureDir, "developer-review-rework-agent.js");
+  const reviewSummary = "Review requested rework: dashboard needs an empty-state guard.";
+  const findingDetails = "Add the empty-state guard before validation can trust the dashboard.";
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    reviewerAgentPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(
+  process.env.FLOOP_RESULT_PATH,
+  JSON.stringify({
+    outcome: "completed",
+    summaryMd: "Reviewer found actionable implementation rework.",
+    review: {
+      verdict: "rework",
+      summaryMd: ${JSON.stringify(reviewSummary)},
+      findings: [{
+        severity: "high",
+        category: "behavior",
+        title: "Missing empty-state guard",
+        detailsMd: ${JSON.stringify(findingDetails)}
+      }],
+      artifacts: [{ kind: "report", label: "Reviewer rework notes", uri: "file:///tmp/reviewer-rework.md" }]
+    }
+  }),
+);
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+  writeFileSync(
+    developerAgentPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const context = JSON.parse(fs.readFileSync(process.env.FLOOP_CONTEXT_PATH, "utf8"));
+const text = JSON.stringify(context.ticket || {});
+if (!text.includes(${JSON.stringify(reviewSummary)}) || !text.includes(${JSON.stringify(findingDetails)})) {
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({
+      outcome: "blocked",
+      summaryMd: "Developer rework context missed reviewer evidence.",
+      remainingWorkMd: "Pass review rework summary and findings into the re-dispatched developer lane.",
+      blockedKind: "needs_environment_fix"
+    }),
+  );
+  process.exit(0);
+}
+fs.writeFileSync(
+  process.env.FLOOP_RESULT_PATH,
+  JSON.stringify({
+    outcome: "completed",
+    summaryMd: "Developer resolved reviewer rework after reading review evidence."
+  }),
+);
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    store.updateProjectPolicy("project_floop", {
+      interactionMode: "autonomous_with_review",
+    });
+    store.updateRoleProfile("project_floop", "reviewer", {
+      adapter: "shell",
+      model: "fixture-reviewer-rework",
+      config: {
+        command: `"${process.execPath}" "${reviewerAgentPath}"`,
+      },
+    });
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "shell",
+      model: "fixture-developer-rework",
+      config: {
+        command: `"${process.execPath}" "${developerAgentPath}"`,
+      },
+    });
+
+    const firstDeveloper = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Initial implementation before review rework.",
+    });
+    store.completeExecution("project_floop", firstDeveloper.id, {
+      outcome: "completed",
+      summaryMd: "Initial implementation ready for review.",
+    });
+
+    const reviewerExecution = store
+      .getTicket("project_floop", "ticket_project_floop_2")
+      .executions.find((execution) => execution.role === "reviewer");
+    assert.ok(reviewerExecution);
+
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+    await driver.pollOnce();
+
+    const afterReview = store.getTicket("project_floop", "ticket_project_floop_2");
+    const reworkDeveloper = afterReview.executions.find(
+      (execution) => execution.role === "developer" && execution.id !== firstDeveloper.id,
+    );
+    assert.equal(afterReview.state, "WORKING");
+    assert.equal(afterReview.reviews[0].verdict, "rework");
+    assert.ok(reworkDeveloper);
+    assert.equal(reworkDeveloper.status, "running");
+
+    await driver.pollOnce();
+
+    const completedRework = store.getExecution("project_floop", reworkDeveloper.id);
+    const context = JSON.parse(
+      readFileSync(join(workspaceRoot, ".floop", "executions", reworkDeveloper.id, "context.json"), "utf8"),
+    );
+    const contextText = JSON.stringify(context.ticket || {});
+
+    assert.equal(completedRework.outcome, "completed");
+    assert.match(completedRework.summaryMd, /resolved reviewer rework/);
+    assert.equal(contextText.includes(reviewSummary), true);
+    assert.equal(contextText.includes(findingDetails), true);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("execution driver can persist embedded validation evidence from the validator lane", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-validator-driver-"));
   const workspaceRoot = join(fixtureDir, "workspace");
