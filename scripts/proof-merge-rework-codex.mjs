@@ -10,6 +10,7 @@ import { createStore } from "../services/api/src/store.mjs";
 
 const keepFixture = process.env.FLOOP_DEMO_KEEP_FIXTURE === "true";
 const fixtureRoot = mkdtempSync(join(tmpdir(), "floop-merge-rework-codex-"));
+const fixtureRunId = fixtureRoot.split("floop-merge-rework-codex-").at(-1) || String(Date.now());
 const workspaceRoot = join(fixtureRoot, "workspace");
 const repoRoot = join(fixtureRoot, "repo");
 const proofDir = resolve(
@@ -20,7 +21,7 @@ const proofPath = join(proofDir, "proof.json");
 const ticketId = "ticket_project_floop_2";
 const projectId = "project_floop";
 const repoId = "repo_project_floop_floop";
-const targetBranch = "floop-merge-conflict-proof";
+const targetBranch = `floop-merge-conflict-proof-${fixtureRunId}`;
 const codexExecutable = process.env.FLOOP_MERGE_REWORK_CODEX_EXECUTABLE || "codex";
 const codexModel = process.env.FLOOP_MERGE_REWORK_CODEX_MODEL || "codex-latest";
 const codexSandbox = process.env.FLOOP_MERGE_REWORK_CODEX_SANDBOX || "workspace-write";
@@ -162,6 +163,7 @@ function seedRepo() {
   git(["init", "-b", "main", repoRoot]);
   git(["-C", repoRoot, "config", "user.name", "Floop Proof"]);
   git(["-C", repoRoot, "config", "user.email", "floop@example.com"]);
+  git(["-C", repoRoot, "worktree", "prune"]);
   writeFileSync(join(repoRoot, "README.md"), "# Merge Rework Proof\n", "utf8");
   writeFileSync(join(repoRoot, "conflict.txt"), "base\n", "utf8");
   git(["-C", repoRoot, "add", "README.md", "conflict.txt"]);

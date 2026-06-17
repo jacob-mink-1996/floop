@@ -85,6 +85,103 @@ test("merge driver auto-merges merge-ready tickets without human approval", asyn
   }
 });
 
+test("merge driver prefers completed integrator repair worktrees over stale implementation branches", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-merge-driver-integrator-source-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const repoRoot = join(fixtureDir, "repo");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  try {
+    execFileSync("git", ["init", "-b", "main", repoRoot]);
+    execFileSync("git", ["-C", repoRoot, "config", "user.name", "Floop Test"]);
+    execFileSync("git", ["-C", repoRoot, "config", "user.email", "floop@example.com"]);
+    writeFileSync(join(repoRoot, "README.md"), "# Floop Repo\n", "utf8");
+    execFileSync("git", ["-C", repoRoot, "add", "README.md"]);
+    execFileSync("git", ["-C", repoRoot, "commit", "-m", "seed repo"]);
+
+    store.updateRepo("project_floop", "repo_project_floop_floop", {
+      name: "floop",
+      localPath: repoRoot,
+      remoteUrl: "",
+      defaultBranch: "main",
+      isPrimary: true,
+    });
+    store.updateProjectPolicy("project_floop", {
+      requireReviewer: false,
+      requireValidator: false,
+      requireHumanApprovalBeforeMerge: false,
+      interactionMode: "fully_autonomous",
+      maxParallelMerges: 2,
+    });
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "shell",
+      model: "fixture",
+      config: {
+        command: `"${process.execPath}" -e "const fs=require('node:fs'); const {execFileSync}=require('node:child_process'); const path=require('node:path'); const worktree=process.env.FLOOP_WORKTREE_PATH; fs.writeFileSync(path.join(worktree, 'feature.txt'), 'developer\\n'); execFileSync('git', ['-C', worktree, 'add', 'feature.txt']); execFileSync('git', ['-C', worktree, 'commit', '-m', 'Implement feature']); fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({ outcome: 'completed', summaryMd: 'Implementation completed.' }));"`,
+      },
+    });
+    store.updateRoleProfile("project_floop", "integrator", {
+      adapter: "shell",
+      model: "fixture",
+      config: {
+        command: `"${process.execPath}" -e "const fs=require('node:fs'); const {execFileSync}=require('node:child_process'); const path=require('node:path'); const worktree=process.env.FLOOP_WORKTREE_PATH; fs.writeFileSync(path.join(worktree, 'repair.txt'), 'integrator repair\\n'); execFileSync('git', ['-C', worktree, 'add', 'repair.txt']); execFileSync('git', ['-C', worktree, 'commit', '-m', 'Repair integration branch']); fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({ outcome: 'completed', summaryMd: 'Integrator repair completed.' }));"`,
+      },
+    });
+
+    const developer = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Prepare stale implementation branch.",
+    });
+    const executionDriver = createExecutionDriver({ store, logger: silentLogger() });
+    await executionDriver.pollOnce();
+    store.updateExecutionHarnessSession("project_floop", developer.id, {
+      harnessKind: "shell",
+      externalThreadId: "shell-thread-merge-repair",
+      harnessCapabilities: ["queued_context"],
+    });
+    assert.equal(store.getTicket("project_floop", "ticket_project_floop_2").state, "READY_TO_MERGE");
+
+    const reworkMerge = store.startMergeRun("project_floop", "ticket_project_floop_2", {
+      strategy: "squash",
+      approvedByKind: "system",
+      approvedByRef: "floop-auto",
+      claimToken: "merge-worker",
+    });
+    store.completeMergeRun("project_floop", reworkMerge.id, {
+      status: "rework",
+      summaryMd: "Merge conflict needs integrator repair.",
+    });
+    const integrator = store
+      .getTicket("project_floop", "ticket_project_floop_2")
+      .executions.find((execution) => execution.role === "integrator" && execution.status === "running");
+    assert.ok(integrator);
+    await executionDriver.pollOnce();
+    assert.equal(store.getTicket("project_floop", "ticket_project_floop_2").state, "READY_TO_MERGE");
+
+    const mergeDriver = createMergeDriver({ store, logger: silentLogger() });
+    await mergeDriver.pollOnce();
+
+    const mergedTicket = store.getTicket("project_floop", "ticket_project_floop_2");
+    const mergeArtifact = mergedTicket.mergeStatus.latestRun.artifacts.find((artifact) =>
+      artifact.label.includes("merge candidate"),
+    );
+    const mergeSummary = JSON.parse(readFileSync(new URL(mergeArtifact.uri), "utf8"));
+
+    assert.equal(mergedTicket.state, "DONE");
+    assert.equal(mergeSummary.sourceBranch, integrator.worktrees[0].branchName);
+    assert.notEqual(mergeSummary.sourceBranch, developer.worktrees[0].branchName);
+    assert.equal(readFileSync(join(repoRoot, "feature.txt"), "utf8"), "developer\n");
+    assert.equal(readFileSync(join(repoRoot, "repair.txt"), "utf8"), "integrator repair\n");
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("merge driver blocks when the target repo worktree is dirty", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-merge-driver-dirty-target-"));
   const workspaceRoot = join(fixtureDir, "workspace");

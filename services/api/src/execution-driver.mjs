@@ -452,11 +452,11 @@ async function ensureWorktreeMaterialized(target, worktree) {
     return;
   }
 
-  if (await fileExists(worktree.path)) {
-    await rm(worktree.path, { recursive: true, force: true });
-  }
-
   if (await isGitRepository(target.repoLocalPath)) {
+    await removeGitWorktreeRegistration(target.repoLocalPath, worktree.path);
+    if (await fileExists(worktree.path)) {
+      await rm(worktree.path, { recursive: true, force: true });
+    }
     await mkdir(dirname(worktree.path), { recursive: true });
 
     const materialized = await runProcess(
@@ -484,7 +484,28 @@ async function ensureWorktreeMaterialized(target, worktree) {
     return;
   }
 
+  if (await fileExists(worktree.path)) {
+    await rm(worktree.path, { recursive: true, force: true });
+  }
   await mkdir(worktree.path, { recursive: true });
+}
+
+async function removeGitWorktreeRegistration(repoLocalPath, worktreePath) {
+  const removed = await runProcess("git", ["-C", repoLocalPath, "worktree", "remove", "--force", worktreePath], {
+    cwd: repoLocalPath,
+    env: process.env,
+  });
+  if (removed.exitCode !== 0 && !/is not a working tree|is not a worktree|not a working tree/i.test(removed.stderr || removed.stdout)) {
+    await runProcess("git", ["-C", repoLocalPath, "worktree", "prune"], {
+      cwd: repoLocalPath,
+      env: process.env,
+    });
+    return;
+  }
+  await runProcess("git", ["-C", repoLocalPath, "worktree", "prune"], {
+    cwd: repoLocalPath,
+    env: process.env,
+  });
 }
 
 async function canReuseMaterializedWorktree(target, worktree) {

@@ -244,7 +244,13 @@ async function mergeTicketRepos(ticket, repos, runtime) {
 
 function selectSourceWorktree(ticket, repoId) {
   return [...(ticket.worktrees || [])]
-    .filter((worktree) => worktree.repoId === repoId && worktree.executionRole === "developer")
+    .filter(
+      (worktree) =>
+        worktree.repoId === repoId &&
+        ["developer", "integrator"].includes(worktree.executionRole) &&
+        worktree.status !== "failed" &&
+        worktree.status !== "cleaned",
+    )
     .sort((left, right) => {
       if (right.executionIteration !== left.executionIteration) {
         return right.executionIteration - left.executionIteration;

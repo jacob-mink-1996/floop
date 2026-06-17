@@ -2294,6 +2294,9 @@ test("store routes merge rework back to the previous working lane in autonomous 
   assert.equal(developerRuns[0].steeringMetadata.mergeRunId, started.id);
   assert.equal(developerRuns[0].worktrees[0].resumedFromWorktreeId, implementation.worktrees[0].id);
   assert.equal(developerRuns[0].worktrees[0].lineageId, implementation.worktrees[0].lineageId);
+  assert.equal(developerRuns[0].worktrees[0].baseRef, implementation.worktrees[0].branchName);
+  assert.notEqual(developerRuns[0].worktrees[0].branchName, implementation.worktrees[0].branchName);
+  assert.match(developerRuns[0].worktrees[0].branchName, /developer-iter-2$/);
   assert.match(developerRuns[0].summaryMd || ticket.latestSummary, /merge requested rework|merge evidence/i);
   assert.equal(store.listAgentMessages("project_floop", { intent: "suggest_dispatch" }).length, 0);
 
@@ -2403,6 +2406,9 @@ test("store keeps merge rework lineage without native session resume for non-res
   assert.equal(rework.steeringMetadata.sourceExecutionRole, "developer");
   assert.equal(rework.steeringMetadata.resumeStrategy, undefined);
   assert.equal(rework.worktrees[0].resumedFromWorktreeId, implementation.worktrees[0].id);
+  assert.equal(rework.worktrees[0].baseRef, implementation.worktrees[0].branchName);
+  assert.notEqual(rework.worktrees[0].branchName, implementation.worktrees[0].branchName);
+  assert.match(rework.worktrees[0].branchName, /integrator-iter-1$/);
 
   store.close();
 });

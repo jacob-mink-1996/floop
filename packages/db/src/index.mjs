@@ -928,6 +928,15 @@ function planExecutionWorktrees(database, projectId, ticket, execution, timestam
 
 function planExecutionBranchName(database, projectId, ticket, target, execution) {
   const ticketBranch = target.branchName || defaultWorktreeBranchName(ticket, "developer", 1);
+  if (execution.resumedFromExecutionId) {
+    const resumedBranch = worktreeBranchForExecution(database, projectId, execution.resumedFromExecutionId, target.repoId);
+    const baseRef = resumedBranch || ticketBranch;
+    const suffix = `-${execution.role}-iter-${execution.iteration}`;
+    return {
+      branchName: appendBranchSuffix(baseRef, suffix),
+      baseRef,
+    };
+  }
   if (execution.role === "reviewer" || execution.role === "validator" || Number(execution.iteration) > 1) {
     const sourceBranch = resolveEvidenceLaneBaseRef(database, projectId, ticket.id, target.repoId, execution.role);
     const baseRef = sourceBranch || ticketBranch;
@@ -941,6 +950,21 @@ function planExecutionBranchName(database, projectId, ticket, target, execution)
     branchName: ticketBranch,
     baseRef: target.baseRef,
   };
+}
+
+function worktreeBranchForExecution(database, projectId, executionId, repoId) {
+  const row = database
+    .prepare(
+      `select branch_name as branchName
+       from worktrees
+       where project_id = ?
+         and execution_id = ?
+         and repo_id = ?
+       order by updated_at desc
+       limit 1`,
+    )
+    .get(projectId, executionId, repoId);
+  return row?.branchName || "";
 }
 
 function resolveEvidenceLaneBaseRef(database, projectId, ticketId, repoId, role) {
