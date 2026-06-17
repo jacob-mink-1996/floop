@@ -840,6 +840,62 @@ h3 {
   background: var(--panel-warm);
 }
 
+.product-run-overview {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(180px, 0.75fr) minmax(320px, 1fr) minmax(280px, auto) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  padding: 12px;
+  background: var(--panel-warm);
+}
+
+.product-run-overview.is-active {
+  border-color: color-mix(in srgb, var(--teal) 50%, var(--line));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--teal) 10%, transparent), transparent 38%),
+    var(--panel-warm);
+}
+
+.product-run-overview .section-heading {
+  align-items: center;
+}
+
+.product-run-overview .status-meter {
+  min-width: 0;
+}
+
+.product-run-overview .quiet-button {
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.product-run-cadence {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(50px, 1fr));
+  gap: 6px;
+}
+
+.product-run-cadence span {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  border: 1px solid var(--line);
+  padding: 5px 7px;
+  background: var(--control-bg);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.product-run-cadence strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+}
+
 .run-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(92px, 1fr));
@@ -2597,6 +2653,72 @@ textarea {
   background: var(--panel-warm);
 }
 
+.product-autopilot-panel {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(280px, auto) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--blue) 42%, var(--line));
+  padding: 12px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--blue) 10%, transparent), transparent 42%),
+    var(--panel-warm);
+}
+
+.product-autopilot-panel > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.product-autopilot-panel h3,
+.product-autopilot-panel p {
+  margin: 0;
+}
+
+.product-autopilot-panel h3 {
+  font-size: 17px;
+}
+
+.product-autopilot-panel p:not(.kicker) {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.product-autopilot-panel .primary-button {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.autopilot-cadence {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(58px, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.autopilot-cadence span {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  background: var(--control-bg);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.autopilot-cadence strong {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+}
+
 .ticket-work-panel {
   display: grid;
   align-content: start;
@@ -3279,6 +3401,8 @@ textarea {
   .summary-strip,
   .form-grid,
   .ops-panel,
+  .product-run-overview,
+  .product-run-cadence,
   .run-metrics,
   .decision-queue,
   .agent-inbox,
@@ -3293,6 +3417,7 @@ textarea {
   .settings-overview,
   .settings-primary,
   .evidence-list,
+  .product-autopilot-panel,
   .ticket-cockpit-grid,
   .cockpit-facts,
   .cockpit-signal-list,

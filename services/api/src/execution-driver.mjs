@@ -1716,6 +1716,9 @@ function buildCodexRoleGuidance(role, policy = {}) {
       "- Turn broad goals into executable tickets when the work is too large or underspecified for one implementation lane.",
       "- Prefer thin vertical slices that can be implemented, reviewed, validated, and merged independently.",
       "- For each follow-up ticket, include assignedRole, priority, brief, acceptanceCriteriaMd, definitionOfDoneMd, and repoTargets when repo work is needed.",
+      "- Each implementation follow-up should name the expected validation approach and the demo evidence that will prove the product behavior works.",
+      "- If the ticket is a product breakdown or Product Autopilot planning ticket, produce followupTickets for the first shippable product surface before marking the lane complete.",
+      "- Ask for human input only when a product decision materially changes scope, user experience, data model, or launch criteria; otherwise make a conservative product call and keep the run moving.",
       "- Do not implement code in this lane unless the ticket explicitly asks for product-owned artifacts.",
     ].join("\n");
   }

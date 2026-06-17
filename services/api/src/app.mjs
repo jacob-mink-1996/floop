@@ -459,6 +459,7 @@ function matchRoute(method, pathname) {
     { method: "DELETE", pattern: /^\/api\/v1\/projects\/([^/]+)\/tickets\/([^/]+)\/dependencies\/([^/]+)$/, name: "ticketDependency", keys: ["projectId", "ticketId", "dependencyId"] },
     { method: "POST", pattern: /^\/api\/v1\/projects\/([^/]+)\/tickets\/([^/]+)\/transition$/, name: "ticketTransition", keys: ["projectId", "ticketId"] },
     { method: "POST", pattern: /^\/api\/v1\/projects\/([^/]+)\/tickets\/([^/]+)\/restart$/, name: "ticketRestart", keys: ["projectId", "ticketId"] },
+    { method: "POST", pattern: /^\/api\/v1\/projects\/([^/]+)\/tickets\/([^/]+)\/product-autopilot$/, name: "ticketProductAutopilot", keys: ["projectId", "ticketId"] },
     { method: "GET", pattern: /^\/api\/v1\/projects\/([^/]+)\/executions\/([^/]+)$/, name: "execution", keys: ["projectId", "executionId"] },
     { method: "POST", pattern: /^\/api\/v1\/projects\/([^/]+)\/executions\/([^/]+)\/complete$/, name: "executionComplete", keys: ["projectId", "executionId"] },
     { method: "POST", pattern: /^\/api\/v1\/projects\/([^/]+)\/executions\/([^/]+)\/continue$/, name: "executionContinue", keys: ["projectId", "executionId"] },

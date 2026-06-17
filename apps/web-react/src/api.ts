@@ -429,6 +429,32 @@ export async function restartTicket(projectId: string, ticketId: string, input: 
   return payload.ticket;
 }
 
+export async function startProductAutopilot(
+  projectId: string,
+  ticketId: string,
+): Promise<{
+  policy: Project["policy"];
+  ceremony: CeremonyRun;
+  ideaTicket: TicketDetail;
+  breakdownTicket: TicketDetail | null;
+  execution: Execution | null;
+}> {
+  const payload = await fetchJson<{
+    autopilot: {
+      policy: Project["policy"];
+      ceremony: CeremonyRun;
+      ideaTicket: TicketDetail;
+      breakdownTicket: TicketDetail | null;
+      execution: Execution | null;
+    };
+  }>(`/api/v1/projects/${projectId}/tickets/${ticketId}/product-autopilot`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  return payload.autopilot;
+}
+
 export async function startExecution(
   projectId: string,
   ticketId: string,

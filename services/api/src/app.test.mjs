@@ -503,6 +503,54 @@ test("ceremony endpoints create proposal runs and apply approved proposals", asy
   });
 });
 
+test("product autopilot starts from an idea ticket with agent-paced ceremony cadence", async () => {
+  await withServer(async (baseUrl, store) => {
+    const createTicketResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/tickets`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Build a team calendar product",
+        brief: "A greenfield product idea for shared calendars, event creation, and team availability.",
+        state: "PROPOSED",
+        priority: "high",
+        assignedRole: "product_manager",
+      }),
+    });
+    const createTicketBody = await createTicketResponse.json();
+
+    const autopilotResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/tickets/${createTicketBody.ticket.id}/product-autopilot`,
+      { method: "POST" },
+    );
+    const autopilotBody = await autopilotResponse.json();
+    const breakdown = store
+      .listTickets("project_floop", { parentTicketId: createTicketBody.ticket.id })
+      .find((ticket) => /Break down/.test(ticket.title));
+
+    assert.equal(createTicketResponse.status, 201);
+    assert.equal(autopilotResponse.status, 200);
+    assert.equal(autopilotBody.autopilot.policy.interactionMode, "fully_autonomous");
+    assert.equal(autopilotBody.autopilot.policy.refinementMode, "autonomous");
+    assert.equal(autopilotBody.autopilot.policy.requireReviewer, true);
+    assert.equal(autopilotBody.autopilot.policy.requireValidator, true);
+    assert.equal(autopilotBody.autopilot.policy.requireDemoEvidenceBeforeMerge, true);
+    assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.enabled, true);
+    assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.mode, "fully_automatic");
+    assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.refinement.minIntervalMinutes, 10);
+    assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.planning.minIntervalMinutes, 15);
+    assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.daily_triage.minIntervalMinutes, 30);
+    assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.review_demo_prep.minIntervalMinutes, 30);
+    assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.retro.minIntervalMinutes, 180);
+    assert.equal(autopilotBody.autopilot.ceremony.type, "refinement");
+    assert.equal(autopilotBody.autopilot.breakdownTicket.id, breakdown.id);
+    assert.equal(autopilotBody.autopilot.breakdownTicket.parentTicketId, createTicketBody.ticket.id);
+    assert.equal(autopilotBody.autopilot.breakdownTicket.assignedRole, "product_manager");
+    assert.equal(autopilotBody.autopilot.breakdownTicket.state, "WORKING");
+    assert.equal(autopilotBody.autopilot.execution.role, "product_manager");
+    assert.equal(autopilotBody.autopilot.execution.status, "running");
+  });
+});
+
 test("run observability endpoint combines execution and ceremony runs", async () => {
   await withServer(async (baseUrl, store) => {
     const executionResponse = await fetch(

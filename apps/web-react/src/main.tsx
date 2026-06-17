@@ -37,6 +37,7 @@ import {
   restartTicket,
   respondAgentMessage,
   startExecution,
+  startProductAutopilot,
   steerExecution,
   transitionTicket,
   updateAgentMessage,
@@ -542,6 +543,7 @@ function App() {
             <CeremoniesPanel ceremonies={ceremonies} onRun={handleRunCeremony} onApply={handleApplyCeremony} />
           ) : (
             <OpsPanel
+              project={project}
               board={board}
               mergeQueue={mergeQueue}
               ceremonies={ceremonies}
@@ -796,6 +798,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function OpsPanel({
+  project,
   board,
   mergeQueue,
   ceremonies,
@@ -810,6 +813,7 @@ function OpsPanel({
   onDispatchAgentMessage,
   onOpenCeremonies,
 }: {
+  project: Project | null;
   board: Board | null;
   mergeQueue: MergeQueueItem[];
   ceremonies: CeremonyRun[];
@@ -870,6 +874,7 @@ function OpsPanel({
 
   return (
     <section className="ops-panel" aria-label="Cockpit overview">
+      <ProductRunOverview project={project} board={board} runObservability={runObservability} onOpenCeremonies={onOpenCeremonies} />
       <div className="decision-queue attention-panel">
         <div className="section-heading">
           <h3>Attention</h3>
@@ -963,6 +968,63 @@ function OpsPanel({
         </div>
       </div>
     </section>
+  );
+}
+
+function ProductRunOverview({
+  project,
+  board,
+  runObservability,
+  onOpenCeremonies,
+}: {
+  project: Project | null;
+  board: Board | null;
+  runObservability: RunObservability | null;
+  onOpenCeremonies: () => void;
+}) {
+  const policy = project?.policy;
+  const summary = project?.board || {};
+  const automation = policy?.ceremonyAutomation;
+  const active = policy?.interactionMode === "fully_autonomous" || policy?.interactionMode === "autopilot" || automation?.enabled;
+  const cadence = automation?.triggers || {};
+  const cadenceItems = [
+    { key: "refinement", label: "Refine", minutes: cadence.refinement?.minIntervalMinutes || 10 },
+    { key: "planning", label: "Plan", minutes: cadence.planning?.minIntervalMinutes || 15 },
+    { key: "daily_triage", label: "Check-in", minutes: cadence.daily_triage?.minIntervalMinutes || 30 },
+    { key: "review_demo_prep", label: "Demo", minutes: cadence.review_demo_prep?.minIntervalMinutes || 30 },
+    { key: "retro", label: "Retro", minutes: cadence.retro?.minIntervalMinutes || 180 },
+  ];
+  const running = runObservability?.summary.running || 0;
+  const evidence = (summary.REVIEWING || 0) + (summary.VALIDATING || 0);
+  const merge = (summary.READY_TO_MERGE || 0) + (summary.MERGING || 0);
+  const backlog = board ? board.totalTickets - running - evidence - merge - (summary.DONE || 0) : 0;
+
+  return (
+    <div className={`product-run-overview ${active ? "is-active" : ""}`}>
+      <div className="section-heading">
+        <h3>Product Run</h3>
+        <span>{active ? prettyState(policy?.interactionMode || automation?.mode || "active") : "Not started"}</span>
+      </div>
+      <StatusMeter
+        items={[
+          { id: "plan", label: "Backlog", value: Math.max(0, backlog), tone: "neutral" },
+          { id: "work", label: "Working", value: running, tone: "active" },
+          { id: "proof", label: "Evidence", value: evidence, tone: "attention" },
+          { id: "merge", label: "Merge", value: merge, tone: "done" },
+        ]}
+      />
+      <div className="product-run-cadence">
+        {cadenceItems.map((item) => (
+          <span key={item.key}>
+            <strong>{item.minutes}m</strong>
+            {item.label}
+          </span>
+        ))}
+      </div>
+      <button className="quiet-button" type="button" onClick={onOpenCeremonies}>
+        Open ceremonies
+      </button>
+    </div>
   );
 }
 
@@ -1911,6 +1973,7 @@ function TicketDetailPanel({
   const [error, setError] = useState("");
   const [isEditing, setEditing] = useState(false);
   const activeExecution = ticket?.executions.find((execution) => execution.status === "running");
+  const childTickets = ticket ? tickets.filter((candidate) => candidate.parentTicketId === ticket.id) : [];
   const inputRequests = useMemo(
     () =>
       agentMessages.filter(
@@ -1974,6 +2037,15 @@ function TicketDetailPanel({
               onFullRefresh={onFullRefresh}
             />
           ) : null}
+          <ProductAutopilotPanel
+            projectId={projectId}
+            ticket={ticket}
+            childTickets={childTickets}
+            busy={busy}
+            onRun={runAction}
+            onRefresh={onRefresh}
+            onFullRefresh={onFullRefresh}
+          />
           <section className="ticket-cockpit">
             <TicketCockpit
               projectId={projectId}
@@ -2167,6 +2239,66 @@ function TicketCockpit({
         </div>
       </div>
     </div>
+  );
+}
+
+function ProductAutopilotPanel({
+  projectId,
+  ticket,
+  childTickets,
+  busy,
+  onRun,
+  onRefresh,
+  onFullRefresh,
+}: {
+  projectId: string;
+  ticket: TicketDetail;
+  childTickets: BoardTicket[];
+  busy: string;
+  onRun: (label: string, work: () => Promise<void>) => Promise<void>;
+  onRefresh: (ticketId?: string) => Promise<void>;
+  onFullRefresh: () => Promise<void>;
+}) {
+  const childCount = childTickets.length;
+  const canStart = ["DRAFT", "PROPOSED", "READY"].includes(ticket.state) && !ticket.parentTicketId && childCount === 0;
+  const hasBreakdown = childCount > 0 || childTickets.some((child) => /break down|feature breakdown|product plan/i.test(child.title));
+
+  if (!canStart && !hasBreakdown) {
+    return null;
+  }
+
+  async function handleStart() {
+    await onRun("Starting Product Autopilot", async () => {
+      const result = await startProductAutopilot(projectId, ticket.id);
+      await onRefresh(result.breakdownTicket?.id || ticket.id);
+      await onFullRefresh();
+    });
+  }
+
+  return (
+    <section className="product-autopilot-panel">
+      <div>
+        <p className="kicker">Product Autopilot</p>
+        <h3>{hasBreakdown ? "Product run started" : "Start from this idea"}</h3>
+        <p>
+          {hasBreakdown
+            ? "Floop has a product breakdown path for this idea."
+            : "Create the PM breakdown lane, enable agent cadence, and dispatch the first planning agent."}
+        </p>
+      </div>
+      <div className="autopilot-cadence" aria-label="Agent ceremony cadence">
+        <span><strong>10m</strong>Refine</span>
+        <span><strong>15m</strong>Plan</span>
+        <span><strong>30m</strong>Check-in</span>
+        <span><strong>30m</strong>Demo</span>
+        <span><strong>180m</strong>Retro</span>
+      </div>
+      {canStart ? (
+        <button className="primary-button" type="button" disabled={Boolean(busy)} onClick={handleStart}>
+          {busy || "Start Product Autopilot"}
+        </button>
+      ) : null}
+    </section>
   );
 }
 
