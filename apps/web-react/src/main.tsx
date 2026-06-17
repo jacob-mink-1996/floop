@@ -2970,6 +2970,8 @@ function TicketConversationSection({
     : [];
   const blockedKind = typeof pendingRequest?.metadata?.blockedKind === "string" ? pendingRequest.metadata.blockedKind : "";
   const mode = pendingRequest ? "reply" : commentMode;
+  const modeOptions = conversationModeOptions({ activeExecution, canStartFromComment });
+  const selectedModeOption = modeOptions.find((option) => option.id === commentMode) || modeOptions[0];
   const submitLabel =
     mode === "reply"
       ? "Reply and continue"
@@ -3075,45 +3077,29 @@ function TicketConversationSection({
       <form className="conversation-composer" onSubmit={handleSubmit}>
         {!pendingRequest ? (
           <div className="conversation-mode-row" role="radiogroup" aria-label="Comment action">
-            <label className={`conversation-mode ${commentMode === "context" ? "is-active" : ""}`}>
-              <input
-                type="radio"
-                name="commentMode"
-                value="context"
-                checked={commentMode === "context"}
-                onChange={() => setCommentMode("context")}
-              />
-              <span>Add note</span>
-              <small>Save context for the ticket.</small>
-            </label>
-            {activeExecution ? (
-              <label className={`conversation-mode ${commentMode === "steer" ? "is-active" : ""}`}>
+            {modeOptions.map((option) => (
+              <label
+                className={`conversation-mode ${commentMode === option.id ? "is-active" : ""} ${option.disabled ? "is-disabled" : ""}`}
+                key={option.id}
+              >
                 <input
                   type="radio"
                   name="commentMode"
-                  value="steer"
-                  checked={commentMode === "steer"}
-                  onChange={() => setCommentMode("steer")}
+                  value={option.id}
+                  checked={commentMode === option.id}
+                  disabled={option.disabled}
+                  onChange={() => setCommentMode(option.id)}
                 />
-                <span>Steer run</span>
-                <small>Send this to the active agent.</small>
+                <span>{option.label}</span>
+                <small>{option.detail}</small>
               </label>
-            ) : null}
-            {canStartFromComment ? (
-              <label className={`conversation-mode ${commentMode === "dispatch" ? "is-active" : ""}`}>
-                <input
-                  type="radio"
-                  name="commentMode"
-                  value="dispatch"
-                  checked={commentMode === "dispatch"}
-                  onChange={() => setCommentMode("dispatch")}
-                />
-                <span>Start work</span>
-                <small>Dispatch an agent with this note.</small>
-              </label>
-            ) : null}
+            ))}
           </div>
         ) : null}
+        <div className={`conversation-delivery ${pendingRequest ? "tone-attention" : `tone-${selectedModeOption.tone}`}`}>
+          <StateDot tone={pendingRequest ? "attention" : selectedModeOption.tone} />
+          <span>{pendingRequest ? "This answer resolves the pending agent request." : selectedModeOption.delivery}</span>
+        </div>
         <label>
           <span>{pendingRequest ? "Answer" : "Comment"}</span>
           <textarea
@@ -3169,6 +3155,56 @@ function TicketConversationSection({
       </form>
     </section>
   );
+}
+
+type ConversationMode = "context" | "steer" | "dispatch";
+
+type ConversationModeOption = {
+  id: ConversationMode;
+  label: string;
+  detail: string;
+  delivery: string;
+  disabled: boolean;
+  tone: Tone;
+};
+
+function conversationModeOptions({
+  activeExecution,
+  canStartFromComment,
+}: {
+  activeExecution: TicketDetail["executions"][number] | undefined;
+  canStartFromComment: boolean;
+}): ConversationModeOption[] {
+  return [
+    {
+      id: "context",
+      label: "Add context",
+      detail: "Saved for later agents. Does not dispatch.",
+      delivery: "Saved as ticket context. No agent starts from this alone.",
+      disabled: false,
+      tone: "neutral",
+    },
+    {
+      id: "steer",
+      label: "Steer active run",
+      detail: activeExecution ? "Send to the agent working now." : "Available when an agent is active.",
+      delivery: activeExecution
+        ? "Sent to the active agent as steering for the current run."
+        : "No active agent can receive steering right now.",
+      disabled: !activeExecution,
+      tone: activeExecution ? "attention" : "neutral",
+    },
+    {
+      id: "dispatch",
+      label: "Start or reopen",
+      detail: canStartFromComment ? "Choose an agent and start work." : "Available when the ticket is ready.",
+      delivery: canStartFromComment
+        ? "Starts the selected agent with this note as the reason."
+        : "This ticket cannot be started from a comment in its current state.",
+      disabled: !canStartFromComment,
+      tone: canStartFromComment ? "active" : "neutral",
+    },
+  ];
 }
 
 function collapseTicketConversationMessages(messages: AgentMessage[], pendingRequestId?: string) {

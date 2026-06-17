@@ -3288,6 +3288,17 @@ textarea {
   color: var(--text);
 }
 
+.conversation-mode.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.conversation-mode.is-disabled:hover {
+  border-color: var(--line);
+  background: var(--control-bg);
+  color: var(--muted);
+}
+
 .conversation-mode input {
   position: absolute;
   opacity: 0;
@@ -3304,6 +3315,32 @@ textarea {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.3;
+}
+
+.conversation-delivery {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.conversation-delivery.tone-active {
+  border-color: color-mix(in srgb, var(--blue) 34%, var(--line));
+  background: var(--info-bg);
+  color: var(--text);
+}
+
+.conversation-delivery.tone-attention {
+  border-color: color-mix(in srgb, var(--amber) 42%, var(--line));
+  background: var(--warn-bg);
+  color: var(--text);
 }
 
 .conversation-composer-actions {
