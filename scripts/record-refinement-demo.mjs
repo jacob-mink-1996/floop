@@ -12,6 +12,12 @@ import { createCeremonyParticipantDriver } from "../services/api/src/ceremony-pa
 import { createExecutionDriver } from "../services/api/src/execution-driver.mjs";
 import { createMergeDriver } from "../services/api/src/merge-driver.mjs";
 import { createStore } from "../services/api/src/store.mjs";
+import {
+  BIG_WORK_IDLE_DEFINITION,
+  buildKeepRanges,
+  buildTrimMetadata,
+  buildTrimSuggestion,
+} from "./record-big-work-demo-lib.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = resolve(process.env.FLOOP_DEMO_OUTPUT_DIR || join(repoRoot, "demo-recordings"));
@@ -27,6 +33,11 @@ let store;
 let server;
 let browser;
 let context;
+let recordingStartedAt = Date.now();
+const timeline = {
+  marks: [],
+  idleRanges: [],
+};
 
 try {
   mkdirSync(repoPath, { recursive: true });
@@ -89,17 +100,28 @@ try {
   browser = null;
 
   if (mode === "record") {
-    const videoPath = finalizeVideo(recordingDir);
+    const recordingDurationSeconds = elapsedSeconds();
+    const finalizedVideo = finalizeVideo(recordingDir, proof.timeline.trimSuggestion, recordingDurationSeconds);
     const proofPath = join(recordingDir, "proof.json");
     writeFileSync(
       proofPath,
-      JSON.stringify({ appUrl, fixtureRoot, videoPath, proof }, null, 2),
+      JSON.stringify(
+        {
+          appUrl,
+          fixtureRoot,
+          videoPath: finalizedVideo.videoPath,
+          trimmedVideo: finalizedVideo.trimMetadata,
+          proof,
+        },
+        null,
+        2,
+      ),
       "utf8",
     );
-    console.log(`Recorded Floop refinement demo: ${videoPath}`);
+    console.log(`Recorded Floop refinement demo: ${finalizedVideo.videoPath}`);
     console.log(`Proof bundle: ${proofPath}`);
     if (openAfterRecord) {
-      openRecording(videoPath);
+      openRecording(finalizedVideo.videoPath);
     }
   } else {
     console.log("Playwright refinement proof passed");
@@ -394,25 +416,29 @@ fs.writeFileSync(
 
 async function runWalkthrough(page, appUrl, projectId) {
   await page.goto(appUrl);
+  markTimeline("opened project picker");
   await page.getByText("Calendar Backlog Refinement").first().waitFor();
   await clickByText(page, "Calendar Backlog Refinement");
+  markTimeline("opened project board");
   await clickByText(page, "Board");
   await page.getByText("Build calendar collaboration").first().waitFor();
   await pause(900);
 
   await clickByText(page, "Ceremonies");
+  markTimeline("opened ceremonies");
   await page.getByText("Refinement").first().waitFor();
   await pause(700);
 
   const automationDriver = createCeremonyAutomationDriver({ store, logger: silentLogger() });
-  const [run] = await automationDriver.pollOnce();
+  const [run] = await waitDuringIdle("lifecycle automation starts refinement", () => automationDriver.pollOnce());
   assert.equal(run.type, "refinement");
   await refresh(page);
+  markTimeline("refinement ceremony created");
   await page.getByText("Why this ran").first().waitFor();
   await pause(1200);
 
   const participantDriver = createCeremonyParticipantDriver({ store, pollIntervalMs: 50, maxParallel: 4, logger: silentLogger() });
-  await participantDriver.pollOnce();
+  await waitDuringIdle("refinement participants produce recommendations", () => participantDriver.pollOnce());
   const synthesized = collectProof(projectId);
   assert.equal(synthesized.agentCleanupProposal, true);
   await refresh(page);
@@ -424,6 +450,7 @@ async function runWalkthrough(page, appUrl, projectId) {
   await page.getByText("Keep").first().waitFor();
   await page.getByText("Split into ticket").first().waitFor();
   assert.equal(synthesized.pendingRefinementQuestions >= 1, true);
+  markTimeline("refinement proposals visible");
   await pause(1200);
 
   await clickByText(page, "Board");
@@ -435,6 +462,7 @@ async function runWalkthrough(page, appUrl, projectId) {
   await pause(700);
   await clickByText(page, "Reply and continue");
   await page.getByText("Require account login for MVP invite acceptance").first().waitFor();
+  markTimeline("operator answered refinement HITL");
   await pause(1200);
   await page.keyboard.press("Escape");
   await page.getByRole("dialog").waitFor({ state: "detached", timeout: 10_000 });
@@ -442,6 +470,7 @@ async function runWalkthrough(page, appUrl, projectId) {
   await clickByText(page, "Ceremonies");
   await clickByText(page, "Apply pending");
   await page.getByText("applied").first().waitFor({ timeout: 10_000 });
+  markTimeline("refinement proposals applied");
   await pause(900);
   await clickByText(page, "Board");
   await refresh(page);
@@ -454,13 +483,14 @@ async function runWalkthrough(page, appUrl, projectId) {
     .listTickets(projectId)
     .find((ticket) => ticket.title === "Create shared calendar invite model");
   assert.ok(childTicket);
-  const dispatched = await automationDriver.pollOnce();
+  const dispatched = await waitDuringIdle("automation dispatches refined child work", () => automationDriver.pollOnce());
   assert.equal(dispatched.dispatched.length >= 1, true);
   await refresh(page);
   await page.getByText("Working").first().waitFor();
+  markTimeline("child ticket working");
   await pause(900);
   const executionDriver = createExecutionDriver({ store, logger: silentLogger() });
-  await executionDriver.pollOnce();
+  await waitDuringIdle("developer implements refined child ticket", () => executionDriver.pollOnce());
   const completedChildExecution = store
     .getTicket(projectId, childTicket.id)
     .executions.find((execution) => execution.role === "developer" && execution.outcome === "completed");
@@ -469,17 +499,19 @@ async function runWalkthrough(page, appUrl, projectId) {
   await refresh(page);
   await page.getByText("Create shared calendar invite model").first().waitFor();
   assert.equal(store.getTicket(projectId, childTicket.id).state, "REVIEWING");
+  markTimeline("child ticket entered review");
   await pause(900);
 
-  await executionDriver.pollOnce();
+  await waitDuringIdle("reviewer independently reviews refined child ticket", () => executionDriver.pollOnce());
   const reviewedChild = store.getTicket(projectId, childTicket.id);
   assert.equal(reviewedChild.reviews.some((review) => review.verdict === "passed"), true);
   assert.equal(reviewedChild.state, "VALIDATING");
   await refresh(page);
   await page.getByText("Create shared calendar invite model").first().waitFor();
+  markTimeline("child ticket entered validation");
   await pause(900);
 
-  await executionDriver.pollOnce();
+  await waitDuringIdle("validator creates demo evidence for refined child ticket", () => executionDriver.pollOnce());
   const validatedChild = store.getTicket(projectId, childTicket.id);
   assert.equal(validatedChild.validations.some((validation) => validation.verdict === "passed"), true);
   assert.equal(
@@ -491,15 +523,17 @@ async function runWalkthrough(page, appUrl, projectId) {
   assert.equal(validatedChild.state, "READY_TO_MERGE");
   await refresh(page);
   await page.getByText("Create shared calendar invite model").first().waitFor();
+  markTimeline("child ticket ready to merge with demo evidence");
   await pause(900);
 
   const mergeDriver = createMergeDriver({ store, logger: silentLogger() });
-  await mergeDriver.pollOnce();
+  await waitDuringIdle("merge driver lands refined child ticket", () => mergeDriver.pollOnce());
   const mergedChild = store.getTicket(projectId, childTicket.id);
   assert.equal(mergedChild.state, "DONE");
   assert.equal(readFileSync(join(repoPath, "invite-model.md"), "utf8").includes("requires account login"), true);
   await refresh(page);
   await page.getByText("Create shared calendar invite model").first().waitFor();
+  markTimeline("child ticket done after merge");
   await pause(1500);
 
   const proof = collectProof(projectId);
@@ -557,6 +591,11 @@ function collectProof(projectId) {
     checksRun: checksRun(firstChildDetail),
     evidenceProduced: evidenceProduced(firstChildDetail),
     mergeOutput,
+    timeline: {
+      ...timeline,
+      idleDefinition: BIG_WORK_IDLE_DEFINITION,
+      trimSuggestion: buildTrimSuggestion(timeline.idleRanges, elapsedSeconds()),
+    },
     splitProposalApplied: Boolean(refinement?.proposals.some((proposal) => proposal.kind === "ticket_create" && proposal.status === "applied")),
     duplicateCancelled: tickets.some((ticket) => ticket.title === "Implement shared calendar invitations" && ticket.state === "CANCELLED"),
     obsoleteCancelled: tickets.some((ticket) => ticket.title === "Obsolete invitation spike" && ticket.state === "CANCELLED"),
@@ -678,6 +717,30 @@ function readJsonArtifact(uri) {
   }
 }
 
+async function waitDuringIdle(label, action) {
+  const range = {
+    label,
+    startSeconds: elapsedSeconds(),
+    endSeconds: 0,
+  };
+  try {
+    return await action();
+  } finally {
+    range.endSeconds = elapsedSeconds();
+    if (range.endSeconds - range.startSeconds > 0.5) {
+      timeline.idleRanges.push(range);
+    }
+  }
+}
+
+function markTimeline(label) {
+  timeline.marks.push({ label, seconds: elapsedSeconds() });
+}
+
+function elapsedSeconds() {
+  return Number(((Date.now() - recordingStartedAt) / 1000).toFixed(3));
+}
+
 async function moveTo(page, locator) {
   await locator.waitFor({ state: "visible" });
   const box = await locator.boundingBox();
@@ -719,15 +782,62 @@ async function installVisibleCursor(page) {
   });
 }
 
-function finalizeVideo(dir) {
+function finalizeVideo(dir, trimSuggestion = [], recordingDurationSeconds = 0) {
   const video = readdirSync(dir).find((entry) => entry.endsWith(".webm"));
   if (!video) {
     throw new Error(`No Playwright video found in ${dir}`);
   }
   const source = join(dir, video);
   const target = join(dir, "floop-refinement-demo.webm");
-  renameSync(source, target);
-  return target;
+  const rawTarget = join(dir, "floop-refinement-demo.raw.webm");
+  const trimMetadata = buildTrimMetadata({
+    recordingDurationSeconds,
+    idleRanges: timeline.idleRanges,
+    trimSuggestion,
+  });
+  writeFileSync(join(dir, "trim-ranges.json"), `${JSON.stringify(trimMetadata, null, 2)}\n`, "utf8");
+  if (trimSuggestion.length === 0) {
+    renameSync(source, target);
+    return { videoPath: target, trimMetadata };
+  }
+  renameSync(source, rawTarget);
+  try {
+    renderTrimmedVideo(rawTarget, target, trimSuggestion, recordingDurationSeconds);
+  } catch (error) {
+    console.warn(`Could not render trimmed refinement demo; keeping raw recording: ${error.message}`);
+    return { videoPath: rawTarget, trimMetadata: { ...trimMetadata, trimmedDurationSeconds: recordingDurationSeconds, cutSeconds: 0 } };
+  }
+  return { videoPath: target, trimMetadata };
+}
+
+function renderTrimmedVideo(source, destination, trimSuggestion, recordingDurationSeconds) {
+  const keepRanges = buildKeepRanges(trimSuggestion, recordingDurationSeconds);
+  if (keepRanges.length === 0) {
+    throw new Error("idle ranges removed the full recording");
+  }
+  const filter = buildTrimFilter(keepRanges);
+  writeFileSync(join(dirname(destination), "trim-filter.txt"), `${filter}\n`, "utf8");
+  execFileSync(
+    "ffmpeg",
+    ["-y", "-i", source, "-filter_complex", filter, "-map", "[v]", "-an", "-c:v", "libvpx-vp9", "-b:v", "1.8M", destination],
+    { stdio: "ignore" },
+  );
+}
+
+function buildTrimFilter(keepRanges) {
+  const trimFilters = keepRanges
+    .map((range, index) => {
+      const start = formatSeconds(range.start);
+      const end = Number.isFinite(range.end) ? `:end=${formatSeconds(range.end)}` : "";
+      return `[0:v]trim=start=${start}${end},setpts=PTS-STARTPTS[v${index}]`;
+    })
+    .join(";");
+  const concatInputs = keepRanges.map((_, index) => `[v${index}]`).join("");
+  return `${trimFilters};${concatInputs}concat=n=${keepRanges.length}:v=1:a=0[v]`;
+}
+
+function formatSeconds(value) {
+  return Number(value).toFixed(3);
 }
 
 function openRecording(videoPath) {
