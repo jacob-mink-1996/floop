@@ -190,7 +190,7 @@ try {
   await clickText("Save");
   await waitForText("Browser QA ticket edited");
 
-  await createAgentMessage(appUrl, "project_floop", {
+  const requestMessage = await createAgentMessage(appUrl, "project_floop", {
     actor: "developer",
     source: "browser-ui-check",
     intent: "request_input",
@@ -219,10 +219,24 @@ try {
       },
     },
   });
+  await createAgentMessage(appUrl, "project_floop", {
+    actor: "developer",
+    source: "browser-ui-check",
+    intent: "comment_on_ticket",
+    target: { ticketId: "ticket_project_floop_4", executionId: "browser-ui-check-execution" },
+    summary: "Confirm launch constraints",
+    body: "The agent needs structured launch details before continuing.",
+    metadata: {
+      hitlQuestion: true,
+      requestInputMessageId: requestMessage.message.id,
+    },
+  });
   await clickText("Close ticket detail");
   await clickText("Refresh");
   await clickTicket("Browser QA ticket edited");
   await waitForText("MVP scope");
+  await waitForText("NEEDS ANSWER");
+  await assertScript("Array.from(document.querySelectorAll('.conversation-item')).filter((item) => item.innerText.includes('Confirm launch constraints')).length === 1", "pending HITL request is not duplicated by its mirrored ticket comment");
   await assertScript("document.querySelector('.agent-request-form') !== null", "agent-generated HITL form renders in ticket conversation");
   await setFormValue("Reply and continue", "form:scope", "Calendar import only");
   await setFormValue("Reply and continue", "form:risk", "permissions");
@@ -242,6 +256,7 @@ try {
   await setFormValue("Add comment", "body", "Normal comment should add context without dispatching.");
   await clickText("Add comment");
   await waitForText("Normal comment should add context without dispatching.");
+  await waitForText("SAVED AS CONTEXT");
   await setFormValue("Dispatch agent", "summary", "Starting from the browser UI.");
   await clickText("Dispatch agent");
   await waitForText("EXECUTION DOCK");

@@ -3164,15 +3164,7 @@ function TicketConversationSection({
           <p className="kicker">Conversation</p>
           <h3>{pendingRequest ? "Waiting for answer" : activeExecution ? "Comment or steer" : "Ticket comments"}</h3>
         </div>
-        <span>
-          {pendingRequest
-            ? blockedKind.replace(/[_-]/g, " ")
-            : activeExecution
-              ? "active run"
-              : canStartFromComment
-                ? "ready"
-                : "context only"}
-        </span>
+        <span>{conversationStateLabel({ pendingRequest, blockedKind, activeExecution, canStartFromComment })}</span>
       </div>
       <div className="conversation-thread">
         {ticketMessages.length === 0 ? (
@@ -3206,7 +3198,7 @@ function TicketConversationSection({
         ) : null}
         <div className={`conversation-delivery ${pendingRequest ? "tone-attention" : `tone-${selectedModeOption.tone}`}`}>
           <StateDot tone={pendingRequest ? "attention" : selectedModeOption.tone} />
-          <span>{pendingRequest ? "This answer resolves the pending agent request." : selectedModeOption.delivery}</span>
+          <span>{pendingRequest ? pendingRequestDeliveryText(pendingRequest) : selectedModeOption.delivery}</span>
         </div>
         <label>
           <span>{pendingRequest && pendingForm ? "Notes" : pendingRequest ? "Answer" : "Comment"}</span>
@@ -3290,27 +3282,27 @@ function conversationModeOptions({
     {
       id: "context",
       label: "Add context",
-      detail: "Saved for later agents. Does not dispatch.",
-      delivery: "Saved as ticket context. No agent starts from this alone.",
+      detail: "Save for later agents.",
+      delivery: "Saved to the ticket. Future agents, reviewers, validators, and merge repair can use it.",
       disabled: false,
       tone: "neutral",
     },
     {
       id: "steer",
-      label: "Steer active run",
-      detail: activeExecution ? "Send to the agent working now." : "Available when an agent is active.",
+      label: "Steer run",
+      detail: activeExecution ? "Send now." : "Needs active work.",
       delivery: activeExecution
-        ? "Sent to the active agent as steering for the current run."
+        ? "Sent to the current agent. If live steering is unavailable, Floop records it for the resumed run."
         : "No active agent can receive steering right now.",
       disabled: !activeExecution,
       tone: activeExecution ? "attention" : "neutral",
     },
     {
       id: "dispatch",
-      label: "Start or reopen",
-      detail: canStartFromComment ? "Choose an agent and start work." : "Available when the ticket is ready.",
+      label: "Start work",
+      detail: canStartFromComment ? "Choose agent." : "Needs Ready or Rework.",
       delivery: canStartFromComment
-        ? "Starts the selected agent with this note as the reason."
+        ? "Starts the selected agent with this note as the work instruction."
         : "This ticket cannot be started from a comment in its current state.",
       disabled: !canStartFromComment,
       tone: canStartFromComment ? "active" : "neutral",
@@ -3435,6 +3427,13 @@ function collapseTicketConversationMessages(messages: AgentMessage[], pendingReq
       .map((message) => String(message.metadata.requestInputMessageId)),
   );
   return messages.filter((message) => {
+    if (
+      pendingRequestId &&
+      message.intent === "comment_on_ticket" &&
+      String(message.metadata?.requestInputMessageId || "") === pendingRequestId
+    ) {
+      return false;
+    }
     if (message.intent !== "request_input" && message.intent !== "submit_ceremony_input") return true;
     if (message.id === pendingRequestId) return true;
     return !requestIdsWithMirror.has(message.id);
@@ -3450,6 +3449,7 @@ function ConversationItem({ message, pending }: { message: AgentMessage; pending
   const isAnswer = message.metadata?.unblockResponse === true;
   const isSteering = message.metadata?.steeringNote === true;
   const isDispatch = message.metadata?.dispatchWithComment === true;
+  const deliveryText = conversationItemDeliveryText(message, { pending, isAnswer, isSteering, isDispatch });
   const tone = pending ? "attention" : isAnswer || isDispatch ? "done" : isQuestion || isSteering ? "attention" : "neutral";
   const label = pending
     ? "Waiting"
@@ -3469,9 +3469,54 @@ function ConversationItem({ message, pending }: { message: AgentMessage; pending
         <span>{label} · {formatDate(message.createdAt)}</span>
         <strong>{message.summary || label}</strong>
         {message.body ? <p>{message.body}</p> : null}
+        {deliveryText ? <small className="conversation-item-delivery">{deliveryText}</small> : null}
       </div>
     </article>
   );
+}
+
+function conversationStateLabel({
+  pendingRequest,
+  blockedKind,
+  activeExecution,
+  canStartFromComment,
+}: {
+  pendingRequest?: AgentMessage;
+  blockedKind: string;
+  activeExecution: TicketDetail["executions"][number] | undefined;
+  canStartFromComment: boolean;
+}) {
+  if (pendingRequest) {
+    return blockedKind ? `needs answer · ${blockedKind.replace(/[_-]/g, " ")}` : "needs answer";
+  }
+  if (activeExecution) return "active work";
+  if (canStartFromComment) return "can start";
+  return "context only";
+}
+
+function pendingRequestDeliveryText(message: AgentMessage) {
+  if (message.intent === "submit_ceremony_input") {
+    return "This answer goes back to the ceremony and is saved on the ticket.";
+  }
+  return "This answer unblocks the lane and can continue the agent from here.";
+}
+
+function conversationItemDeliveryText(
+  message: AgentMessage,
+  state: { pending: boolean; isAnswer: boolean; isSteering: boolean; isDispatch: boolean },
+) {
+  if (state.pending) return "Waiting for your answer.";
+  if (state.isAnswer) return "Answer saved for later phases.";
+  if (state.isDispatch) return "Started work from this note.";
+  if (state.isSteering) {
+    const deliveryStatus = typeof message.metadata?.deliveryStatus === "string" ? message.metadata.deliveryStatus : "";
+    if (deliveryStatus === "resumed") return "Steering applied by resuming the agent.";
+    if (deliveryStatus === "queued_context") return "Steering queued as context for the agent.";
+    if (deliveryStatus === "attached") return "Steering saved to the active ticket.";
+    return "Sent as steering for active work.";
+  }
+  if (message.metadata?.commentMode === "context") return "Saved as context.";
+  return "";
 }
 
 function TicketDangerZone({
