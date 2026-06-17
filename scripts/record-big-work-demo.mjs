@@ -124,6 +124,14 @@ try {
   assert.equal(proof.demoFeatureTickets.length >= 4, true);
   assert.equal(proof.executedFeatureTickets.length >= 1, true);
   assert.equal(proof.executedFeatureTickets.every((ticket) => ticket.state === "DONE"), true);
+  assert.equal(proof.fullLoopProof.ideaToRefinement, true);
+  assert.equal(proof.fullLoopProof.hitlAnswered, true);
+  assert.equal(proof.fullLoopProof.refinementApplied, true);
+  assert.equal(proof.fullLoopProof.reviewEvidenceComplete, true);
+  assert.equal(proof.fullLoopProof.validationEvidenceComplete, true);
+  assert.equal(proof.fullLoopProof.demoEvidenceComplete, true);
+  assert.equal(proof.fullLoopProof.mergeEvidenceComplete, true);
+  assert.equal(proof.fullLoopProof.idleCutMetadataComplete, true);
   assert.equal(proof.reviewCount >= proof.executedFeatureTickets.length, true);
   assert.equal(proof.validationCount >= proof.executedFeatureTickets.length, true);
   assert.equal(
@@ -635,7 +643,7 @@ async function exerciseHardSteerCopy(page, projectId, repoId) {
   await refresh(page);
   await clickByText(page, "Board");
   await clickByText(page, ticket.title);
-  await page.getByText("Current work").first().waitFor();
+  await page.getByText(/Execution dock/i).first().waitFor();
   await page.getByText("Steering from openclaw").first().waitFor({ timeout: 5000 }).catch(() => {});
   await pause(1400);
   await closeTicketDetail(page);
@@ -1457,12 +1465,27 @@ function collectProof() {
   const artifacts = project ? store.listArtifacts(project.id, { limit: 200 }) : [];
   const demoEvidenceByTicket = buildDemoEvidenceByTicket(executedFeatureTickets, artifacts);
   const runObservability = project ? collectRunObservability(project.id) : { summary: {}, runs: [] };
+  const events = project ? store.listEvents(project.id, { order: "asc", limit: 500 }) : [];
+  const agentMessages = project ? store.listAgentMessages(project.id, { limit: 200 }) || [] : [];
+  const mergeRuns = project ? store.listMergeRuns(project.id, { limit: 100 }) || [] : [];
+  const trimSuggestion = buildTrimSuggestion(timeline.idleRanges, elapsedSeconds());
+  const fullLoopProof = buildFullLoopProof({
+    project,
+    ideaTicket,
+    breakdownTickets,
+    executedFeatureTickets,
+    demoEvidenceByTicket,
+    events,
+    agentMessages,
+    mergeRuns,
+    trimSuggestion,
+  });
   return {
     agentMode,
     timeline: {
       ...timeline,
       idleDefinition: BIG_WORK_IDLE_DEFINITION,
-      trimSuggestion: buildTrimSuggestion(timeline.idleRanges, elapsedSeconds()),
+      trimSuggestion,
     },
     projects,
     repos,
@@ -1493,6 +1516,7 @@ function collectProof() {
     reviewCount: executedFeatureTickets.reduce((count, ticket) => count + (store.getTicket(project.id, ticket.id)?.reviews.length || 0), 0),
     validationCount: executedFeatureTickets.reduce((count, ticket) => count + (store.getTicket(project.id, ticket.id)?.validations.length || 0), 0),
     demoEvidenceByTicket,
+    fullLoopProof,
     doneTickets: tickets.filter((ticket) => ticket.state === "DONE"),
     artifacts,
     workLogs: artifacts
@@ -1589,6 +1613,99 @@ function buildDemoEvidenceByTicket(tickets, artifacts) {
       }));
   }
   return byTicket;
+}
+
+function buildFullLoopProof({
+  project,
+  ideaTicket,
+  breakdownTickets,
+  executedFeatureTickets,
+  demoEvidenceByTicket,
+  events,
+  agentMessages,
+  mergeRuns,
+  trimSuggestion,
+}) {
+  const executedIds = new Set(executedFeatureTickets.map((ticket) => ticket.id));
+  const ticketEvents = events.filter((event) => executedIds.has(event.ticketId));
+  const hitlAnswers = agentMessages.filter(
+    (message) =>
+      message.intent === "comment_on_ticket" &&
+      message.metadata?.unblockResponse === true &&
+      (message.metadata?.responseToMessageId || message.target?.responseToMessageId),
+  );
+  const refinementRuns = project
+    ? store
+        .listCeremonyRuns(project.id)
+        .filter((run) => run.type === "refinement")
+    : [];
+  const appliedRefinementRuns = refinementRuns.filter((run) =>
+    run.status === "applied" ||
+    run.proposals.some((proposal) => proposal.status === "applied"),
+  );
+  const mergeEvidenceByTicket = {};
+  for (const run of mergeRuns) {
+    if (!run.ticketId || !executedIds.has(run.ticketId)) continue;
+    if (!mergeEvidenceByTicket[run.ticketId]) mergeEvidenceByTicket[run.ticketId] = [];
+    mergeEvidenceByTicket[run.ticketId].push({
+      id: run.id,
+      status: run.status,
+      summaryMd: run.summaryMd,
+      artifactCount: run.artifacts?.length || 0,
+    });
+  }
+  const reviewsByTicket = {};
+  const validationsByTicket = {};
+  for (const ticket of executedFeatureTickets) {
+    const detail = store.getTicket(project.id, ticket.id);
+    reviewsByTicket[ticket.id] = (detail?.reviews || []).map((review) => ({
+      id: review.id,
+      verdict: review.verdict,
+      summaryMd: review.summaryMd,
+    }));
+    validationsByTicket[ticket.id] = (detail?.validations || []).map((validation) => ({
+      id: validation.id,
+      verdict: validation.verdict,
+      commandProfile: validation.commandProfile,
+      summaryMd: validation.summaryMd,
+      artifactCount: validation.artifacts?.length || 0,
+    }));
+  }
+  return {
+    ideaToRefinement: Boolean(ideaTicket && breakdownTickets.length > 0),
+    hitlAnswered: hitlAnswers.length > 0,
+    refinementApplied: appliedRefinementRuns.length > 0,
+    reviewEvidenceComplete: executedFeatureTickets.every((ticket) => (reviewsByTicket[ticket.id] || []).length > 0),
+    validationEvidenceComplete: executedFeatureTickets.every((ticket) => (validationsByTicket[ticket.id] || []).length > 0),
+    demoEvidenceComplete: executedFeatureTickets.every((ticket) => (demoEvidenceByTicket[ticket.id] || []).length > 0),
+    mergeEvidenceComplete: executedFeatureTickets.every((ticket) =>
+      (mergeEvidenceByTicket[ticket.id] || []).some((run) => run.status === "completed" && run.artifactCount > 0),
+    ),
+    idleCutMetadataComplete: Array.isArray(timeline.idleRanges) && Array.isArray(trimSuggestion) && Boolean(BIG_WORK_IDLE_DEFINITION),
+    idleCutApplied: trimSuggestion.length > 0,
+    evidenceByTicket: executedFeatureTickets.map((ticket) => ({
+      ticketId: ticket.id,
+      key: ticket.key,
+      title: ticket.title,
+      reviewCount: (reviewsByTicket[ticket.id] || []).length,
+      validationCount: (validationsByTicket[ticket.id] || []).length,
+      demoEvidenceCount: (demoEvidenceByTicket[ticket.id] || []).length,
+      mergeRunCount: (mergeEvidenceByTicket[ticket.id] || []).length,
+      transitionEvents: ticketEvents
+        .filter((event) => event.ticketId === ticket.id)
+        .map((event) => event.type),
+    })),
+    hitlAnswers: hitlAnswers.map((message) => ({
+      id: message.id,
+      summary: message.summary,
+      target: message.target,
+      createdAt: message.createdAt,
+    })),
+    refinementRunIds: refinementRuns.map((run) => run.id),
+    appliedRefinementRunIds: appliedRefinementRuns.map((run) => run.id),
+    trimSuggestionCount: trimSuggestion.length,
+    idleRangeCount: timeline.idleRanges.length,
+  };
 }
 
 function isDemoEvidenceArtifact(artifact) {
