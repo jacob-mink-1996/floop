@@ -150,6 +150,11 @@ export type BoardTicket = {
   activeExecutionCount: number;
   activeExecutionRole: string;
   activeExecutionClaimed: boolean;
+  pendingAgentMessageCount: number;
+  latestValidationHasDemoEvidence: boolean;
+  mergeReadiness: string;
+  mergeStatusSummary: string;
+  mergeBlockingReasonCode: string;
   repoCount: number;
   dependencyCount: number;
   eventCount: number;

@@ -58,6 +58,10 @@ test("boardDto groups tickets by state", () => {
       assignedRole: "developer",
       latestSummary: "In progress",
       latestReviewVerdict: "passed",
+      latestValidationHasDemoEvidence: true,
+      pendingAgentMessageCount: 2,
+      mergeReadiness: "ready",
+      mergeStatusSummary: "Ready to merge.",
       updatedAt: "2026-06-10T05:00:00.000Z",
     },
     {
@@ -76,7 +80,13 @@ test("boardDto groups tickets by state", () => {
   assert.equal(board.totalTickets, 2);
   assert.equal(board.lanes.WORKING.count, 1);
   assert.equal(board.lanes.WORKING.tickets[0].latestReviewVerdict, "passed");
+  assert.equal(board.lanes.WORKING.tickets[0].pendingAgentMessageCount, 2);
+  assert.equal(board.lanes.WORKING.tickets[0].latestValidationHasDemoEvidence, true);
+  assert.equal(board.lanes.WORKING.tickets[0].mergeReadiness, "ready");
+  assert.equal(board.lanes.WORKING.tickets[0].mergeStatusSummary, "Ready to merge.");
   assert.equal(board.lanes.READY.tickets[0].key, "FLOOP-2");
+  assert.equal(board.lanes.READY.tickets[0].pendingAgentMessageCount, 0);
+  assert.equal(board.lanes.READY.tickets[0].latestValidationHasDemoEvidence, false);
 });
 
 test("ticketDto includes projected events", () => {

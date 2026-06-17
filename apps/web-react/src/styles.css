@@ -2631,6 +2631,70 @@ textarea {
   font-weight: 800;
 }
 
+.card-signals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.card-signal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 5px;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  padding: 5px 6px;
+  overflow: hidden;
+}
+
+.card-signal .state-dot {
+  grid-row: 1 / -1;
+}
+
+.card-signal-label,
+.card-signal-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-signal-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.card-signal-value {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.card-signal.signal-active {
+  border-color: color-mix(in srgb, var(--blue) 36%, var(--line));
+  background: var(--info-bg);
+}
+
+.card-signal.signal-done {
+  border-color: color-mix(in srgb, var(--green) 38%, var(--line));
+  background: var(--success-bg);
+}
+
+.card-signal.signal-attention {
+  border-color: color-mix(in srgb, var(--amber) 44%, var(--line));
+  background: var(--warn-bg);
+}
+
+.card-signal.signal-danger {
+  border-color: color-mix(in srgb, var(--red) 38%, var(--line));
+  background: var(--danger-soft-bg);
+}
+
 .card-meta {
   display: flex;
   flex-wrap: wrap;

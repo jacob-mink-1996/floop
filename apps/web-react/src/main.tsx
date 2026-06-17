@@ -2036,15 +2036,7 @@ function BoardLane({
 function TicketCard({ ticket, selected, onClick }: { ticket: BoardTicket; selected: boolean; onClick: () => void }) {
   const action = nextActionForTicket(ticket);
   const phases = ticketPhaseItems(ticket);
-  const hasActiveAgent = ticket.activeExecutionCount > 0;
-  const exceptionChips = [
-    hasActiveAgent ? `${ticket.activeExecutionClaimed ? "Agent" : "Queued"} ${ticket.activeExecutionRole ? prettyRole(ticket.activeExecutionRole as RoleName) : "active"}` : "",
-    ticket.priority === "high" ? "High" : "",
-    ticket.state === "BLOCKED" ? "Blocked" : "",
-    ticket.state === "REWORK" ? "Rework" : "",
-    ticket.latestReviewVerdict && ticket.latestReviewVerdict !== "passed" ? `Review ${prettyState(ticket.latestReviewVerdict)}` : "",
-    ticket.latestValidationVerdict && ticket.latestValidationVerdict !== "passed" ? `Validation ${prettyState(ticket.latestValidationVerdict)}` : "",
-  ].filter(Boolean);
+  const signals = ticketCardSignals(ticket);
   const { attributes, isDragging, listeners, setNodeRef, transform } = useDraggable({
     id: ticket.id,
     data: { state: ticket.state },
@@ -2067,16 +2059,125 @@ function TicketCard({ ticket, selected, onClick }: { ticket: BoardTicket; select
       <strong>{ticket.title}</strong>
       <PhaseRail items={phases} compact />
       <p>{ticket.latestSummary || ticket.brief}</p>
+      <div className="card-signals" aria-label="Ticket signals">
+        {signals.map((signal) => (
+          <span className={`card-signal signal-${signal.tone}`} key={signal.id} title={signal.title}>
+            <StateDot tone={signal.tone} />
+            <span className="card-signal-label">{signal.label}</span>
+            <span className="card-signal-value">{signal.value}</span>
+          </span>
+        ))}
+      </div>
       <div className="next-action">
         <span>{action.label}</span>
       </div>
-      {exceptionChips.length ? (
+      {ticket.priority === "high" || ticket.priority === "urgent" ? (
         <div className="card-meta">
-          {exceptionChips.map((chip) => <span key={chip}>{chip}</span>)}
+          <span>{prettyState(ticket.priority)}</span>
         </div>
       ) : null}
     </button>
   );
+}
+
+type TicketCardSignal = {
+  id: string;
+  label: string;
+  value: string;
+  tone: Tone;
+  title: string;
+};
+
+function ticketCardSignals(ticket: BoardTicket): TicketCardSignal[] {
+  const activeRole = ticket.activeExecutionRole ? prettyRole(ticket.activeExecutionRole as RoleName) : "Agent";
+  const workValue =
+    ticket.activeExecutionCount > 0 ? (ticket.activeExecutionClaimed ? activeRole : "Queued") : "Idle";
+  const reviewValue = ticket.latestReviewVerdict
+    ? prettyState(ticket.latestReviewVerdict)
+    : ticket.state === "REVIEWING"
+      ? "Running"
+      : "Open";
+  const validationValue = ticket.latestValidationVerdict
+    ? prettyState(ticket.latestValidationVerdict)
+    : ticket.state === "VALIDATING"
+      ? "Running"
+      : "Open";
+  const demoBlocked = ticket.mergeBlockingReasonCode === "demo_evidence_required";
+  const mergeValue = ticket.mergeReadiness ? prettyState(ticket.mergeReadiness) : "Waiting";
+
+  return [
+    {
+      id: "work",
+      label: "Work",
+      value: workValue,
+      tone: ticket.activeExecutionCount > 0 ? "active" : ticket.state === "BLOCKED" ? "danger" : "neutral",
+      title:
+        ticket.activeExecutionCount > 0
+          ? `${workValue} is ${ticket.activeExecutionClaimed ? "working" : "queued"} on this ticket.`
+          : "No active agent execution is attached to this ticket.",
+    },
+    {
+      id: "hitl",
+      label: "HITL",
+      value: ticket.pendingAgentMessageCount > 0 ? String(ticket.pendingAgentMessageCount) : "Clear",
+      tone: ticket.pendingAgentMessageCount > 0 ? "attention" : "neutral",
+      title:
+        ticket.pendingAgentMessageCount > 0
+          ? `${ticket.pendingAgentMessageCount} pending agent request${ticket.pendingAgentMessageCount === 1 ? "" : "s"} need attention.`
+          : "No pending agent questions or proposals.",
+    },
+    {
+      id: "review",
+      label: "Review",
+      value: reviewValue,
+      tone: ticket.latestReviewVerdict
+        ? toneForStatus(ticket.latestReviewVerdict)
+        : ticket.state === "REVIEWING"
+          ? "active"
+          : "neutral",
+      title: ticket.latestReviewVerdict
+        ? `Latest review ${prettyState(ticket.latestReviewVerdict)}.`
+        : "No review result recorded yet.",
+    },
+    {
+      id: "validation",
+      label: "Val",
+      value: validationValue,
+      tone: ticket.latestValidationVerdict
+        ? toneForStatus(ticket.latestValidationVerdict)
+        : ticket.state === "VALIDATING"
+          ? "active"
+          : "neutral",
+      title: ticket.latestValidationVerdict
+        ? `Latest validation ${prettyState(ticket.latestValidationVerdict)}.`
+        : "No validation result recorded yet.",
+    },
+    {
+      id: "demo",
+      label: "Demo",
+      value: ticket.latestValidationHasDemoEvidence ? "Ready" : demoBlocked ? "Needed" : "Open",
+      tone: ticket.latestValidationHasDemoEvidence ? "done" : demoBlocked ? "attention" : "neutral",
+      title: ticket.latestValidationHasDemoEvidence
+        ? "Latest validation includes demo evidence."
+        : demoBlocked
+          ? "Demo evidence is required before merge."
+          : "No demo evidence attached yet.",
+    },
+    {
+      id: "merge",
+      label: "Merge",
+      value: mergeValue,
+      tone:
+        ticket.mergeReadiness === "ready"
+          ? "done"
+          : ticket.mergeReadiness === "blocked" || ticket.mergeReadiness === "rework"
+            ? "danger"
+            : ticket.mergeReadiness === "running"
+              ? "active"
+              : "neutral",
+      title: ticket.mergeStatusSummary || "Merge has not started.",
+    },
+  ];
 }
 
 function TicketDetailPanel({

@@ -826,7 +826,7 @@ export function buildMergePolicyBlocks(policy, latestReview, latestValidation) {
   return blocks;
 }
 
-function hasDemoEvidence(validation) {
+export function hasDemoEvidence(validation) {
   return (validation?.artifacts || []).some((artifact) => {
     const kind = String(artifact.kind || "").toLowerCase();
     const label = String(artifact.label || "").toLowerCase();

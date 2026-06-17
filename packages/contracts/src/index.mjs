@@ -318,6 +318,11 @@ export function boardTicketDto(ticket) {
     activeExecutionCount: Number(ticket.activeExecutionCount || 0),
     activeExecutionRole: ticket.activeExecutionRole || "",
     activeExecutionClaimed: Boolean(ticket.activeExecutionClaimed),
+    pendingAgentMessageCount: Number(ticket.pendingAgentMessageCount || 0),
+    latestValidationHasDemoEvidence: Boolean(ticket.latestValidationHasDemoEvidence),
+    mergeReadiness: ticket.mergeReadiness || "",
+    mergeStatusSummary: ticket.mergeStatusSummary || "",
+    mergeBlockingReasonCode: ticket.mergeBlockingReasonCode || "",
     updatedAt: ticket.updatedAt,
   };
 }
@@ -354,6 +359,11 @@ export function ticketSummaryDto(ticket, options = {}) {
     activeExecutionCount: Number(options.activeExecutionCount || 0),
     activeExecutionRole: options.activeExecutionRole || "",
     activeExecutionClaimed: Boolean(options.activeExecutionClaimed),
+    pendingAgentMessageCount: Number(options.pendingAgentMessageCount || 0),
+    latestValidationHasDemoEvidence: Boolean(options.latestValidationHasDemoEvidence),
+    mergeReadiness: options.mergeReadiness || "",
+    mergeStatusSummary: options.mergeStatusSummary || "",
+    mergeBlockingReasonCode: options.mergeBlockingReasonCode || "",
     repoCount: (options.repoTargets || []).length,
     dependencyCount: options.dependencyCount || 0,
     eventCount: options.eventCount || 0,

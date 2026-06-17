@@ -27,10 +27,17 @@ export function createProjectCommands({
   mapRoleProfile,
   mapTicket,
   buildBoardSummary,
+  buildMergeStatus,
+  getArtifactsByTicketId,
+  getArtifactsByValidationRunId,
   getCountMap,
+  getExecutionsByTicketId,
+  getLatestValidationRunRow,
   getLatestReviewVerdictsByTicketId,
   getLatestValidationVerdictsByTicketId,
   getRepoTargetsByTicketId,
+  getWorktreesByTicketId,
+  hasDemoEvidence,
   listTicketRows,
   mapTicketStateToBoardState,
 }) {
@@ -342,12 +349,15 @@ export function createProjectCommands({
       const ticketRows = listTicketRows(database, projectId, filters);
       const ticketIds = ticketRows.map((ticket) => ticket.id);
       const repoTargetsByTicketId = getRepoTargetsByTicketId(database, ticketIds);
+      const executionsByTicketId = getExecutionsByTicketId(database, projectId, ticketIds);
+      const worktreesByTicketId = getWorktreesByTicketId(database, projectId, ticketIds);
       const latestReviewVerdictsByTicketId = getLatestReviewVerdictsByTicketId(database, projectId, ticketIds);
       const latestValidationVerdictsByTicketId = getLatestValidationVerdictsByTicketId(
         database,
         projectId,
         ticketIds,
       );
+      const pendingMessageCountsByTicketId = getPendingAgentMessageCountsByTicketId(database, projectId, ticketIds);
       const eventCountsByTicketId = getCountMap(
         database,
         "select ticket_id as ticketId, count(*) as count from events where project_id = ? and ticket_id is not null group by ticket_id",
@@ -366,10 +376,32 @@ export function createProjectCommands({
       const columnsByState = new Map(columns.map((column) => [column.state, column]));
 
       for (const ticket of ticketRows) {
-        const summary = ticketSummaryDto(mapTicket(ticket), {
+        const mappedTicket = mapTicket(ticket);
+        const activeExecutions = (executionsByTicketId.get(ticket.id) || []).filter(
+          (execution) => execution.status === "running",
+        );
+        const activeExecution = activeExecutions[0];
+        const latestValidation = getLatestValidationRunRow(database, projectId, ticket.id);
+        const latestValidationArtifacts = latestValidation
+          ? getArtifactsByValidationRunId(database, [latestValidation.id]).get(latestValidation.id) || []
+          : [];
+        const ticketArtifacts = getArtifactsByTicketId(database, projectId, [ticket.id]).get(ticket.id) || [];
+        const latestValidationHasDemoEvidence = hasDemoEvidence(
+          latestValidation ? { ...latestValidation, artifacts: [...latestValidationArtifacts, ...ticketArtifacts] } : null,
+        );
+        const mergeStatus = buildMergeStatus(database, mappedTicket, worktreesByTicketId.get(ticket.id) || []);
+        const summary = ticketSummaryDto(mappedTicket, {
           repoTargets: repoTargetsByTicketId.get(ticket.id) || [],
           latestReviewVerdict: latestReviewVerdictsByTicketId.get(ticket.id) || "",
           latestValidationVerdict: latestValidationVerdictsByTicketId.get(ticket.id) || "",
+          activeExecutionCount: activeExecutions.length,
+          activeExecutionRole: activeExecution?.role || "",
+          activeExecutionClaimed: Boolean(activeExecution?.claimToken),
+          pendingAgentMessageCount: pendingMessageCountsByTicketId.get(ticket.id) || 0,
+          latestValidationHasDemoEvidence,
+          mergeReadiness: mergeStatus.readiness,
+          mergeStatusSummary: mergeStatus.statusSummary,
+          mergeBlockingReasonCode: mergeStatus.blockingReasons?.[0]?.code || "",
           eventCount: eventCountsByTicketId.get(ticket.id) || 0,
           dependencyCount: dependencyCountsByTicketId.get(ticket.id) || 0,
         });
@@ -389,4 +421,34 @@ export function createProjectCommands({
   };
 
   return commands;
+}
+
+function getPendingAgentMessageCountsByTicketId(database, projectId, ticketIds) {
+  const byTicketId = new Map(ticketIds.map((ticketId) => [ticketId, 0]));
+  if (ticketIds.length === 0) {
+    return byTicketId;
+  }
+
+  const pendingMessages = database
+    .prepare(
+      `select target_json
+       from agent_messages
+       where project_id = ? and status = 'pending'`,
+    )
+    .all(projectId);
+  const ticketIdSet = new Set(ticketIds);
+
+  for (const message of pendingMessages) {
+    let target;
+    try {
+      target = JSON.parse(message.target_json || "{}");
+    } catch {
+      continue;
+    }
+    if (ticketIdSet.has(target.ticketId)) {
+      byTicketId.set(target.ticketId, (byTicketId.get(target.ticketId) || 0) + 1);
+    }
+  }
+
+  return byTicketId;
 }

@@ -889,6 +889,84 @@ test("store persists review and validation evidence and advances the ticket loop
   store.close();
 });
 
+test("store project board exposes compact scan status for work, HITL, demo, and merge", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: true,
+    requireHumanApprovalBeforeMerge: false,
+    requireDemoEvidenceBeforeMerge: true,
+    interactionMode: "fully_autonomous",
+  });
+
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Build a board scan status fixture.",
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation completed for board status.",
+  });
+  const validator = store
+    .getTicket("project_floop", "ticket_project_floop_2")
+    .executions.find((execution) => execution.role === "validator");
+  store.completeExecution("project_floop", validator.id, {
+    outcome: "completed",
+    summaryMd: "Validation passed with demo evidence.",
+    validation: {
+      verdict: "passed",
+      commandProfile: "ci",
+      commands: ["npm test"],
+      repoIds: ["repo_project_floop_floop"],
+      summaryMd: "Validation passed and demo was recorded.",
+      artifacts: [
+        {
+          kind: "demo",
+          label: "Board scan demo",
+          uri: "file:///tmp/board-scan-demo.md",
+          metadata: { demoEvidence: true },
+        },
+      ],
+    },
+  });
+
+  const activeTicket = store.createTicket("project_floop", {
+    title: "Need active work scan state",
+    brief: "Exercise active execution and pending HITL board fields.",
+    state: "READY",
+    assignedRole: "developer",
+  });
+  const activeExecution = store.createExecution("project_floop", activeTicket.id, {
+    role: "developer",
+    reason: "Start active board work.",
+  });
+  assert.ok(activeExecution);
+  store.claimExecution("project_floop", activeExecution.id, {
+    claimToken: "worker-1",
+  });
+  store.createAgentMessage("project_floop", {
+    actor: "developer",
+    source: "codex",
+    intent: "request_input",
+    target: { ticketId: activeTicket.id },
+    summary: "Clarify the expected board status copy.",
+  });
+
+  const boardTickets = store.getProjectBoard("project_floop").columns.flatMap((column) => column.tickets);
+  const mergeReadyTicket = boardTickets.find((ticket) => ticket.id === "ticket_project_floop_2");
+  assert.equal(mergeReadyTicket.latestValidationHasDemoEvidence, true);
+  assert.equal(mergeReadyTicket.mergeReadiness, "ready");
+  assert.equal(mergeReadyTicket.mergeBlockingReasonCode, "");
+
+  const workingTicket = boardTickets.find((ticket) => ticket.id === activeTicket.id);
+  assert.equal(workingTicket.activeExecutionCount, 1);
+  assert.equal(workingTicket.activeExecutionRole, "developer");
+  assert.equal(workingTicket.activeExecutionClaimed, true);
+  assert.equal(workingTicket.pendingAgentMessageCount, 1);
+
+  store.close();
+});
+
 test("store auto-routes next execution lanes after implementation and review completion", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   store.updateProjectPolicy("project_floop", {
