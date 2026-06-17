@@ -22,6 +22,12 @@ import { createCeremonyParticipantDriver } from "../services/api/src/ceremony-pa
 import { createExecutionDriver } from "../services/api/src/execution-driver.mjs";
 import { createMergeDriver } from "../services/api/src/merge-driver.mjs";
 import { createStore } from "../services/api/src/store.mjs";
+import {
+  BIG_WORK_IDLE_DEFINITION,
+  buildKeepRanges,
+  buildTrimMetadata,
+  buildTrimSuggestion,
+} from "./record-big-work-demo-lib.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadDotEnv();
@@ -50,6 +56,11 @@ let mergeDriver;
 let ceremonyParticipantDriver;
 let browser;
 let context;
+let recordingStartedAt = Date.now();
+const timeline = {
+  marks: [],
+  idleRanges: [],
+};
 
 try {
   initializeTargetRepo(targetRepoPath);
@@ -107,7 +118,8 @@ try {
   browser = null;
 
   if (mode === "record") {
-    const videoPath = finalizeVideo(recordingDir);
+    const recordingDurationSeconds = elapsedSeconds();
+    const finalizedVideo = finalizeVideo(recordingDir, proof.timeline.trimSuggestion, recordingDurationSeconds);
     writeFileSync(
       join(recordingDir, "proof.json"),
       JSON.stringify(
@@ -115,7 +127,8 @@ try {
           appUrl,
           fixtureRoot,
           targetRepoPath,
-          videoPath,
+          videoPath: finalizedVideo.videoPath,
+          trimmedVideo: finalizedVideo.trimMetadata,
           ...proof,
         },
         null,
@@ -123,10 +136,10 @@ try {
       ),
       "utf8",
     );
-    console.log(`Recorded Floop usage demo: ${videoPath}`);
+    console.log(`Recorded Floop usage demo: ${finalizedVideo.videoPath}`);
     console.log(`Proof bundle: ${join(recordingDir, "proof.json")}`);
     if (openAfterRecord) {
-      openRecording(videoPath);
+      openRecording(finalizedVideo.videoPath);
     }
   } else {
     console.log("Playwright usage proof passed");
@@ -149,6 +162,7 @@ try {
 
 async function runWalkthrough(page, appUrl) {
   await page.goto(appUrl);
+  markTimeline("opened onboarding");
   await page.getByText("No project selected").first().waitFor();
   await pause(500);
 
@@ -159,6 +173,7 @@ async function runWalkthrough(page, appUrl) {
   await fillByName(page, "description", "A recorded local agent loop for the Floop demo reel.");
   await clickByText(page, "Create project");
   await page.getByText("Floop Usage Demo").first().waitFor();
+  markTimeline("created project");
   await pause(700);
 
   const project = store.listProjects()[0];
@@ -171,6 +186,7 @@ async function runWalkthrough(page, appUrl) {
   await page.getByText("demo-product").first().waitFor();
   await clickByText(page, "Show profiles");
   await page.getByText("Agent Profiles").first().waitFor();
+  markTimeline("verified agent profiles");
   await pause(1000);
   await clickByText(page, "Close settings");
   await page.locator(".settings-drawer").waitFor({ state: "hidden" });
@@ -181,8 +197,9 @@ async function runWalkthrough(page, appUrl) {
     brief: "Add a visible dashboard marker so Floop can prove the local repo changed.",
   });
   await runTicketLoopFromUi(page, "Build the demo dashboard");
-  await waitForTicketState("Build the demo dashboard", "DONE", 45_000);
+  await waitDuringIdle("confirm completed demo dashboard ticket", () => waitForTicketState("Build the demo dashboard", "DONE", 45_000));
   await page.getByText("Done").first().waitFor();
+  markTimeline("dashboard ticket done");
   await pause(1000);
 
   await clickByText(page, "New Ticket");
@@ -195,21 +212,24 @@ async function runWalkthrough(page, appUrl) {
   await refresh(page);
   await page.getByText("Blocked").first().waitFor();
   await page.getByText("Investigate flaky validation").first().waitFor();
+  markTimeline("blocked ticket visible");
   await pause(700);
 
   await clickByText(page, "Ceremonies");
   await page.getByText("Refinement").first().waitFor();
   await clickByText(page, "Run fan-out");
-  await waitForCeremonyParticipants();
+  await waitDuringIdle("refinement ceremony participants complete", () => waitForCeremonyParticipants());
   await refresh(page);
   await page.getByText("Agent consensus").first().waitFor({ timeout: 20_000 });
+  markTimeline("refinement consensus visible");
   await pause(1000);
 
   await clickByText(page, "Daily triage");
   await clickByText(page, "Run fan-out");
-  await waitForCeremonyCount(2);
-  await waitForCeremonyParticipants();
+  await waitDuringIdle("daily triage ceremony starts", () => waitForCeremonyCount(2));
+  await waitDuringIdle("daily triage participants complete", () => waitForCeremonyParticipants());
   await refresh(page);
+  markTimeline("daily triage complete");
   await pause(1000);
 
   await clickByText(page, "Cockpit");
@@ -218,14 +238,17 @@ async function runWalkthrough(page, appUrl) {
   await page.getByText("Ceremony proposals").first().waitFor();
   await page.getByText("Blocked").first().waitFor();
   await openDeveloperRunProof(page);
+  markTimeline("developer run proof visible");
   await pause(2200);
   await clickFirstDecisionApply(page);
-  await waitForAppliedCeremony();
+  await waitDuringIdle("operator-applied ceremony proposal persists", () => waitForAppliedCeremony());
   await refresh(page);
+  markTimeline("ceremony proposal applied");
   await pause(900);
 
   await page.getByText("Activity").first().waitFor();
   await page.getByText("Artifacts").first().waitFor();
+  markTimeline("activity and artifacts visible");
   await pause(1000);
 }
 
@@ -235,6 +258,7 @@ async function createTicketFromUi(page, { title, brief }) {
   await fillByName(page, "brief", brief);
   await clickByText(page, "Create ticket");
   await page.getByText(title).first().waitFor();
+  markTimeline(`created ticket: ${title}`);
   await pause(700);
 }
 
@@ -246,21 +270,26 @@ async function runTicketLoopFromUi(page, title) {
   await page.getByText("Start developer lane").first().waitFor();
   await fillByName(page, "summary", "Operator starts the real developer agent.");
   await clickByText(page, "Dispatch agent");
-  await waitForTicketState(title, "WORKING", 12_000);
+  await waitDuringIdle(`${title} dispatch reaches working`, () => waitForTicketState(title, "WORKING", 12_000));
   await revealTicketState(page, title, "Working");
+  markTimeline(`${title} working`);
   await pause(1800);
-  await waitForTicketState(title, "REVIEWING", 30_000);
+  await waitDuringIdle(`${title} developer finishes`, () => waitForTicketState(title, "REVIEWING", 30_000));
   await revealTicketState(page, title, "Reviewing");
+  markTimeline(`${title} reviewing`);
   await pause(1800);
-  await waitForTicketState(title, "VALIDATING", 30_000);
+  await waitDuringIdle(`${title} reviewer finishes`, () => waitForTicketState(title, "VALIDATING", 30_000));
   await revealTicketState(page, title, "Validating");
+  markTimeline(`${title} validating`);
   await pause(1800);
-  await waitForTicketState(title, "READY_TO_MERGE", 30_000);
+  await waitDuringIdle(`${title} validator finishes`, () => waitForTicketState(title, "READY_TO_MERGE", 30_000));
   await revealTicketState(page, title, "Ready to merge");
+  markTimeline(`${title} ready to merge`);
   await pause(1400);
-  await mergeDriver.pollOnce();
-  await waitForTicketState(title, "DONE", 30_000);
+  await waitDuringIdle(`${title} merge lands`, () => mergeDriver.pollOnce());
+  await waitDuringIdle(`${title} merge state reaches done`, () => waitForTicketState(title, "DONE", 30_000));
   await revealTicketState(page, title, "Done");
+  markTimeline(`${title} done`);
   await pause(1400);
   await closeTicketDetail(page);
   await pause(500);
@@ -448,6 +477,7 @@ function validatorCommand() {
         sleep(2600);
         console.log("[agent] run local validation check");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".validation.log", "validator ran local evidence check at " + new Date().toISOString() + "\\nlocal validation passed\\n");
+        fs.writeFileSync(process.env.FLOOP_RESULT_PATH + ".demo.md", "# Usage demo evidence\\n\\nValidator confirmed the demo dashboard artifact exists and can be reviewed from Floop.\\n");
         console.log("[agent] write passed validation result");
         fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
           outcome: "completed",
@@ -457,7 +487,10 @@ function validatorCommand() {
             summaryMd: "Validator agent accepted the reviewer-approved change.",
             commandProfile: "ci",
             commands: ["local demo validation"],
-            artifacts: [{ kind: "log", label: "Validator output", uri: "file://" + process.env.FLOOP_RESULT_PATH + ".validation.log" }]
+            artifacts: [
+              { kind: "log", label: "Validator output", uri: "file://" + process.env.FLOOP_RESULT_PATH + ".validation.log" },
+              { kind: "demo", label: "Usage demo evidence", uri: "file://" + process.env.FLOOP_RESULT_PATH + ".demo.md", metadata: { demoEvidence: true } }
+            ]
           }
         }));
         }
@@ -646,6 +679,11 @@ function collectProof() {
     ceremonyRuns,
     artifacts,
     runObservability,
+    timeline: {
+      ...timeline,
+      idleDefinition: BIG_WORK_IDLE_DEFINITION,
+      trimSuggestion: buildTrimSuggestion(timeline.idleRanges, elapsedSeconds()),
+    },
     targetRepoHead: existsSync(targetRepoPath)
       ? execFileSync("git", ["-C", targetRepoPath, "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim()
       : "",
@@ -683,14 +721,14 @@ function emptyRunObservability() {
 }
 
 async function fillByName(page, name, value) {
-  const locator = page.locator(`[name="${name}"]`).last();
+  const locator = page.locator(`[name="${name}"]:visible`).last();
   await moveTo(page, locator);
   await locator.fill(value);
   await pause(180);
 }
 
 async function selectByName(page, name, value) {
-  const locator = page.locator(`[name="${name}"]`).last();
+  const locator = page.locator(`[name="${name}"]:visible`).last();
   await moveTo(page, locator);
   await locator.selectOption(value);
   await pause(180);
@@ -722,9 +760,7 @@ async function openDeveloperRunProof(page) {
   const developerRun = page.locator(".run-subway-item").filter({ hasText: "developer iteration 1" }).locator(".run-subway-main").first();
   await moveTo(page, developerRun);
   await developerRun.click();
-  const proofDock = page.locator(".log-dock").first();
-  await proofDock.waitFor({ state: "visible", timeout: 5000 });
-  const traceSummary = proofDock.locator(".agent-trace-summary").first();
+  const traceSummary = page.locator(".run-subway-item").filter({ hasText: "developer iteration 1" }).locator(".agent-trace-summary").first();
   await traceSummary.waitFor({ state: "visible", timeout: 5000 });
   await traceSummary.scrollIntoViewIfNeeded();
 }
@@ -732,6 +768,30 @@ async function openDeveloperRunProof(page) {
 async function refresh(page) {
   await clickByText(page, "Refresh");
   await pause(500);
+}
+
+async function waitDuringIdle(label, action) {
+  const range = {
+    label,
+    startSeconds: elapsedSeconds(),
+    endSeconds: 0,
+  };
+  try {
+    return await action();
+  } finally {
+    range.endSeconds = elapsedSeconds();
+    if (range.endSeconds - range.startSeconds > 0.5) {
+      timeline.idleRanges.push(range);
+    }
+  }
+}
+
+function markTimeline(label) {
+  timeline.marks.push({ label, seconds: elapsedSeconds() });
+}
+
+function elapsedSeconds() {
+  return Number(((Date.now() - recordingStartedAt) / 1000).toFixed(3));
 }
 
 async function moveTo(page, locator) {
@@ -775,16 +835,65 @@ async function installVisibleCursor(page) {
   });
 }
 
-function finalizeVideo(dir) {
+function finalizeVideo(dir, trimSuggestion = [], recordingDurationSeconds = 0) {
   const video = readdirSync(dir).find((entry) => entry.endsWith(".webm"));
   if (!video) {
     throw new Error(`No Playwright video found in ${dir}`);
   }
   const source = join(dir, video);
   const target = join(dir, "floop-usage-demo.webm");
-  renameSync(source, target);
+  const rawTarget = join(dir, "floop-usage-demo.raw.webm");
+  const trimMetadata = buildTrimMetadata({
+    recordingDurationSeconds,
+    idleRanges: timeline.idleRanges,
+    trimSuggestion,
+  });
+  writeFileSync(join(dir, "trim-ranges.json"), `${JSON.stringify(trimMetadata, null, 2)}\n`, "utf8");
+  if (trimSuggestion.length === 0) {
+    renameSync(source, target);
+    copyFileSync(target, resolve(outputRoot, "floop-usage-demo-latest.webm"));
+    return { videoPath: target, trimMetadata };
+  }
+  renameSync(source, rawTarget);
+  try {
+    renderTrimmedVideo(rawTarget, target, trimSuggestion, recordingDurationSeconds);
+  } catch (error) {
+    console.warn(`Could not render trimmed usage demo; keeping raw recording: ${error.message}`);
+    copyFileSync(rawTarget, resolve(outputRoot, "floop-usage-demo-latest.webm"));
+    return { videoPath: rawTarget, trimMetadata: { ...trimMetadata, trimmedDurationSeconds: recordingDurationSeconds, cutSeconds: 0 } };
+  }
   copyFileSync(target, resolve(outputRoot, "floop-usage-demo-latest.webm"));
-  return target;
+  return { videoPath: target, trimMetadata };
+}
+
+function renderTrimmedVideo(source, destination, trimSuggestion, recordingDurationSeconds) {
+  const keepRanges = buildKeepRanges(trimSuggestion, recordingDurationSeconds);
+  if (keepRanges.length === 0) {
+    throw new Error("idle ranges removed the full recording");
+  }
+  const filter = buildTrimFilter(keepRanges);
+  writeFileSync(join(dirname(destination), "trim-filter.txt"), `${filter}\n`, "utf8");
+  execFileSync(
+    "ffmpeg",
+    ["-y", "-i", source, "-filter_complex", filter, "-map", "[v]", "-an", "-c:v", "libvpx-vp9", "-b:v", "1.8M", destination],
+    { stdio: "ignore" },
+  );
+}
+
+function buildTrimFilter(keepRanges) {
+  const trimFilters = keepRanges
+    .map((range, index) => {
+      const start = formatSeconds(range.start);
+      const end = Number.isFinite(range.end) ? `:end=${formatSeconds(range.end)}` : "";
+      return `[0:v]trim=start=${start}${end},setpts=PTS-STARTPTS[v${index}]`;
+    })
+    .join(";");
+  const concatInputs = keepRanges.map((_, index) => `[v${index}]`).join("");
+  return `${trimFilters};${concatInputs}concat=n=${keepRanges.length}:v=1:a=0[v]`;
+}
+
+function formatSeconds(value) {
+  return Number(value).toFixed(3);
 }
 
 function openRecording(videoPath) {

@@ -3,13 +3,13 @@ export const BIG_WORK_IDLE_DEFINITION =
 
 const IDLE_CUT_BUFFER_SECONDS = 0.25;
 const IDLE_CUT_MERGE_GAP_SECONDS = 1.5;
-const MIN_IDLE_CUT_SECONDS = 0.75;
-const INTRO_KEEP_SECONDS = 36;
-const FINAL_KEEP_SECONDS = 38;
-const TRANSITION_PRE_SECONDS = 1.25;
-const TRANSITION_START_POST_SECONDS = 2.5;
-const TRANSITION_END_PRE_SECONDS = 2.5;
-const TRANSITION_END_POST_SECONDS = 3.5;
+const MIN_IDLE_CUT_SECONDS = 0.5;
+const INTRO_KEEP_SECONDS = 12;
+const FINAL_KEEP_SECONDS = 8;
+const TRANSITION_PRE_SECONDS = 1;
+const TRANSITION_START_POST_SECONDS = 1.25;
+const TRANSITION_END_PRE_SECONDS = 1;
+const TRANSITION_END_POST_SECONDS = 1.25;
 
 export function buildTrimSuggestion(idleRanges, recordingDurationSeconds = 0) {
   const keepRanges = buildVisibleTransitionKeepRanges(idleRanges, recordingDurationSeconds);
