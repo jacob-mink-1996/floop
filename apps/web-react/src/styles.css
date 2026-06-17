@@ -1482,6 +1482,39 @@ h3 {
   gap: 10px;
 }
 
+.lifecycle-reason {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  padding: 10px;
+  background: var(--panel);
+}
+
+.lifecycle-reason span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.lifecycle-reason strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 14px;
+}
+
+.lifecycle-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lifecycle-evidence span {
+  border: 1px solid var(--line);
+  padding: 4px 6px;
+  background: var(--panel-soft);
+}
+
 .proposal-list {
   display: grid;
   gap: 8px;

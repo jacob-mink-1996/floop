@@ -987,14 +987,14 @@ function ProductRunOverview({
   const summary = project?.board || {};
   const automation = policy?.ceremonyAutomation;
   const active = policy?.interactionMode === "fully_autonomous" || policy?.interactionMode === "autopilot" || automation?.enabled;
-  const cadence = automation?.triggers || {};
-  const cadenceItems = [
-    { key: "refinement", label: "Refine", minutes: cadence.refinement?.minIntervalMinutes || 10 },
-    { key: "planning", label: "Plan", minutes: cadence.planning?.minIntervalMinutes || 15 },
-    { key: "daily_triage", label: "Check-in", minutes: cadence.daily_triage?.minIntervalMinutes || 30 },
-    { key: "review_demo_prep", label: "Demo", minutes: cadence.review_demo_prep?.minIntervalMinutes || 30 },
-    { key: "work_generation", label: "New work", minutes: cadence.work_generation?.minIntervalMinutes || 60 },
-    { key: "retro", label: "Retro", minutes: cadence.retro?.minIntervalMinutes || 180 },
+  const triggers = automation?.triggers || {};
+  const triggerItems = [
+    { key: "refinement", label: "Refine", minutes: triggers.refinement?.minIntervalMinutes || 10 },
+    { key: "planning", label: "Plan", minutes: triggers.planning?.minIntervalMinutes || 15 },
+    { key: "daily_triage", label: "Check-in", minutes: triggers.daily_triage?.minIntervalMinutes || 30 },
+    { key: "review_demo_prep", label: "Demo", minutes: triggers.review_demo_prep?.minIntervalMinutes || 30 },
+    { key: "work_generation", label: "New work", minutes: triggers.work_generation?.minIntervalMinutes || 60 },
+    { key: "retro", label: "Retro", minutes: triggers.retro?.minIntervalMinutes || 180 },
   ];
   const running = runObservability?.summary.running || 0;
   const evidence = (summary.REVIEWING || 0) + (summary.VALIDATING || 0);
@@ -1016,9 +1016,9 @@ function ProductRunOverview({
         ]}
       />
       <div className="product-run-cadence">
-        {cadenceItems.map((item) => (
+        {triggerItems.map((item) => (
           <span key={item.key}>
-            <strong>{item.minutes}m</strong>
+            <strong>{item.minutes}m min</strong>
             {item.label}
           </span>
         ))}
@@ -1459,6 +1459,7 @@ function CeremoniesPanel({
           <span>{latest ? prettyState(latest.status) : "None"}</span>
         </div>
         <CeremonyConstellation run={displayRun} />
+        <CeremonyLifecycleReason run={displayRun} />
         <div className="proposal-toolbar">
           <StatusMeter
             items={[
@@ -1554,6 +1555,31 @@ function CeremoniesPanel({
             </article>
           ))}
         </div>
+      </div>
+    </section>
+  );
+}
+
+function CeremonyLifecycleReason({ run }: { run: CeremonyRun }) {
+  const reason = isRecord(run.scope?.lifecycleReason) ? run.scope.lifecycleReason : null;
+  if (!reason) {
+    return null;
+  }
+  const summary = typeof reason.summary === "string" ? reason.summary : "Lifecycle trigger started this ceremony.";
+  const code = typeof reason.code === "string" ? reason.code : "lifecycle";
+  const evidence = isRecord(reason.evidence) ? reason.evidence : {};
+  const evidenceItems = Object.entries(evidence).filter(([, value]) => typeof value === "number" || typeof value === "string");
+  return (
+    <section className="lifecycle-reason" aria-label="Ceremony lifecycle reason">
+      <div>
+        <span>Why this ran</span>
+        <strong>{summary}</strong>
+      </div>
+      <div className="lifecycle-evidence">
+        <span>{prettyState(code)}</span>
+        {evidenceItems.slice(0, 4).map(([key, value]) => (
+          <span key={key}>{prettyState(key)} {String(value)}</span>
+        ))}
       </div>
     </section>
   );

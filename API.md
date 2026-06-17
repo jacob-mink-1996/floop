@@ -103,6 +103,10 @@ creates ceremony participant records; the participant driver runs those role
 profiles in parallel and appends an agent-consensus note proposal after every
 participant completes.
 
+Automated ceremony runs set `scope.trigger` to `lifecycle` and include
+`scope.lifecycleReason` with a reason code, summary, and evidence counts for why
+the ceremony ran.
+
 ### `GET /api/v1/projects/:projectId/ceremonies/:runId`
 
 Return a ceremony run with proposals.
@@ -160,7 +164,7 @@ Default trigger intent:
 - `planning`: ready queue changes or execution capacity opens
 - `daily_triage`: blocked, rework, or stale active work
 - `review_demo_prep`: done or merge-ready work appears
-- `work_generation`: late-sprint or low-backlog product expansion
+- `work_generation`: low ready backlog after shipped work
 - `retro`: repeated blocked/rework patterns or cycle completion
 - `agentCreatedTicketDefaultState`
 

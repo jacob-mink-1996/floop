@@ -54,7 +54,11 @@ class CeremonyAutomationDriver {
       }
 
       for (const [type, trigger] of Object.entries(automation.triggers || {})) {
-        if (!trigger?.enabled || !shouldRunCeremony(this.store, project, type, trigger)) {
+        if (!trigger?.enabled) {
+          continue;
+        }
+        const lifecycleReason = evaluateCeremonyLifecycle(this.store, project, type, trigger);
+        if (!lifecycleReason) {
           continue;
         }
         if (!hasMinIntervalElapsed(this.store, project.id, type, trigger.minIntervalMinutes || 30)) {
@@ -67,8 +71,9 @@ class CeremonyAutomationDriver {
           deciderRole: trigger.deciderRole,
           consensusPolicy: trigger.consensusPolicy,
           scope: {
-            trigger: "automation",
+            trigger: "lifecycle",
             triggerConfig: trigger,
+            lifecycleReason,
             automationMode: automation.mode || "operator_approved",
           },
           createdByKind: "system",
@@ -88,43 +93,100 @@ class CeremonyAutomationDriver {
   }
 }
 
-function shouldRunCeremony(store, project, type, trigger) {
+export function evaluateCeremonyLifecycle(store, project, type, trigger = {}) {
   const board = store.getProjectBoard(project.id);
   if (!board) {
-    return false;
+    return null;
   }
   const tickets = board.columns.flatMap((column) => column.tickets);
+  const counts = countTicketsByState(tickets);
+  const active = tickets.filter((ticket) => ["WORKING", "REVIEWING", "VALIDATING"].includes(ticket.state));
+  const blockedOrRework = tickets.filter((ticket) => ticket.state === "BLOCKED" || ticket.state === "REWORK");
+  const staleActive = active.filter((ticket) => isStaleActiveTicket(ticket, Number(trigger.onStaleActiveWorkHours || 24)));
+  const doneOrMergeReady = tickets.filter((ticket) => ticket.state === "READY_TO_MERGE" || ticket.state === "DONE");
+  const readyBacklog = tickets.filter((ticket) => ["READY", "PROPOSED"].includes(ticket.state));
+  const draftOrProposed = tickets.filter((ticket) => ["DRAFT", "PROPOSED"].includes(ticket.state));
 
   switch (type) {
     case "refinement":
-      return tickets.some((ticket) => ["DRAFT", "PROPOSED"].includes(ticket.state));
+      return draftOrProposed.length > 0
+        ? lifecycleReason("messy_backlog_needs_refinement", `${draftOrProposed.length} draft/proposed ticket(s) need refinement before planning.`, {
+            draft: counts.DRAFT || 0,
+            proposed: counts.PROPOSED || 0,
+          })
+        : null;
     case "planning":
-      return Boolean(trigger.onReadyQueueChanged || trigger.onCapacityAvailable)
-        && tickets.some((ticket) => ticket.state === "READY" || ticket.state === "PROPOSED");
+      return Boolean(trigger.onReadyQueueChanged || trigger.onCapacityAvailable) && readyBacklog.length > 0
+        ? lifecycleReason("ready_backlog_needs_planning", `${readyBacklog.length} ready/proposed ticket(s) can be planned against available capacity.`, {
+            ready: counts.READY || 0,
+            proposed: counts.PROPOSED || 0,
+            maxParallelExecutions: project.policy?.maxParallelExecutions || 1,
+          })
+        : null;
     case "daily_triage":
-      return (
-        (Boolean(trigger.onActiveWorkCheckIn) &&
-          tickets.some((ticket) => ["WORKING", "REVIEWING", "VALIDATING"].includes(ticket.state))) ||
-        tickets.some((ticket) => ticket.state === "BLOCKED" || ticket.state === "REWORK") ||
-        tickets.some((ticket) => isStaleActiveTicket(ticket, Number(trigger.onStaleActiveWorkHours || 24)))
-      );
+      if (blockedOrRework.length > 0) {
+        return lifecycleReason("blocked_or_rework_needs_triage", `${blockedOrRework.length} blocked/rework ticket(s) need an unblock decision.`, {
+          blocked: counts.BLOCKED || 0,
+          rework: counts.REWORK || 0,
+        });
+      }
+      if (staleActive.length > 0) {
+        return lifecycleReason("stale_active_work_needs_check_in", `${staleActive.length} active ticket(s) have gone stale.`, {
+          staleActive: staleActive.length,
+          staleHours: Number(trigger.onStaleActiveWorkHours || 24),
+        });
+      }
+      return Boolean(trigger.onActiveWorkCheckIn) && active.length > 0
+        ? lifecycleReason("active_work_needs_check_in", `${active.length} active ticket(s) are in flight and need a check-in.`, {
+            working: counts.WORKING || 0,
+            reviewing: counts.REVIEWING || 0,
+            validating: counts.VALIDATING || 0,
+          })
+        : null;
     case "review_demo_prep":
-      return tickets.some((ticket) => ticket.state === "READY_TO_MERGE" || ticket.state === "DONE");
+      return doneOrMergeReady.length > 0
+        ? lifecycleReason("done_work_needs_demo_prep", `${doneOrMergeReady.length} done/merge-ready ticket(s) need demo preparation.`, {
+            readyToMerge: counts.READY_TO_MERGE || 0,
+            done: counts.DONE || 0,
+          })
+        : null;
     case "work_generation": {
-      const readyBacklog = tickets.filter((ticket) => ["READY", "PROPOSED"].includes(ticket.state)).length;
       const threshold = Number(trigger.onReadyBacklogBelow ?? 2);
-      return Boolean(trigger.onSprintEndPlanning)
-        && readyBacklog <= threshold
-        && tickets.some((ticket) => ticket.state === "READY_TO_MERGE" || ticket.state === "DONE");
+      return Boolean(trigger.onSprintEndPlanning) && readyBacklog.length <= threshold && doneOrMergeReady.length > 0
+        ? lifecycleReason("low_backlog_after_shipped_work_needs_generation", `Ready backlog is ${readyBacklog.length}, at or below ${threshold}, after shipped work.`, {
+            readyBacklog: readyBacklog.length,
+            threshold,
+            doneOrMergeReady: doneOrMergeReady.length,
+          })
+        : null;
     }
     case "retro":
-      return (
-        tickets.filter((ticket) => ticket.state === "BLOCKED" || ticket.state === "REWORK").length >=
-        Number(trigger.onRepeatedBlockedOrReworkCount || 3)
-      );
+      return blockedOrRework.length >= Number(trigger.onRepeatedBlockedOrReworkCount || 3)
+        ? lifecycleReason("repeated_blocked_or_rework_needs_retro", `${blockedOrRework.length} blocked/rework ticket(s) indicate a systemic loop.`, {
+            blocked: counts.BLOCKED || 0,
+            rework: counts.REWORK || 0,
+            threshold: Number(trigger.onRepeatedBlockedOrReworkCount || 3),
+          })
+        : null;
     default:
-      return false;
+      return null;
   }
+}
+
+function countTicketsByState(tickets) {
+  const counts = {};
+  for (const ticket of tickets) {
+    counts[ticket.state] = (counts[ticket.state] || 0) + 1;
+  }
+  return counts;
+}
+
+function lifecycleReason(code, summary, evidence = {}) {
+  return {
+    code,
+    summary,
+    evidence,
+  };
 }
 
 function isStaleActiveTicket(ticket, staleHours) {

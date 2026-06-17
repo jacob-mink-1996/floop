@@ -90,7 +90,9 @@ Suggested fields:
 profile. The default profile is operator-approved and includes sensible lifecycle
 triggers for refinement, planning, daily triage, review/demo prep, work
 generation, and retro. Each trigger can declare whether it is enabled, a minimum
-interval, participant roles, decider role, and consensus policy.
+interval throttle, participant roles, decider role, and consensus policy.
+Automatically-created ceremony runs store the evaluated lifecycle reason in
+`scope_json`.
 
 ### `agent_profiles`
 

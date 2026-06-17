@@ -352,7 +352,7 @@ function triggerSummary(type: CeremonyType, trigger: CeremonyAutomationTrigger) 
     return "Done or merge-ready work appears";
   }
   if (type === "work_generation") {
-    return `Sprint-end planning when ready backlog is below ${Number(trigger.onReadyBacklogBelow ?? 2) + 1}`;
+    return `Low ready backlog after shipped work, threshold ${Number(trigger.onReadyBacklogBelow ?? 2)}`;
   }
   return `Repeated blocked/rework patterns, ${trigger.onRepeatedBlockedOrReworkCount || 3}+ signals`;
 }
@@ -589,7 +589,7 @@ function PolicyForm({
                   </span>
                 </label>
                 <label>
-                  <span>Min</span>
+                  <span>Throttle</span>
                   <input
                     name={`ceremonyTrigger:${type}:minIntervalMinutes`}
                     type="number"
