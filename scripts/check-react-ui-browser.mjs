@@ -27,6 +27,7 @@ store.createAgentMessage("project_floop", {
   body: "The ceremony participant path should be covered with a real adapter fixture.",
   metadata: { check: "browser" },
 });
+const mergeRepairTicket = seedMergeRepairTicket();
 const server = createFloopServer({ store });
 let driver;
 let sessionId = "";
@@ -131,6 +132,40 @@ try {
   await assertScript("document.querySelectorAll('.consensus-cell').length >= 4", "ceremony consensus heatmap is visible");
   await clickText("Board");
 
+  await clickText("Refresh");
+  await waitForText("Browser merge conflict repair");
+  await assertScript(
+    `(() => {
+      const card = Array.from(document.querySelectorAll(".ticket-card")).find((item) => item.innerText.includes("Browser merge conflict repair"));
+      return card?.innerText.includes("Merge") && card.innerText.includes("Rework");
+    })()`,
+    "merge rework ticket card exposes merge conflict state",
+  );
+  await clickTicket("Browser merge conflict repair");
+  await waitForText("Route rework");
+  await waitForText("Merge conflicted during browser UI verification");
+  await waitForText("MERGE");
+  await openDisclosure("Merge");
+  await waitForText("Merge Readiness");
+  await assertScript(
+    "document.body.innerText.includes('rework') || document.body.innerText.includes('Rework')",
+    "ticket detail merge section explains rework state",
+  );
+  await setFormValue("Dispatch agent", "role", "integrator");
+  await setFormValue("Dispatch agent", "summary", "Integrator should repair the merge conflict from UI smoke.");
+  await clickText("Dispatch agent");
+  await waitForText("EXECUTION DOCK");
+  await waitForText("integrator iteration");
+  await clickText("Close ticket detail");
+  await waitForBoardTicket(
+    appUrl,
+    "project_floop",
+    mergeRepairTicket.id,
+    (ticket) => ticket.activeExecutionRole === "" && ticket.activeExecutionCount === 0,
+    "merge repair ticket close cancels active integrator repair",
+  );
+  await clickText("Refresh");
+
   await clickText("Cockpit");
   await waitForText("Attention");
   await assertScript("document.body.innerText.includes('Add fixture coverage for ceremony fan-out')", "agent inbox suggestion renders in Cockpit attention");
@@ -169,13 +204,15 @@ try {
   await setFormValue("Create ticket", "repoId", "repo_project_floop_qa_repo");
   await clickText("Create ticket");
   await waitForText("Browser QA ticket");
+  const browserQaTicket = store.listTickets("project_floop").find((ticket) => ticket.title === "Browser QA ticket");
+  assert.ok(browserQaTicket, "Browser QA ticket was created");
 
   await waitForScript("document.querySelector('.ticket-detail') !== null");
   await waitForText("Start developer lane");
   await assertScript("document.querySelector('.ticket-detail .read-model') !== null", "ticket plan is read-only by default");
   await openDisclosure("Advanced");
   await waitForText("Danger Zone");
-  await waitForText("Type FLOOP-4 to confirm");
+  await waitForText(`Type ${browserQaTicket.key} to confirm`);
   await assertScript("document.querySelector('[name=\"restartConfirmation\"]') !== null", "ticket restart confirmation is available");
   await assertScript("Array.from(document.querySelectorAll('button')).some((button) => button.innerText.trim() === 'Restart ticket' && button.disabled)", "restart button is disabled before exact ticket key confirmation");
   await assertScript("document.querySelector('.ticket-detail [name=\"latestSummary\"]') === null", "ticket edit fields are not mounted before edit mode");
@@ -194,7 +231,7 @@ try {
     actor: "developer",
     source: "browser-ui-check",
     intent: "request_input",
-    target: { ticketId: "ticket_project_floop_4" },
+    target: { ticketId: browserQaTicket.id },
     summary: "Confirm launch constraints",
     body: "The agent needs structured launch details before continuing.",
     metadata: {
@@ -223,7 +260,7 @@ try {
     actor: "developer",
     source: "browser-ui-check",
     intent: "comment_on_ticket",
-    target: { ticketId: "ticket_project_floop_4", executionId: "browser-ui-check-execution" },
+    target: { ticketId: browserQaTicket.id, executionId: "browser-ui-check-execution" },
     summary: "Confirm launch constraints",
     body: "The agent needs structured launch details before continuing.",
     metadata: {
@@ -266,7 +303,7 @@ try {
   await waitForBoardTicket(
     appUrl,
     "project_floop",
-    "ticket_project_floop_4",
+    browserQaTicket.id,
     (ticket) => ticket.activeExecutionCount === 0 && ticket.activeExecutionRole === "",
     "ticket close cancels active work and clears board scan state",
   );
@@ -274,7 +311,7 @@ try {
   await clickTicket("Browser QA ticket edited");
   await waitForText("FAILED");
   await assertScript("!document.body.innerText.includes('Stop agent') && !document.body.innerText.includes('QUEUED')", "ticket detail close clears active work view");
-  await transitionTicket(appUrl, "project_floop", "ticket_project_floop_4", "DONE");
+  await transitionTicket(appUrl, "project_floop", browserQaTicket.id, "DONE");
   await clickText("Close ticket detail");
   await clickText("Refresh");
   await waitForText("Done");
@@ -731,4 +768,66 @@ function xpathString(value) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function seedMergeRepairTicket() {
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: false,
+    requireHumanApprovalBeforeMerge: false,
+    interactionMode: "operator_approved",
+  });
+  const ticket = store.updateTicket("project_floop", "ticket_project_floop_1", {
+    title: "Browser merge conflict repair",
+    brief: "Exercise merge queue conflict state and integrator repair from the React UI.",
+    acceptanceCriteriaMd: "- Merge conflict is visible\n- Integrator repair can be dispatched from ticket detail",
+    definitionOfDoneMd: "- Ticket detail shows merge rework context\n- Dispatch starts an integrator repair lane",
+    assignedRole: "integrator",
+    priority: "high",
+    repoTargets: [
+      {
+        repoId: "repo_project_floop_floop",
+        baseRef: "main",
+        branchName: "browser-merge-conflict-repair",
+        targetScopeMd: "UI smoke fixture for merge conflict repair.",
+      },
+    ],
+  });
+  store.transitionTicket("project_floop", ticket.id, {
+    targetState: "READY",
+    reason: "Reset seeded ticket for merge repair UI proof.",
+    reasonCode: "browser_verifier_merge_fixture_reset",
+    reasonSource: "browser-ui-check",
+  });
+  const implementation = store.createExecution("project_floop", ticket.id, {
+    role: "developer",
+    reason: "Prepare merge conflict UI fixture.",
+  });
+  store.updateExecutionHarnessSession("project_floop", implementation.id, {
+    harnessKind: "shell",
+    externalThreadId: "browser-ui-non-resumable-thread",
+    harnessCapabilities: ["queued_context"],
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation reached merge readiness for UI fixture.",
+  });
+  const mergeRun = store.startMergeRun("project_floop", ticket.id, {
+    strategy: "squash",
+    approvedByKind: "system",
+    approvedByRef: "browser-ui-check",
+    claimToken: "browser-ui-merge",
+  });
+  store.completeMergeRun("project_floop", mergeRun.id, {
+    status: "rework",
+    summaryMd: "Merge conflicted during browser UI verification. Route an integrator repair with merge evidence.",
+    artifacts: [
+      {
+        kind: "report",
+        label: "Browser merge conflict report",
+        uri: "file:///tmp/browser-merge-conflict-report.md",
+      },
+    ],
+  });
+  return store.getTicket("project_floop", ticket.id);
 }
