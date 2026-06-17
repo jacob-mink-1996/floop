@@ -39,6 +39,7 @@
     "demo:new-features:codex": "npm run build:web && node scripts/record-big-work-demo.mjs --codex",
     "demo:new-features:codex:record": "npm run build:web && node scripts/record-big-work-demo.mjs --codex --record",
     "demo:new-features:codex:record:open": "npm run build:web && node scripts/record-big-work-demo.mjs --codex --record --open",
+    "proof:review-rework-loop": "node scripts/proof-review-rework-loop.mjs",
     "proof:merge-rework:codex": "node scripts/proof-merge-rework-codex.mjs",
     "verify:mvp": "node scripts/verify-mvp-live.mjs",
     "start": "npm --workspace services/api run start",
