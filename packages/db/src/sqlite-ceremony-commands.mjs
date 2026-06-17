@@ -637,7 +637,9 @@ function buildBacklogCleanupProposal(candidates, timestamp) {
       actions.push({
         type: "combine",
         keeperTicketId: keeper.id,
+        keeperTicketKey: keeper.key,
         duplicateTicketId: duplicate.id,
+        duplicateTicketKey: duplicate.key,
         reason: `${duplicate.key} appears to overlap ${keeper.key}; refinement should keep one clearer backlog item.`,
         keeperPatch: {
           brief: mergeBacklogText(keeper.brief, duplicate.brief, duplicate),

@@ -58,6 +58,7 @@ import type {
   AgentMessage,
   Board,
   BoardTicket,
+  CeremonyProposal,
   CeremonyRun,
   CeremonyType,
   EventRecord,
@@ -1686,6 +1687,7 @@ function CeremonyProposalBuckets({
             <div>
               <span>{prettyState(proposal.kind)} · {proposal.ticketKey || prettyCeremony(run.type)}</span>
               <strong>{proposal.summary}</strong>
+              <ProposalPayloadView proposal={proposal} />
               <details className="inline-details">
                 <summary>Payload</summary>
                 <code>{summarizeProposalPayload(proposal.payload)}</code>
@@ -1703,6 +1705,72 @@ function CeremonyProposalBuckets({
       </div>
     </section>
   );
+}
+
+function ProposalPayloadView({ proposal }: { proposal: CeremonyProposal }) {
+  if (proposal.kind !== "ticket_backlog_cleanup") {
+    return null;
+  }
+  const actions = Array.isArray(proposal.payload?.actions)
+    ? proposal.payload.actions.filter((action): action is Record<string, unknown> => Boolean(action && typeof action === "object"))
+    : [];
+  if (actions.length === 0) {
+    return <p className="proposal-note">No cleanup actions proposed.</p>;
+  }
+  return (
+    <div className="cleanup-action-list" aria-label="Backlog cleanup actions">
+      {actions.map((action, index) => (
+        <CleanupActionRow key={`${String(action.type || "action")}-${index}`} action={action} />
+      ))}
+    </div>
+  );
+}
+
+function CleanupActionRow({ action }: { action: Record<string, unknown> }) {
+  const actionType = String(action.type || "");
+  if (actionType === "combine") {
+    const keeper = String(action.keeperTicketKey || action.keeperTicketId || "");
+    const duplicate = String(action.duplicateTicketKey || action.duplicateTicketId || "");
+    return (
+      <div className="cleanup-action-row">
+        <span className="cleanup-action-mark cleanup-action-combine"><Check size={14} /></span>
+        <div>
+          <strong>Combine overlap</strong>
+          <p>Keep {shortTicketId(keeper)} and cancel {shortTicketId(duplicate)} as duplicate work.</p>
+          {typeof action.reason === "string" && action.reason ? <small>{action.reason}</small> : null}
+        </div>
+      </div>
+    );
+  }
+  if (actionType === "cancel") {
+    const ticket = String(action.ticketKey || action.ticketId || "");
+    return (
+      <div className="cleanup-action-row">
+        <span className="cleanup-action-mark cleanup-action-cancel"><X size={14} /></span>
+        <div>
+          <strong>Remove from backlog</strong>
+          <p>Cancel {shortTicketId(ticket)} so refinement does not feed unnecessary work into planning.</p>
+          {typeof action.reason === "string" && action.reason ? <small>{action.reason}</small> : null}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="cleanup-action-row">
+      <span className="cleanup-action-mark">?</span>
+      <div>
+        <strong>{prettyState(actionType || "cleanup")}</strong>
+        <p>{typeof action.reason === "string" && action.reason ? action.reason : "Review this cleanup action before applying."}</p>
+      </div>
+    </div>
+  );
+}
+
+function shortTicketId(value: string) {
+  if (!value) return "ticket";
+  const match = value.match(/[A-Z]+-\d+/);
+  if (match) return match[0];
+  return value.replace(/^ticket_[^_]+_/, "ticket ");
 }
 
 function prettyCeremony(type: string) {

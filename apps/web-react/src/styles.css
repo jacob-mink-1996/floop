@@ -1499,6 +1499,65 @@ h3 {
   margin: 3px 0 6px;
 }
 
+.proposal-note {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cleanup-action-list {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 8px;
+}
+
+.cleanup-action-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.cleanup-action-row:first-child {
+  border-top: 0;
+}
+
+.cleanup-action-row strong {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.cleanup-action-row p,
+.cleanup-action-row small {
+  display: block;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.cleanup-action-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.cleanup-action-combine {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+.cleanup-action-cancel {
+  border-color: var(--danger-border);
+  color: var(--danger-border);
+}
+
 .proposal-item code {
   display: block;
   max-width: 100%;
