@@ -420,6 +420,7 @@ function startAutoRoutedLaneExecution({
   ticketId,
   reason,
   resumedFromExecutionId = "",
+  repairRole = "",
   reasonCode = "routine_lane_ready",
   steeringMetadata = {},
 }) {
@@ -436,7 +437,7 @@ function startAutoRoutedLaneExecution({
   } else if (ticket.state === "VALIDATING") {
     nextRole = "validator";
   } else if (ticket.state === "REWORK") {
-    nextRole = resolveReworkExecutionRole(database, projectId, ticket);
+    nextRole = repairRole || resolveReworkExecutionRole(database, projectId, ticket);
   } else {
     return null;
   }
@@ -446,11 +447,11 @@ function startAutoRoutedLaneExecution({
     : null;
   const canUseResumeLineage =
     resumeExecution &&
-    resumeExecution.ticket_id === ticketId &&
-    resumeExecution.role === nextRole;
+    resumeExecution.ticket_id === ticketId;
   const resumeCapabilities = canUseResumeLineage ? JSON.parse(resumeExecution.harness_capabilities_json || "[]") : [];
   const canResumeNativeSession =
     canUseResumeLineage &&
+    resumeExecution.role === nextRole &&
     resumeCapabilities.includes("interrupt_and_resume") &&
     Boolean(resumeExecution.external_thread_id);
 
@@ -488,6 +489,7 @@ function startAutoRoutedLaneExecution({
           ...(canUseResumeLineage
             ? {
                 resumedFromExecutionId: resumeExecution.id,
+                sourceExecutionRole: resumeExecution.role,
               }
             : {}),
           ...(canResumeNativeSession
@@ -526,6 +528,7 @@ function startAutoRoutedLaneExecution({
             steeringMetadata: {
               ...steeringMetadata,
               resumeReasonCode: reasonCode,
+              sourceExecutionRole: resumeExecution.role,
               ...(canResumeNativeSession ? { resumeStrategy: "interrupt_and_resume" } : {}),
             },
           }

@@ -73,37 +73,41 @@ try {
   git(["-C", repoRoot, "add", "conflict.txt"]);
   git(["-C", repoRoot, "commit", "-m", "Create trunk-side conflict"]);
 
-  store.updateRoleProfile(projectId, "developer", {
-    adapter: "codex",
-    model: codexModel,
-    config: {
-      executable: codexExecutable,
-      sandbox: codexSandbox,
-      approvalPolicy: codexApprovalPolicy,
-      promptPreamble: [
-        "This is a focused Floop merge-conflict rework proof.",
-        "The previous developer branch changed conflict.txt to include `developer change`.",
-        "The target branch main independently changed conflict.txt to include `trunk change`.",
-        "A merge attempt should have produced merge rework before this lane starts.",
-        "Resolve the rework by integrating main into the current branch, preserving both lines in conflict.txt.",
-        "After resolution, conflict.txt must contain both `developer change` and `trunk change`.",
-        "Run bounded verification commands such as git status and direct file inspection.",
-        "Commit the resolved branch before writing the required result JSON.",
-      ].join("\n"),
-    },
-  });
+  for (const repairRole of ["developer", "integrator"]) {
+    store.updateRoleProfile(projectId, repairRole, {
+      adapter: "codex",
+      model: codexModel,
+      config: {
+        executable: codexExecutable,
+        sandbox: codexSandbox,
+        approvalPolicy: codexApprovalPolicy,
+        promptPreamble: [
+          "This is a focused Floop merge-conflict rework proof.",
+          "The previous developer branch changed conflict.txt to include `developer change`.",
+          "The target branch main independently changed conflict.txt to include `trunk change`.",
+          "A merge attempt should have produced merge rework before this lane starts.",
+          "Resolve the rework by integrating main into the current branch, preserving both lines in conflict.txt.",
+          "After resolution, conflict.txt must contain both `developer change` and `trunk change`.",
+          "Run bounded verification commands such as git status and direct file inspection.",
+          "Commit the resolved branch before writing the required result JSON.",
+        ].join("\n"),
+      },
+    });
+  }
 
   await mergeDriver.pollOnce();
   const reworkTicket = store.getTicket(projectId, ticketId);
   const reworkRun = reworkTicket.mergeStatus.latestRun;
   assert.equal(reworkTicket.state, "WORKING");
   assert.equal(reworkRun.status, "rework");
-  assert.equal(reworkTicket.executions.filter((execution) => execution.role === "developer").length, 2);
   const reworkExecution = reworkTicket.executions.find(
-    (execution) => execution.role === "developer" && execution.status === "running",
+    (execution) =>
+      !["reviewer", "validator"].includes(execution.role) &&
+      execution.status === "running" &&
+      execution.resumedFromExecutionId === initialExecution.id,
   );
   assert.ok(reworkExecution);
-  assert.equal(reworkExecution.resumedFromExecutionId, initialExecution.id);
+  assert.ok(["developer", "integrator"].includes(reworkExecution.role));
 
   await executionDriver.pollOnce();
   const afterCodex = store.getTicket(projectId, ticketId);
@@ -132,7 +136,8 @@ try {
     [
       "# Merge Rework Codex Proof",
       "",
-      "Focused proof that a merge conflict routes back to the previous developer lane in fully autonomous mode.",
+      "Focused proof that a merge conflict routes to source-session repair or integrator fallback in fully autonomous mode.",
+      `- Repair role: ${reworkExecution.role}`,
       "",
       `- Fixture: ${fixtureRoot}`,
       `- Proof: ${proofPath}`,
@@ -321,7 +326,7 @@ function assertCodexExecutableAvailable(executable) {
 
 function assertCodexReworkCompleted(execution) {
   if (!execution) {
-    assert.fail("Expected a Codex developer rework execution to exist after merge conflict routing.");
+    assert.fail("Expected a Codex merge repair execution to exist after merge conflict routing.");
   }
   if (execution.blockedKind === "codex_auth_required") {
     throw new Error(

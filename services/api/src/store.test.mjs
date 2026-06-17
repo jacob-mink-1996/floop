@@ -2392,15 +2392,68 @@ test("store keeps merge rework lineage without native session resume for non-res
   });
 
   const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
-  const rework = ticket.executions.find((execution) => execution.role === "developer" && execution.status === "running");
+  const rework = ticket.executions.find((execution) => execution.role === "integrator" && execution.status === "running");
   assert.ok(rework);
   assert.equal(rework.resumedFromExecutionId, implementation.id);
   assert.equal(rework.harnessKind, "");
   assert.equal(rework.externalThreadId, "");
   assert.deepEqual(rework.harnessCapabilities, []);
   assert.equal(rework.steeringMetadata.resumeReasonCode, "merge_rework");
+  assert.equal(rework.steeringMetadata.repairStrategy, "integrator_fallback");
+  assert.equal(rework.steeringMetadata.sourceExecutionRole, "developer");
   assert.equal(rework.steeringMetadata.resumeStrategy, undefined);
   assert.equal(rework.worktrees[0].resumedFromWorktreeId, implementation.worktrees[0].id);
+
+  store.close();
+});
+
+test("store suggests integrator merge repair when source session cannot resume in operator-approved mode", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: false,
+    requireHumanApprovalBeforeMerge: false,
+    interactionMode: "operator_approved",
+  });
+
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Prepare operator-approved integrator fallback merge rework test.",
+  });
+  store.updateExecutionHarnessSession("project_floop", implementation.id, {
+    harnessKind: "shell",
+    externalThreadId: "shell-thread-operator-should-not-resume",
+    harnessCapabilities: ["queued_context"],
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation is ready for merge.",
+  });
+
+  const started = store.startMergeRun("project_floop", "ticket_project_floop_2", {
+    strategy: "squash",
+    approvedByKind: "system",
+    approvedByRef: "floop-auto",
+    claimToken: "merge-worker",
+  });
+  store.completeMergeRun("project_floop", started.id, {
+    status: "rework",
+    summaryMd: "Merge conflicted against trunk. Let an integrator repair the branch.",
+  });
+
+  const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+  const suggestion = store
+    .listAgentMessages("project_floop", { intent: "suggest_dispatch" })
+    .find((message) => message.target.ticketId === "ticket_project_floop_2");
+  assert.equal(ticket.state, "REWORK");
+  assert.equal(ticket.executions.filter((execution) => execution.role === "integrator").length, 0);
+  assert.ok(suggestion);
+  assert.equal(suggestion.metadata.role, "integrator");
+  assert.equal(suggestion.metadata.reasonCode, "merge_rework");
+  assert.equal(suggestion.metadata.resumedFromExecutionId, implementation.id);
+  assert.equal(suggestion.metadata.sourceExecutionRole, "developer");
+  assert.equal(suggestion.metadata.harnessKind, undefined);
+  assert.match(suggestion.body, /integrator repair|previous working lane could not resume/i);
 
   store.close();
 });
@@ -2585,11 +2638,13 @@ test("store preserves demo evidence across merge rework and revalidation", () =>
     artifacts: [{ kind: "report", label: "merge conflict summary", uri: "file:///tmp/merge-conflict.json" }],
   });
 
-  const reworkDeveloper = store
+  const reworkRepair = store
     .getTicket("project_floop", "ticket_project_floop_2")
-    .executions.find((execution) => execution.role === "developer" && execution.iteration === 2);
-  assert.ok(reworkDeveloper);
-  store.completeExecution("project_floop", reworkDeveloper.id, {
+    .executions.find((execution) => execution.role === "integrator" && execution.status === "running");
+  assert.ok(reworkRepair);
+  assert.equal(reworkRepair.resumedFromExecutionId, implementation.id);
+  assert.equal(reworkRepair.steeringMetadata.repairStrategy, "integrator_fallback");
+  store.completeExecution("project_floop", reworkRepair.id, {
     outcome: "completed",
     summaryMd: "Resolved merge rework without changing demo behavior.",
   });

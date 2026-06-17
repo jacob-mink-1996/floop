@@ -299,7 +299,7 @@ export function createMergeCommands({
       if (status === "rework") {
         const sourceExecution = database
           .prepare(
-            `select id
+            `select id, role, external_thread_id, harness_capabilities_json
              from executions
              where project_id = ?
                and ticket_id = ?
@@ -308,18 +308,27 @@ export function createMergeCommands({
              limit 1`,
           )
           .get(projectId, mergeRun.ticket_id);
+        const sourceCapabilities = sourceExecution ? JSON.parse(sourceExecution.harness_capabilities_json || "[]") : [];
+        const canResumeSourceSession =
+          sourceExecution &&
+          sourceCapabilities.includes("interrupt_and_resume") &&
+          Boolean(sourceExecution.external_thread_id);
 
         startAutoRoutedLaneExecution?.({
           store: getStore?.(),
           database,
           projectId,
           ticketId: mergeRun.ticket_id,
-          reason: `${ticket.key} merge requested rework; Floop routed the previous working lane with merge evidence.`,
+          reason: canResumeSourceSession
+            ? `${ticket.key} merge requested rework; Floop routed the previous working lane with merge evidence.`
+            : `${ticket.key} merge requested rework; Floop routed integrator repair with merge evidence because the previous working lane could not resume.`,
           resumedFromExecutionId: sourceExecution?.id || "",
+          repairRole: canResumeSourceSession ? sourceExecution.role : "integrator",
           reasonCode: "merge_rework",
           steeringMetadata: {
             mergeRunId,
             mergeStatus: status,
+            repairStrategy: canResumeSourceSession ? "resume_source_session" : "integrator_fallback",
           },
         });
       }
