@@ -194,6 +194,7 @@ export function inferErrorStatus(error) {
     message.startsWith("Invalid dependency type:") ||
     message.startsWith("Invalid interaction mode:") ||
     message.startsWith("Invalid agent message intent:") ||
+    message.startsWith("Invalid external agent action:") ||
     message.startsWith("Invalid agent message status:") ||
     message === "Only input requests can be responded to" ||
     message === "Input request is no longer pending" ||

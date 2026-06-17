@@ -1,6 +1,7 @@
 import {
   parseCreateProjectInput,
   parseCreateAgentMessageInput,
+  parseExternalAgentIngressInput,
   parseRespondAgentMessageInput,
   parseUpdateAgentMessageInput,
   parseUpdateProjectInput,
@@ -67,6 +68,11 @@ export function handleProjectRoute(route, url, body, store) {
       }
       return respondCreated(
         store.createAgentMessage(route.params.projectId, parseCreateAgentMessageInput(body)),
+        "message",
+      );
+    case "projectExternalAgentMessages":
+      return respondCreated(
+        store.createAgentMessage(route.params.projectId, parseExternalAgentIngressInput(body)),
         "message",
       );
     case "projectAgentMessage":

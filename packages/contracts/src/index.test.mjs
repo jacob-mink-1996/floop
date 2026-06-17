@@ -11,6 +11,7 @@ import {
   parseMergeTicketInput,
   parseCreateRepoInput,
   parseCreateTicketInput,
+  parseExternalAgentIngressInput,
   parseCreateValidationInput,
   parseUpdateProjectPolicyInput,
   parseUpdateProjectInput,
@@ -441,6 +442,51 @@ test("request parsers normalize project and ticket payloads", () => {
       },
     ],
   });
+});
+
+test("external agent ingress maps protocol actions to agent messages", () => {
+  const comment = parseExternalAgentIngressInput({
+    protocol: "acp",
+    actor: "openclaw",
+    action: "comment",
+    target: { ticketId: "ticket_1" },
+    summary: "Clarify the scope",
+    body: "Use ICS import for MVP.",
+  });
+  assert.equal(comment.intent, "comment_on_ticket");
+  assert.equal(comment.source, "acp");
+  assert.equal(comment.metadata.externalAgent, true);
+  assert.equal(comment.metadata.externalProtocol, "acp");
+  assert.equal(comment.metadata.commentMode, "context");
+
+  const question = parseExternalAgentIngressInput({
+    actor: "hermes",
+    action: "question",
+    target: { ticketId: "ticket_1", executionId: "execution_1" },
+    summary: "Need timezone policy",
+  });
+  assert.equal(question.intent, "request_input");
+  assert.equal(question.source, "external");
+  assert.equal(question.metadata.externalQuestion, true);
+
+  const artifact = parseExternalAgentIngressInput({
+    actor: "validator",
+    action: "artifact",
+    summary: "Demo evidence",
+    metadata: { artifact: { kind: "demo", uri: "file:///tmp/demo.md" } },
+  });
+  assert.equal(artifact.intent, "submit_artifact");
+  assert.equal(artifact.metadata.artifact.kind, "demo");
+
+  assert.throws(
+    () =>
+      parseExternalAgentIngressInput({
+        actor: "openclaw",
+        action: "unknown_action",
+        summary: "Nope",
+      }),
+    /Invalid external agent action/,
+  );
 });
 
 test("execution parsers normalize execution payloads", () => {

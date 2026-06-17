@@ -843,6 +843,60 @@ test("agent message response API rejects ordinary comments and stale HITL answer
   });
 });
 
+test("external agent ingress maps protocol actions into native agent messages", async () => {
+  await withServer(async (baseUrl) => {
+    const commentResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/external-agent-messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        protocol: "acp",
+        actor: "openclaw",
+        action: "comment",
+        target: { ticketId: "ticket_project_floop_2" },
+        summary: "Calendar import clarification",
+        body: "Keep ICS import in the MVP.",
+      }),
+    });
+    const commentBody = await commentResponse.json();
+    assert.equal(commentResponse.status, 201);
+    assert.equal(commentBody.message.intent, "comment_on_ticket");
+    assert.equal(commentBody.message.source, "acp");
+    assert.equal(commentBody.message.metadata.externalAgent, true);
+    assert.equal(commentBody.message.metadata.commentMode, "context");
+
+    const dispatchResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/external-agent-messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        protocol: "mcp",
+        actor: "hermes",
+        action: "dispatch",
+        target: { ticketId: "ticket_project_floop_2" },
+        summary: "Ask developer to inspect recurrence handling",
+        metadata: { role: "developer", reasonCode: "external_agent_dispatch" },
+      }),
+    });
+    const dispatchBody = await dispatchResponse.json();
+    assert.equal(dispatchResponse.status, 201);
+    assert.equal(dispatchBody.message.intent, "suggest_dispatch");
+    assert.equal(dispatchBody.message.metadata.externalProtocol, "mcp");
+    assert.equal(dispatchBody.message.metadata.role, "developer");
+
+    const invalidResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/external-agent-messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: "openclaw",
+        action: "not_real",
+        summary: "Bad action",
+      }),
+    });
+    const invalidBody = await invalidResponse.json();
+    assert.equal(invalidResponse.status, 400);
+    assert.match(invalidBody.message, /Invalid external agent action/);
+  });
+});
+
 test("execution steering API records comments and resumes native harness sessions when available", async () => {
   await withServer(async (baseUrl, store) => {
     const executionResponse = await fetch(

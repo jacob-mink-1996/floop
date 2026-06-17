@@ -431,6 +431,7 @@ function matchRoute(method, pathname) {
     { method: "PATCH", pattern: /^\/api\/v1\/projects\/([^/]+)\/agent-profiles\/([^/]+)$/, name: "projectAgentProfile", keys: ["projectId", "role"] },
     { method: "GET", pattern: /^\/api\/v1\/projects\/([^/]+)\/agent-messages$/, name: "projectAgentMessages", keys: ["projectId"] },
     { method: "POST", pattern: /^\/api\/v1\/projects\/([^/]+)\/agent-messages$/, name: "projectAgentMessages", keys: ["projectId"] },
+    { method: "POST", pattern: /^\/api\/v1\/projects\/([^/]+)\/external-agent-messages$/, name: "projectExternalAgentMessages", keys: ["projectId"] },
     { method: "POST", pattern: /^\/api\/v1\/projects\/([^/]+)\/agent-messages\/([^/]+)\/respond$/, name: "projectAgentMessageResponse", keys: ["projectId", "messageId"] },
     { method: "PATCH", pattern: /^\/api\/v1\/projects\/([^/]+)\/agent-messages\/([^/]+)$/, name: "projectAgentMessage", keys: ["projectId", "messageId"] },
     { method: "GET", pattern: /^\/api\/v1\/projects\/([^/]+)\/board$/, name: "projectBoard", keys: ["projectId"] },

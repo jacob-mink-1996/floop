@@ -569,6 +569,65 @@ export function parseCreateAgentMessageInput(body) {
   };
 }
 
+export function parseExternalAgentIngressInput(body) {
+  assertObject(body);
+  const action = requiredString(body, "action");
+  const actor = requiredString(body, "actor");
+  const summary = requiredString(body, "summary");
+  const target = hasOwn(body, "target") ? optionalObject(body, "target") : {};
+  const metadata = hasOwn(body, "metadata") ? optionalObject(body, "metadata") : {};
+  const protocol = optionalString(body, "protocol") || "external";
+  const source = optionalString(body, "source") || protocol;
+  const mapped = externalAgentActionMapping(action);
+
+  return {
+    actor,
+    source,
+    intent: mapped.intent,
+    target,
+    summary,
+    body: optionalString(body, "body"),
+    metadata: {
+      ...metadata,
+      externalAgent: true,
+      externalProtocol: protocol,
+      externalAction: action,
+      ...(mapped.metadata || {}),
+    },
+  };
+}
+
+function externalAgentActionMapping(action) {
+  switch (action) {
+    case "ticket":
+    case "suggest_ticket":
+      return { intent: "suggest_ticket" };
+    case "comment":
+    case "context":
+      return { intent: "comment_on_ticket", metadata: { commentMode: "context" } };
+    case "question":
+    case "request_input":
+      return { intent: "request_input", metadata: { externalQuestion: true } };
+    case "dispatch":
+    case "suggest_dispatch":
+      return { intent: "suggest_dispatch" };
+    case "ceremony_input":
+    case "submit_ceremony_input":
+      return { intent: "submit_ceremony_input" };
+    case "artifact":
+    case "submit_artifact":
+      return { intent: "submit_artifact" };
+    case "risk":
+    case "raise_risk":
+      return { intent: "raise_risk" };
+    case "status":
+    case "request_status":
+      return { intent: "request_status" };
+    default:
+      throw new Error(`Invalid external agent action: ${action}`);
+  }
+}
+
 export function parseUpdateAgentMessageInput(body) {
   assertObject(body);
   const status = requiredString(body, "status");
