@@ -9,6 +9,7 @@ import { chromium } from "playwright";
 import { createFloopServer } from "../services/api/src/app.mjs";
 import { createCeremonyAutomationDriver } from "../services/api/src/ceremony-automation-driver.mjs";
 import { createCeremonyParticipantDriver } from "../services/api/src/ceremony-participant-driver.mjs";
+import { createExecutionDriver } from "../services/api/src/execution-driver.mjs";
 import { createStore } from "../services/api/src/store.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -19,6 +20,7 @@ const fixtureRoot = mkdtempSync(join(tmpdir(), `floop-refinement-demo-${mode}-`)
 const workspaceRoot = join(fixtureRoot, "workspace");
 const repoPath = join(fixtureRoot, "calendar-product");
 const recordingDir = join(outputRoot, `refinement-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+const refinementAnswer = "Require account login for MVP invite acceptance. Guest links can be a later ticket.";
 
 let store;
 let server;
@@ -60,6 +62,7 @@ try {
   assert.equal(proof.lifecycleReasonCode, "messy_backlog_needs_refinement");
   assert.equal(proof.agentCleanupProposal, true);
   assert.equal(proof.answeredRefinementQuestions >= 1, true);
+  assert.equal(proof.firstChildExecutionSawRefinementAnswer, true);
   assert.equal(proof.splitProposalApplied, true);
   assert.equal(proof.duplicateCancelled, true);
   assert.equal(proof.obsoleteCancelled, true);
@@ -233,6 +236,42 @@ function seedProject() {
       },
     });
   }
+  const developerAgentPath = join(fixtureRoot, "developer-refinement-handoff-agent.js");
+  writeFileSync(
+    developerAgentPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const context = JSON.parse(fs.readFileSync(process.env.FLOOP_CONTEXT_PATH, "utf8"));
+const parentText = JSON.stringify(context.relatedTickets?.parent || {});
+if (!parentText.includes(${JSON.stringify(refinementAnswer)})) {
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({
+      outcome: "blocked",
+      summaryMd: "Developer could not see the answered refinement question.",
+      remainingWorkMd: "Carry refinement HITL answers into child execution context.",
+      blockedKind: "needs_human_input"
+    }),
+  );
+  process.exit(0);
+}
+fs.writeFileSync(
+  process.env.FLOOP_RESULT_PATH,
+  JSON.stringify({
+    outcome: "completed",
+    summaryMd: "Implemented invite model after reading the parent refinement answer."
+  }),
+);
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+  store.updateRoleProfile(project.id, "developer", {
+    adapter: "shell",
+    model: "fixture-refinement-handoff",
+    config: {
+      command: `"${process.execPath}" "${developerAgentPath}"`,
+    },
+  });
 
   return project;
 }
@@ -276,7 +315,7 @@ async function runWalkthrough(page, appUrl, projectId) {
   await clickByText(page, "Build calendar collaboration");
   await page.getByText("Waiting for answer").first().waitFor();
   await page.getByText("Should shared invite acceptance require account login?").first().waitFor();
-  await page.getByLabel("Answer").fill("Require account login for MVP invite acceptance. Guest links can be a later ticket.");
+  await page.getByLabel("Answer").fill(refinementAnswer);
   await pause(700);
   await clickByText(page, "Reply and continue");
   await page.getByText("Require account login for MVP invite acceptance").first().waitFor();
@@ -293,16 +332,48 @@ async function runWalkthrough(page, appUrl, projectId) {
   await page.getByText("Create shared calendar invite model").first().waitFor();
   await page.getByText("Define shared calendar permission rules").first().waitFor();
   await page.getByText("Done").first().waitFor();
+  await pause(900);
+
+  const childTicket = store
+    .listTickets(projectId)
+    .find((ticket) => ticket.title === "Create shared calendar invite model");
+  assert.ok(childTicket);
+  store.transitionTicket(projectId, childTicket.id, {
+    targetState: "READY",
+    reason: "Refinement answer resolved the scope enough to start the first slice.",
+    reasonCode: "refinement_scope_ready",
+    reasonSource: "operator",
+  });
+  store.createExecution(projectId, childTicket.id, {
+    role: "developer",
+    reason: "Implement first child ticket after refinement handoff.",
+  });
+  await refresh(page);
+  await page.getByText("Working").first().waitFor();
+  await pause(900);
+  const executionDriver = createExecutionDriver({ store, logger: silentLogger() });
+  await executionDriver.pollOnce();
+  const completedChildExecution = store
+    .getTicket(projectId, childTicket.id)
+    .executions.find((execution) => execution.role === "developer" && execution.outcome === "completed");
+  assert.ok(completedChildExecution);
+  assert.match(completedChildExecution.summaryMd, /parent refinement answer/);
+  await refresh(page);
+  await page.getByText("Create shared calendar invite model").first().waitFor();
+  assert.equal(store.getTicket(projectId, childTicket.id).state, "REVIEWING");
   await pause(1500);
 
   const proof = collectProof(projectId);
   assert.equal(proof.createdSplitTickets >= 1, true);
+  assert.equal(proof.firstChildExecutionSawRefinementAnswer, true);
 }
 
 function collectProof(projectId) {
   const runs = store.listCeremonyRuns(projectId);
   const refinement = runs.find((run) => run.type === "refinement");
   const tickets = store.listTickets(projectId);
+  const firstChild = tickets.find((ticket) => ticket.title === "Create shared calendar invite model");
+  const firstChildDetail = firstChild ? store.getTicket(projectId, firstChild.id) : null;
   return {
     ceremonyRunId: refinement?.id || "",
     lifecycleReasonCode: refinement?.scope?.lifecycleReason?.code || "",
@@ -314,6 +385,14 @@ function collectProof(projectId) {
     answeredRefinementQuestions: store
       .listAgentMessages(projectId, { intent: "comment_on_ticket", status: "attached", limit: 100 })
       .filter((message) => message.metadata?.ceremonyResponse === true && message.metadata?.unblockResponse === true).length,
+    firstChildExecutionSawRefinementAnswer: Boolean(
+      firstChildDetail?.executions?.some(
+        (execution) =>
+          execution.role === "developer" &&
+          execution.outcome === "completed" &&
+          execution.summaryMd?.includes("parent refinement answer"),
+      ),
+    ),
     splitProposalApplied: Boolean(refinement?.proposals.some((proposal) => proposal.kind === "ticket_create" && proposal.status === "applied")),
     duplicateCancelled: tickets.some((ticket) => ticket.title === "Implement shared calendar invitations" && ticket.state === "CANCELLED"),
     obsoleteCancelled: tickets.some((ticket) => ticket.title === "Obsolete invitation spike" && ticket.state === "CANCELLED"),

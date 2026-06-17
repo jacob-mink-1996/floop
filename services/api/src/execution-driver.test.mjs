@@ -1523,6 +1523,136 @@ fs.writeFileSync(
   }
 });
 
+test("execution driver carries answered refinement questions from parent into child work context", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-refinement-hitl-child-context-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const childAgentPath = join(fixtureDir, "refinement-child-context-agent.js");
+  const refinementAnswer = "Require account login for MVP invite acceptance; guest links are follow-up work.";
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    childAgentPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const context = JSON.parse(fs.readFileSync(process.env.FLOOP_CONTEXT_PATH, "utf8"));
+const parentText = JSON.stringify(context.relatedTickets?.parent || {});
+const ticketText = JSON.stringify(context.ticket || {});
+if (!parentText.includes(${JSON.stringify(refinementAnswer)})) {
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({
+      outcome: "blocked",
+      summaryMd: "Developer could not see the answered refinement question.",
+      remainingWorkMd: "Carry refinement HITL answers from broad parent tickets into child execution context.",
+      blockedKind: "needs_human_input"
+    }),
+  );
+  process.exit(0);
+}
+if (ticketText.includes(${JSON.stringify(refinementAnswer)})) {
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({
+      outcome: "blocked",
+      summaryMd: "Refinement answer was copied onto the child ticket instead of related parent context.",
+      remainingWorkMd: "Keep parent answers scoped to related ticket context.",
+      blockedKind: "needs_human_input"
+    }),
+  );
+  process.exit(0);
+}
+fs.writeFileSync(
+  process.env.FLOOP_RESULT_PATH,
+  JSON.stringify({
+    outcome: "completed",
+    summaryMd: "Developer saw the parent refinement answer before implementing invite acceptance."
+  }),
+);
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    store.updateProjectPolicy("project_floop", {
+      interactionMode: "autonomous_with_review",
+      requireReviewer: false,
+      requireValidator: false,
+    });
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "shell",
+      model: "fixture",
+      config: {
+        command: `"${process.execPath}" "${childAgentPath}"`,
+      },
+    });
+
+    const parent = store.createTicket("project_floop", {
+      title: "Build calendar collaboration",
+      brief: "Large idea covering shared calendars, invitations, permissions, and notification behavior.",
+      state: "PROPOSED",
+      assignedRole: "product_manager",
+    });
+    const ceremony = store.createCeremonyRun("project_floop", {
+      type: "refinement",
+      participantRoles: ["product_manager"],
+      deciderRole: "product_manager",
+    });
+    const question = store.createAgentMessage("project_floop", {
+      actor: "product_manager",
+      source: "ceremony_participant",
+      intent: "submit_ceremony_input",
+      target: {
+        runId: ceremony.id,
+        ticketId: parent.id,
+        role: "product_manager",
+      },
+      summary: `Refinement question for ${parent.key}`,
+      body: "Should shared invite acceptance require account login?",
+      metadata: {
+        ceremonyHitlQuestion: true,
+        refinementQuestion: true,
+      },
+    });
+    store.respondAgentMessage("project_floop", question.id, {
+      responseMd: refinementAnswer,
+      responderKind: "human",
+      responderRef: "jacob",
+      continueExecution: false,
+    });
+
+    const child = store.createTicket("project_floop", {
+      title: "Create shared calendar invite model",
+      brief: "Implement invite acceptance using the refined auth decision.",
+      parentTicketId: parent.id,
+      state: "READY",
+      assignedRole: "developer",
+    });
+    const childExecution = store.createExecution("project_floop", child.id, {
+      role: "developer",
+      reason: "Implement child ticket after refinement HITL answer.",
+    });
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+    await driver.pollOnce();
+
+    const completed = store.getExecution("project_floop", childExecution.id);
+    const context = JSON.parse(
+      readFileSync(join(workspaceRoot, ".floop", "executions", childExecution.id, "context.json"), "utf8"),
+    );
+
+    assert.equal(completed.outcome, "completed");
+    assert.equal(context.relatedTickets.parent.id, parent.id);
+    assert.equal(JSON.stringify(context.relatedTickets.parent).includes(refinementAnswer), true);
+    assert.equal(JSON.stringify(context.ticket.events).includes(refinementAnswer), false);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("execution driver rolls child HITL context up to parent executions", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-child-hitl-parent-context-"));
   const workspaceRoot = join(fixtureDir, "workspace");
