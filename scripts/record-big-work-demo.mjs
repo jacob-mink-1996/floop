@@ -143,6 +143,7 @@ try {
   assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_request_dispatch"), true);
   assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_attach_artifact"), true);
   assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_get_run_status"), true);
+  assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "external_agent_ingress"), true);
   assert.equal(proof.steeringCopyProof?.copiedNoteExists, true);
   assert.equal(proof.steeringCopyProof?.generatedDependencySkipped, true);
   assert.ok(proof.steeringCopyProof?.resumedFromWorktreeId, "Expected hard-steer resumed worktree lineage proof");
@@ -472,6 +473,23 @@ async function exerciseExternalAgentActions(page, projectId, repoId, dispatchTic
     limit: 6,
   });
   externalAgentProof.push({ tool: "floop_get_run_status", result: statusResult });
+
+  const ingressResult = await fetchJson(`/api/v1/projects/${projectId}/external-agent-messages`, {
+    method: "POST",
+    body: {
+      protocol: "acp",
+      actor: "openclaw",
+      action: "comment",
+      target: { ticketId: dispatchTicket.id },
+      summary: "ACP-style calendar demo note",
+      body: "External ingress mapped this ACP-style comment into the native ticket conversation.",
+      metadata: { proof: "mvp2_external_ingress" },
+    },
+  });
+  assert.equal(ingressResult.message.intent, "comment_on_ticket");
+  assert.equal(ingressResult.message.metadata.externalAgent, true);
+  assert.equal(ingressResult.message.metadata.externalProtocol, "acp");
+  externalAgentProof.push({ tool: "external_agent_ingress", result: ingressResult });
 
   await refresh(page);
   await clickByText(page, "Cockpit");
@@ -1296,7 +1314,7 @@ async function closeTicketDetail(page) {
 }
 
 async function closeAnyOpenRunProof(page) {
-  const openItems = page.locator(".run-subway-item").filter({ has: page.locator(".log-dock") });
+  const openItems = page.locator(".run-subway-item").filter({ has: page.locator(".run-action-drawer") });
   const count = await openItems.count();
   for (let index = 0; index < count; index += 1) {
     await openItems.nth(index).locator(".run-subway-main").click();
@@ -1309,7 +1327,7 @@ async function openRunProof(page, text, options = {}) {
   const button = item.locator(".run-subway-main").first();
   await moveTo(page, button);
   await button.click();
-  const traceSummary = item.locator(".log-dock .agent-trace-summary").first();
+  const traceSummary = item.locator(".run-action-drawer .agent-trace-summary").first();
   await traceSummary.waitFor({ state: "visible", timeout: 5000 });
   await traceSummary.scrollIntoViewIfNeeded();
 }
