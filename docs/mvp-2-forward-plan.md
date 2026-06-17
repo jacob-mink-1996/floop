@@ -29,8 +29,9 @@ MVP 2.0 is not just "agents can run." It means the user can trust the loop, unde
 ## Highest-Risk Gaps
 
 - The app still needs stronger proof that the full autonomous loop is reliable with real Codex sessions.
-- Ticket comment and HITL UX must be obvious enough that users know whether they are answering, steering, adding context, or reopening work.
-- Board and ticket surfaces need compact scan-level status for active work, pending questions, review, validation, demo evidence, and merge readiness.
+- Stop, cancel, and active-work ownership need to be explicit when a ticket detail closes, the UI closes, or a run is interrupted.
+- Ticket comment and HITL UX needs final polish around duplicate questions, queued steering, and visible delivery state.
+- Board and ticket surfaces have scan-level status, but ticket detail still needs a final pass to remove duplicate execution/watch surfaces.
 - Merge conflict recovery must be tested as a normal workflow, not just handled as an error.
 - Idle trimming needs to remove waiting more aggressively while preserving visible transitions and proof.
 - Lifecycle ceremonies need to generate, combine, remove, split, and reorder work in batches using project context handles.
@@ -188,14 +189,15 @@ Acceptance:
 
 ## Recommended Execution Order
 
-1. Board and ticket scan-level status polish.
-2. Comment, HITL, and steering UX cleanup.
-3. Lifecycle batch refinement and work generation hardening.
-4. Full-loop authenticated Codex proof with HITL included.
-5. Merge conflict rebase delegation and authenticated tests.
-6. Demo idle-trim improvements and snippet recording workflow.
-7. External agent adapter spike and ACP mapping.
-8. Final MVP 2.0 release demo and proof manifest.
+1. Stop, cancel, and active-work ownership.
+2. Ticket detail execution surface cleanup.
+3. Comment, HITL, and steering final polish.
+4. Lifecycle batch refinement and work generation hardening.
+5. Full-loop authenticated Codex proof with HITL included.
+6. Merge conflict rebase delegation and authenticated tests.
+7. Demo idle-trim improvements and snippet recording workflow.
+8. External agent adapter hardening and ACP mapping.
+9. Final MVP 2.0 release demo and proof manifest.
 
 ## Proof Checklist
 
@@ -212,10 +214,131 @@ Acceptance:
 
 ## Immediate Next Slice
 
-Implement board and ticket scan-level status polish:
+Implement stop, cancel, and active-work ownership:
 
-- Extend board ticket read models and DTOs with pending HITL, demo evidence, and merge readiness.
-- Update React board cards to show compact status signals without clutter.
-- Update ticket detail execution surfaces to avoid duplicate active-work views.
-- Add tests proving the new board fields and active-work indicators.
+- Confirm the current cancel execution API, store behavior, and harness cleanup semantics.
+- Add one explicit active-work owner per ticket surface: selected ticket detail, board indicator, and execution dock.
+- Stop or cancel active ticket work when the ticket detail is closed, with a clear user-facing result.
+- Add UI-close handling for active work where browser or Electron lifecycle events can reliably notify the API.
+- Keep automatic cancellation visible in the ticket conversation or execution history without adding giant comments.
+- Add tests for ticket-close cancellation, UI-close cancellation where practical, and active-work indicator cleanup.
 - Run focused tests and commit the slice.
+
+## MVP 2.0 Slice Backlog
+
+### P0: Execution Ownership And Cancellation
+
+Why: users need to trust that closing or interrupting a surface does not leave hidden agent work running.
+
+Deliverables:
+
+- Active execution detection in ticket detail and board scan models.
+- One consistent "agent working" view shared by ticket detail and watch execution.
+- Stop-on-ticket-close behavior with recorded reason and refreshed ticket state.
+- Best-effort UI-close cancellation through lifecycle events.
+- Tests for active work cleanup, canceled execution history, and stale indicator removal.
+
+Proof:
+
+- Focused API/store tests.
+- React UI check showing a dispatched ticket, active indicator, close action, and cleared state.
+
+### P0: Full Loop Demo Reliability
+
+Why: MVP 2.0 needs a repeatable proof that the product loop works with real Codex agents, not fixture agents alone.
+
+Deliverables:
+
+- Greenfield calendar-app script starts from one idea ticket.
+- Refinement runs before execution and creates a batch of child work.
+- Script includes one HITL question and answer path.
+- Developer, reviewer, validator, demo evidence, and merge or merge rework are exercised.
+- Proof manifest records tickets, agents, checks, artifacts, review, validation, demo evidence, merge state, and cut metadata.
+
+Proof:
+
+- Fixture full-loop run for speed.
+- Authenticated Codex full-loop run in an environment with Codex already logged in.
+
+### P1: Ticket Conversation And HITL Polish
+
+Why: the conversation surface is the user's steering and unblock path, so it must avoid ambiguous modes and duplicate questions.
+
+Deliverables:
+
+- Remove duplicate display of a single HITL request across scope and blocked sections.
+- Keep conversation actions to user-meaningful choices: answer, add context, steer active run, start or reopen.
+- Infer responder and reference from ticket state instead of asking users to supply them.
+- Queue rapid steering/comment actions and preserve delivery order.
+- Show delivery state for each comment without raw protocol terms.
+
+Proof:
+
+- Unit tests for duplicate HITL suppression.
+- Integration tests for active comment, idle comment, answer, steer, reopen, and rapid double-comment races.
+
+### P1: Lifecycle Ceremonies As Product Engine
+
+Why: Floop should create product progress from state, not from timer-like ceremonies.
+
+Deliverables:
+
+- Refinement runs in batches and can split, combine, remove, clarify, reorder, and accept tickets.
+- New-work generation runs near sprint end or backlog depletion.
+- Planning starts when enough refined work exists for an execution batch.
+- Demo prep starts when validated work exists.
+- Retro starts when repeated blockers, rework, validation failures, or merge conflicts appear.
+- Agents receive project context through lookup handles wherever possible.
+
+Proof:
+
+- Ceremony tests for batch refinement, dedupe/removal, work generation, and context lookup handles.
+- UI snippet showing a broad idea becoming a refined, executable batch.
+
+### P1: Merge Rework As Normal Flow
+
+Why: merge conflicts have been a repeated demo and reliability failure point.
+
+Deliverables:
+
+- Merge queue state is visible on board cards and ticket detail.
+- Conflicts route to the original developer session when available.
+- Integrator fallback handles unavailable original sessions.
+- Rework preserves HITL answers, validation findings, and review evidence.
+- Interrupted merge runs can retry safely.
+
+Proof:
+
+- Authenticated Codex merge-conflict integration test.
+- Fixture fallback test for unavailable developer session.
+
+### P2: External Agent Protocol Readiness
+
+Why: ACP, OpenClaw, Hermes, and other agents should use Floop's lifecycle without changing core ticket semantics.
+
+Deliverables:
+
+- Adapter capability flags for comment, question, artifact, dispatch suggestion, resume, interrupt, and steer.
+- ACP-like message mapping into native Floop events.
+- Unsupported harness capabilities degrade into queued context or reopen instructions.
+- External agent artifacts appear in the same evidence model as native agents.
+
+Proof:
+
+- API tests for external comments, questions, artifacts, dispatch suggestions, and unsupported steering fallback.
+
+### P2: Release-Level UI Polish
+
+Why: MVP 2.0 should feel calm, legible, and action-oriented across the main surfaces.
+
+Deliverables:
+
+- Ticket cockpit, plan, dispatch, metadata, execution, evidence, and conversation align to a consistent grid.
+- Constellation clearly shows idle, queued, active, blocked, done, failed, and hover detail states.
+- Ceremony screens focus on current proposal, pending question, applied changes, and next action.
+- Ticket cards stay compact while showing active work, HITL, review, validation, demo, and merge state.
+
+Proof:
+
+- UI screenshot audit across desktop and narrow widths.
+- Snippet recordings for ticket detail, conversation/HITL, ceremony refinement, constellation, and merge queue.

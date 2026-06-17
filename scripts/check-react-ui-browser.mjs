@@ -244,7 +244,19 @@ try {
   await waitForText("Normal comment should add context without dispatching.");
   await setFormValue("Dispatch agent", "summary", "Starting from the browser UI.");
   await clickText("Dispatch agent");
-  await waitForText("CURRENT WORK");
+  await waitForText("QUEUED");
+  await clickText("Close ticket detail");
+  await waitForBoardTicket(
+    appUrl,
+    "project_floop",
+    "ticket_project_floop_4",
+    (ticket) => ticket.activeExecutionCount === 0 && ticket.activeExecutionRole === "",
+    "ticket close cancels active work and clears board scan state",
+  );
+  await clickText("Refresh");
+  await clickTicket("Browser QA ticket edited");
+  await waitForText("FAILED");
+  await assertScript("!document.body.innerText.includes('Stop agent') && !document.body.innerText.includes('QUEUED')", "ticket detail close clears active work view");
   await transitionTicket(appUrl, "project_floop", "ticket_project_floop_4", "DONE");
   await clickText("Close ticket detail");
   await clickText("Refresh");
@@ -513,6 +525,24 @@ async function createAgentMessage(appUrl, projectId, input) {
     assert.fail(await response.text());
   }
   return response.json();
+}
+
+async function waitForBoardTicket(appUrl, projectId, ticketId, predicate, message, timeoutMs = 5000) {
+  const started = Date.now();
+  let latestTicket = null;
+  while (Date.now() - started < timeoutMs) {
+    const response = await fetch(`${appUrl}/api/v1/projects/${projectId}/board`);
+    if (!response.ok) {
+      assert.fail(await response.text());
+    }
+    const body = await response.json();
+    latestTicket = body.board.columns.flatMap((column) => column.tickets).find((ticket) => ticket.id === ticketId) || null;
+    if (latestTicket && predicate(latestTicket)) {
+      return latestTicket;
+    }
+    await delay(80);
+  }
+  assert.fail(`${message}: ${JSON.stringify(latestTicket)}`);
 }
 
 async function setFormValue(submitText, fieldName, value) {

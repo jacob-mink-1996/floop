@@ -10,6 +10,7 @@ import {
   ApiError,
   applyCeremony,
   cancelExecution,
+  cancelExecutionKeepalive,
   completeExecution,
   addDependency,
   cleanWorktree,
@@ -141,6 +142,7 @@ function App() {
   const [activeView, setActiveView] = useState<WorkspaceView>("ops");
   const [liveStatus, setLiveStatus] = useState("idle");
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
+  const closingTicketDetailRef = useRef(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -277,6 +279,10 @@ function App() {
     if (!board || !selectedTicketId) return null;
     return board.columns.flatMap((column) => column.tickets).find((item) => item.id === selectedTicketId) || null;
   }, [board, selectedTicketId]);
+  const selectedActiveExecution = useMemo(
+    () => ticket?.executions.find((execution) => execution.status === "running") || null,
+    [ticket?.executions],
+  );
   const dragSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   const selectTicket = (ticketId: string) => {
@@ -330,6 +336,47 @@ function App() {
     setTicket(nextTicket);
     setSelectedTicketId(ticketId);
   };
+
+  const closeTicketDetail = async (reason = "Ticket detail closed by operator.") => {
+    const executionToCancel = selectedActiveExecution;
+    const ticketKey = ticket?.key || selectedTicketSummary?.key || "ticket";
+    const ticketId = ticket?.id || selectedTicketId;
+    flushSync(() => setDetailOpen(false));
+    if (!projectId || !executionToCancel || closingTicketDetailRef.current) return;
+    closingTicketDetailRef.current = true;
+    setMessage("");
+    try {
+      await cancelExecution(projectId, executionToCancel.id, {
+        reason: `${reason} Stopped ${prettyRole(executionToCancel.role)} work on ${ticketKey}.`,
+      });
+      await refresh();
+    } catch (closeError) {
+      setMessage(closeError instanceof Error ? closeError.message : String(closeError));
+      if (ticketId) {
+        await refreshTicket(ticketId).catch(() => undefined);
+      }
+    } finally {
+      closingTicketDetailRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!projectId || !isDetailOpen || !selectedActiveExecution || !ticket) return;
+    const executionId = selectedActiveExecution.id;
+    const role = selectedActiveExecution.role;
+    const ticketKey = ticket.key;
+    const handlePageLifecycleClose = () => {
+      cancelExecutionKeepalive(projectId, executionId, {
+        reason: `Floop UI closed. Stopped ${prettyRole(role)} work on ${ticketKey}.`,
+      });
+    };
+    window.addEventListener("pagehide", handlePageLifecycleClose);
+    window.addEventListener("beforeunload", handlePageLifecycleClose);
+    return () => {
+      window.removeEventListener("pagehide", handlePageLifecycleClose);
+      window.removeEventListener("beforeunload", handlePageLifecycleClose);
+    };
+  }, [projectId, isDetailOpen, selectedActiveExecution, ticket]);
 
   const handleTicketDrop = async (ticketId: string, targetState: TicketState) => {
     if (!projectId || !board) return;
@@ -617,7 +664,16 @@ function App() {
           )}
         </section>
       </main>
-      <Dialog.Root open={isDetailOpen} onOpenChange={(open) => flushSync(() => setDetailOpen(open))}>
+      <Dialog.Root
+        open={isDetailOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            flushSync(() => setDetailOpen(true));
+            return;
+          }
+          void closeTicketDetail();
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Overlay className="modal-scrim" />
           <Dialog.Content className="ticket-detail">
@@ -628,7 +684,7 @@ function App() {
               projectId={projectId}
               ticket={ticket}
               selectedTicket={selectedTicketSummary}
-              onClose={() => flushSync(() => setDetailOpen(false))}
+              onClose={() => void closeTicketDetail()}
               onRefresh={refreshTicket}
               onFullRefresh={refresh}
               repos={repos}

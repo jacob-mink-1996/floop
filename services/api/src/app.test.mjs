@@ -1448,6 +1448,54 @@ test("ticket restart cancels active execution and deletes worktree through the A
   }
 });
 
+test("execution cancel clears active board scan state through the API", async () => {
+  await withServer(async (baseUrl) => {
+    const executionResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_1/executions`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          role: "developer",
+          reason: "Start a run that close behavior will cancel.",
+        }),
+      },
+    );
+    const executionBody = await executionResponse.json();
+    assert.equal(executionResponse.status, 201);
+
+    const activeBoardResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/board`);
+    const activeBoardBody = await activeBoardResponse.json();
+    const activeTicket = activeBoardBody.board.columns
+      .flatMap((column) => column.tickets)
+      .find((ticket) => ticket.id === "ticket_project_floop_1");
+    assert.equal(activeTicket.activeExecutionCount, 1);
+    assert.equal(activeTicket.activeExecutionRole, "developer");
+
+    const cancelResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/executions/${executionBody.execution.id}/cancel`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Ticket detail closed by operator." }),
+      },
+    );
+    const cancelBody = await cancelResponse.json();
+    assert.equal(cancelResponse.status, 200);
+    assert.equal(cancelBody.execution.status, "cancelled");
+    assert.equal(cancelBody.execution.failureKind, "cancelled");
+
+    const clearedBoardResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/board`);
+    const clearedBoardBody = await clearedBoardResponse.json();
+    const clearedTicket = clearedBoardBody.board.columns
+      .flatMap((column) => column.tickets)
+      .find((ticket) => ticket.id === "ticket_project_floop_1");
+    assert.equal(clearedTicket.activeExecutionCount, 0);
+    assert.equal(clearedTicket.activeExecutionRole, "");
+    assert.equal(clearedTicket.activeExecutionClaimed, false);
+  });
+});
+
 test("ticket patch rejects repo targets outside the project", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2`, {

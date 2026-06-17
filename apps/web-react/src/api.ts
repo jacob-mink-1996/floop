@@ -503,6 +503,22 @@ export async function cancelExecution(
   return payload.execution;
 }
 
+export function cancelExecutionKeepalive(projectId: string, executionId: string, input: { reason: string }): void {
+  const path = `/api/v1/projects/${encodeURIComponent(projectId)}/executions/${encodeURIComponent(executionId)}/cancel`;
+  const body = JSON.stringify(input);
+  if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+    const payload = new Blob([body], { type: "application/json" });
+    navigator.sendBeacon(path, payload);
+    return;
+  }
+  void fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+    keepalive: true,
+  });
+}
+
 export async function createReview(
   projectId: string,
   ticketId: string,
