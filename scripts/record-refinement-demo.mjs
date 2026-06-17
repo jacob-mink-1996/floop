@@ -70,6 +70,14 @@ try {
   assert.equal(proof.firstChildDemoEvidenceCreated, true);
   assert.equal(proof.firstChildReadyToMerge, true);
   assert.equal(proof.firstChildMergedDone, true);
+  assert.equal(proof.agentsUsed.some((agent) => agent.role === "product_manager" && agent.surface === "ceremony"), true);
+  assert.equal(proof.agentsUsed.some((agent) => agent.role === "developer" && agent.surface === "execution"), true);
+  assert.equal(proof.agentsUsed.some((agent) => agent.role === "reviewer" && agent.surface === "execution"), true);
+  assert.equal(proof.agentsUsed.some((agent) => agent.role === "validator" && agent.surface === "execution"), true);
+  assert.equal(proof.ticketsChanged.length >= 4, true);
+  assert.equal(proof.checksRun.some((check) => check.command === "inspect invite demo"), true);
+  assert.equal(proof.evidenceProduced.some((artifact) => artifact.phase === "validation" && artifact.demoEvidence === true), true);
+  assert.deepEqual(proof.mergeOutput.changedFiles, ["invite-model.md"]);
   assert.equal(proof.splitProposalApplied, true);
   assert.equal(proof.duplicateCancelled, true);
   assert.equal(proof.obsoleteCancelled, true);
@@ -364,7 +372,7 @@ fs.writeFileSync(
     validation: {
       verdict: "passed",
       commandProfile: "demo-fixture",
-      commands: [{ command: "inspect invite demo", status: "passed", outputMd: "Demo evidence confirms account-login invite acceptance." }],
+      commands: ["inspect invite demo"],
       summaryMd: "Validation passed with demo evidence for account-login invite acceptance.",
       artifacts: [{ kind: "demo", label: "Invite acceptance demo", uri: "file:///tmp/floop-invite-demo.md", metadata: { demoEvidence: true } }]
     }
@@ -510,6 +518,8 @@ function collectProof(projectId) {
   const tickets = store.listTickets(projectId);
   const firstChild = tickets.find((ticket) => ticket.title === "Create shared calendar invite model");
   const firstChildDetail = firstChild ? store.getTicket(projectId, firstChild.id) : null;
+  const firstChildMergeRun = firstChildDetail?.mergeStatus?.latestRun || null;
+  const mergeOutput = firstChildMergeRun ? mergeOutputFromRun(firstChildMergeRun) : {};
   return {
     ceremonyRunId: refinement?.id || "",
     lifecycleReasonCode: refinement?.scope?.lifecycleReason?.code || "",
@@ -542,10 +552,100 @@ function collectProof(projectId) {
       firstChildDetail?.mergeStatus?.latestRun?.status === "completed" &&
       readOptionalFile(join(repoPath, "invite-model.md")).includes("requires account login"),
     ),
+    agentsUsed: agentsUsed(refinement, firstChildDetail),
+    ticketsChanged: ticketsChanged(tickets, firstChildDetail),
+    checksRun: checksRun(firstChildDetail),
+    evidenceProduced: evidenceProduced(firstChildDetail),
+    mergeOutput,
     splitProposalApplied: Boolean(refinement?.proposals.some((proposal) => proposal.kind === "ticket_create" && proposal.status === "applied")),
     duplicateCancelled: tickets.some((ticket) => ticket.title === "Implement shared calendar invitations" && ticket.state === "CANCELLED"),
     obsoleteCancelled: tickets.some((ticket) => ticket.title === "Obsolete invitation spike" && ticket.state === "CANCELLED"),
     createdSplitTickets: tickets.filter((ticket) => ["Create shared calendar invite model", "Define shared calendar permission rules"].includes(ticket.title)).length,
+  };
+}
+
+function agentsUsed(refinement, ticket) {
+  const ceremonyAgents = (refinement?.participants || []).map((participant) => ({
+    surface: "ceremony",
+    role: participant.role,
+    outcome: participant.outcome || participant.status,
+  }));
+  const executionAgents = (ticket?.executions || [])
+    .filter((execution) => ["developer", "reviewer", "validator"].includes(execution.role))
+    .map((execution) => ({
+      surface: "execution",
+      role: execution.role,
+      outcome: execution.outcome || execution.status,
+      iteration: execution.iteration,
+      summary: execution.summaryMd,
+    }));
+  return [...ceremonyAgents, ...executionAgents];
+}
+
+function ticketsChanged(tickets, firstChildDetail) {
+  const titles = new Set([
+    "Build calendar collaboration",
+    "Add shared calendar invites",
+    "Implement shared calendar invitations",
+    "Obsolete invitation spike",
+    "Create shared calendar invite model",
+    "Define shared calendar permission rules",
+  ]);
+  const byId = new Map(tickets.map((ticket) => [ticket.id, ticket]));
+  return tickets
+    .filter((ticket) => titles.has(ticket.title))
+    .map((ticket) => ({
+      key: ticket.key,
+      title: ticket.title,
+      state: ticket.id === firstChildDetail?.id ? firstChildDetail.state : ticket.state,
+      parentKey: ticket.parentTicketId ? byId.get(ticket.parentTicketId)?.key || "" : "",
+    }));
+}
+
+function checksRun(ticket) {
+  return (ticket?.validations || []).flatMap((validation) =>
+    (validation.commands || []).map((command) =>
+      typeof command === "string"
+        ? { command, status: "recorded", outputMd: "" }
+        : {
+            command: command.command || "",
+            status: command.status || "",
+            outputMd: command.outputMd || "",
+          },
+    ),
+  );
+}
+
+function evidenceProduced(ticket) {
+  const reviewArtifacts = (ticket?.reviews || []).flatMap((review) =>
+    (review.artifacts || []).map((artifact) => proofArtifact("review", artifact)),
+  );
+  const validationArtifacts = (ticket?.validations || []).flatMap((validation) =>
+    (validation.artifacts || []).map((artifact) => proofArtifact("validation", artifact)),
+  );
+  const mergeArtifacts = (ticket?.mergeStatus?.latestRun?.artifacts || []).map((artifact) => proofArtifact("merge", artifact));
+  return [...reviewArtifacts, ...validationArtifacts, ...mergeArtifacts];
+}
+
+function proofArtifact(phase, artifact) {
+  return {
+    phase,
+    kind: artifact.kind || "",
+    label: artifact.label || "",
+    uri: artifact.uri || "",
+    demoEvidence: artifact.kind === "demo" || artifact.metadata?.demoEvidence === true,
+  };
+}
+
+function mergeOutputFromRun(mergeRun) {
+  const candidate = (mergeRun.artifacts || []).find((artifact) => artifact.label?.includes("merge candidate"));
+  const summary = candidate ? readJsonArtifact(candidate.uri) : {};
+  return {
+    status: mergeRun.status || "",
+    strategy: mergeRun.strategy || summary.strategy || "",
+    sourceBranch: summary.sourceBranch || "",
+    publishedRef: summary.publishedRef || "",
+    changedFiles: Array.isArray(summary.changedFiles) ? summary.changedFiles : [],
   };
 }
 
@@ -567,6 +667,14 @@ function readOptionalFile(path) {
     return readFileSync(path, "utf8");
   } catch {
     return "";
+  }
+}
+
+function readJsonArtifact(uri) {
+  try {
+    return JSON.parse(readFileSync(new URL(uri), "utf8"));
+  } catch {
+    return {};
   }
 }
 
