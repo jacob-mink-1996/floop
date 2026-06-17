@@ -59,6 +59,7 @@ try {
   const proof = collectProof(project.id);
   assert.equal(proof.lifecycleReasonCode, "messy_backlog_needs_refinement");
   assert.equal(proof.agentCleanupProposal, true);
+  assert.equal(proof.answeredRefinementQuestions >= 1, true);
   assert.equal(proof.splitProposalApplied, true);
   assert.equal(proof.duplicateCancelled, true);
   assert.equal(proof.obsoleteCancelled, true);
@@ -268,8 +269,22 @@ async function runWalkthrough(page, appUrl, projectId) {
   await page.getByText("Keep").first().waitFor();
   await page.getByText("Split into ticket").first().waitFor();
   assert.equal(synthesized.pendingRefinementQuestions >= 1, true);
-  await pause(1800);
+  await pause(1200);
 
+  await clickByText(page, "Board");
+  await page.getByText("Build calendar collaboration").first().waitFor();
+  await clickByText(page, "Build calendar collaboration");
+  await page.getByText("Waiting for answer").first().waitFor();
+  await page.getByText("Should shared invite acceptance require account login?").first().waitFor();
+  await page.getByLabel("Answer").fill("Require account login for MVP invite acceptance. Guest links can be a later ticket.");
+  await pause(700);
+  await clickByText(page, "Reply and continue");
+  await page.getByText("Require account login for MVP invite acceptance").first().waitFor();
+  await pause(1200);
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "detached", timeout: 10_000 });
+
+  await clickByText(page, "Ceremonies");
   await clickByText(page, "Apply pending");
   await page.getByText("applied").first().waitFor({ timeout: 10_000 });
   await pause(900);
@@ -296,6 +311,9 @@ function collectProof(projectId) {
     pendingRefinementQuestions: store
       .listAgentMessages(projectId, { intent: "submit_ceremony_input", status: "pending", limit: 100 })
       .filter((message) => message.metadata?.refinementQuestion === true).length,
+    answeredRefinementQuestions: store
+      .listAgentMessages(projectId, { intent: "comment_on_ticket", status: "attached", limit: 100 })
+      .filter((message) => message.metadata?.ceremonyResponse === true && message.metadata?.unblockResponse === true).length,
     splitProposalApplied: Boolean(refinement?.proposals.some((proposal) => proposal.kind === "ticket_create" && proposal.status === "applied")),
     duplicateCancelled: tickets.some((ticket) => ticket.title === "Implement shared calendar invitations" && ticket.state === "CANCELLED"),
     obsoleteCancelled: tickets.some((ticket) => ticket.title === "Obsolete invitation spike" && ticket.state === "CANCELLED"),
