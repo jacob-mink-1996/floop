@@ -2969,6 +2969,7 @@ function TicketConversationSection({
     ? pendingRequest.metadata.suggestedResponders.filter((value): value is string => typeof value === "string")
     : [];
   const blockedKind = typeof pendingRequest?.metadata?.blockedKind === "string" ? pendingRequest.metadata.blockedKind : "";
+  const pendingForm = pendingRequest ? agentMessageForm(pendingRequest) : null;
   const mode = pendingRequest ? "reply" : commentMode;
   const modeOptions = conversationModeOptions({ activeExecution, canStartFromComment });
   const selectedModeOption = modeOptions.find((option) => option.id === commentMode) || modeOptions[0];
@@ -2991,7 +2992,9 @@ function TicketConversationSection({
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const body = String(form.get("body") || "").trim();
+    const body = pendingForm
+      ? formatAgentFormResponse(pendingForm, form, String(form.get("body") || "").trim())
+      : String(form.get("body") || "").trim();
     if (!body) return;
     const requestedMode = String(form.get("commentMode") || "context");
     const safeMode =
@@ -3101,13 +3104,16 @@ function TicketConversationSection({
           <span>{pendingRequest ? "This answer resolves the pending agent request." : selectedModeOption.delivery}</span>
         </div>
         <label>
-          <span>{pendingRequest ? "Answer" : "Comment"}</span>
+          <span>{pendingRequest && pendingForm ? "Notes" : pendingRequest ? "Answer" : "Comment"}</span>
+          {pendingForm ? <AgentMessageFormFields form={pendingForm} /> : null}
           <textarea
             name="body"
             rows={3}
-            required
+            required={!pendingForm}
             placeholder={
-              pendingRequest
+              pendingRequest && pendingForm
+                ? "Optional context to include with the form response."
+                : pendingRequest
                 ? "Answer the agent so this lane can continue."
                 : activeExecution
                   ? "Add context for the ticket or steer the active run."
@@ -3205,6 +3211,116 @@ function conversationModeOptions({
       tone: canStartFromComment ? "active" : "neutral",
     },
   ];
+}
+
+type AgentRequestForm = {
+  title: string;
+  fields: AgentRequestFormField[];
+};
+
+type AgentRequestFormField = {
+  id: string;
+  label: string;
+  type: "text" | "textarea" | "select" | "radio" | "checkbox";
+  required: boolean;
+  placeholder: string;
+  options: string[];
+};
+
+function agentMessageForm(message: AgentMessage): AgentRequestForm | null {
+  const rawForm = recordValue(message.metadata?.form);
+  const rawFields = Array.isArray(rawForm?.fields) ? rawForm.fields : [];
+  const fields = rawFields.map(agentMessageFormField).filter((field): field is AgentRequestFormField => Boolean(field));
+  if (fields.length === 0) return null;
+  const title = typeof rawForm?.title === "string" && rawForm.title.trim() ? rawForm.title.trim() : "Requested details";
+  return { title, fields };
+}
+
+function agentMessageFormField(value: unknown): AgentRequestFormField | null {
+  const raw = recordValue(value);
+  if (!raw) return null;
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  const label = typeof raw.label === "string" ? raw.label.trim() : "";
+  if (!id || !label || !/^[A-Za-z0-9_-]+$/.test(id)) return null;
+  const type = normalizeAgentFormFieldType(raw.type);
+  const options = Array.isArray(raw.options)
+    ? raw.options.map((option) => String(option).trim()).filter(Boolean)
+    : [];
+  if ((type === "select" || type === "radio") && options.length === 0) return null;
+  return {
+    id,
+    label,
+    type,
+    required: raw.required === true,
+    placeholder: typeof raw.placeholder === "string" ? raw.placeholder : "",
+    options,
+  };
+}
+
+function normalizeAgentFormFieldType(value: unknown): AgentRequestFormField["type"] {
+  if (value === "textarea" || value === "select" || value === "radio" || value === "checkbox") return value;
+  return "text";
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function AgentMessageFormFields({ form }: { form: AgentRequestForm }) {
+  return (
+    <fieldset className="agent-request-form">
+      <legend>{form.title}</legend>
+      {form.fields.map((field) => (
+        <label className="agent-request-field" key={field.id}>
+          <span>{field.label}</span>
+          {field.type === "textarea" ? (
+            <textarea name={`form:${field.id}`} rows={3} required={field.required} placeholder={field.placeholder} />
+          ) : field.type === "select" ? (
+            <select name={`form:${field.id}`} required={field.required} defaultValue="">
+              <option value="" disabled>
+                Select
+              </option>
+              {field.options.map((option) => (
+                <option value={option} key={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          ) : field.type === "radio" ? (
+            <span className="agent-request-options">
+              {field.options.map((option) => (
+                <label key={option}>
+                  <input name={`form:${field.id}`} type="radio" value={option} required={field.required} />
+                  <span>{option}</span>
+                </label>
+              ))}
+            </span>
+          ) : field.type === "checkbox" ? (
+            <span className="checkbox-row">
+              <input name={`form:${field.id}`} type="checkbox" value="yes" />
+              <span>{field.placeholder || "Yes"}</span>
+            </span>
+          ) : (
+            <input name={`form:${field.id}`} type="text" required={field.required} placeholder={field.placeholder} />
+          )}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+function formatAgentFormResponse(form: AgentRequestForm, data: FormData, notes: string) {
+  const lines = [`${form.title}:`];
+  for (const field of form.fields) {
+    const value = field.type === "checkbox" ? (data.get(`form:${field.id}`) ? "yes" : "no") : String(data.get(`form:${field.id}`) || "").trim();
+    if (value || field.required || field.type === "checkbox") {
+      lines.push(`- ${field.label}: ${value || "not provided"}`);
+    }
+  }
+  if (notes) {
+    lines.push("", `Notes: ${notes}`);
+  }
+  return lines.join("\n").trim();
 }
 
 function collapseTicketConversationMessages(messages: AgentMessage[], pendingRequestId?: string) {

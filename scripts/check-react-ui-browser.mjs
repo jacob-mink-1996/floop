@@ -190,6 +190,46 @@ try {
   await clickText("Save");
   await waitForText("Browser QA ticket edited");
 
+  await createAgentMessage(appUrl, "project_floop", {
+    actor: "developer",
+    source: "browser-ui-check",
+    intent: "request_input",
+    target: { ticketId: "ticket_project_floop_4" },
+    summary: "Confirm launch constraints",
+    body: "The agent needs structured launch details before continuing.",
+    metadata: {
+      form: {
+        title: "Launch constraints",
+        fields: [
+          {
+            id: "scope",
+            label: "MVP scope",
+            type: "text",
+            required: true,
+            placeholder: "Calendar import only",
+          },
+          {
+            id: "risk",
+            label: "Highest risk",
+            type: "select",
+            required: true,
+            options: ["sync", "permissions", "performance"],
+          },
+        ],
+      },
+    },
+  });
+  await clickText("Close ticket detail");
+  await clickText("Refresh");
+  await clickTicket("Browser QA ticket edited");
+  await waitForText("MVP scope");
+  await assertScript("document.querySelector('.agent-request-form') !== null", "agent-generated HITL form renders in ticket conversation");
+  await setFormValue("Reply and continue", "form:scope", "Calendar import only");
+  await setFormValue("Reply and continue", "form:risk", "permissions");
+  await clickText("Reply and continue");
+  await waitForText("MVP scope: Calendar import only");
+  await waitForText("Highest risk: permissions");
+
   await clickText("Edit ticket");
   await openDisclosure("Scope");
   await setFirstSelectOption("Add blocker", "blockingTicketId");
@@ -461,6 +501,18 @@ async function transitionTicket(appUrl, projectId, ticketId, targetState) {
     }),
   });
   assert.equal(response.ok, true, await response.text());
+}
+
+async function createAgentMessage(appUrl, projectId, input) {
+  const response = await fetch(`${appUrl}/api/v1/projects/${projectId}/agent-messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    assert.fail(await response.text());
+  }
+  return response.json();
 }
 
 async function setFormValue(submitText, fieldName, value) {
