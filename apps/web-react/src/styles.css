@@ -2790,37 +2790,98 @@ textarea {
   gap: 12px;
 }
 
-.unblock-panel {
+.conversation-panel {
   display: grid;
   gap: 12px;
   border: 1px solid var(--line);
-  border-left: 4px solid var(--amber);
-  padding: 14px;
+  padding: 12px;
   background: var(--panel);
 }
 
-.unblock-summary {
+.conversation-panel.has-pending-request {
+  border-left: 4px solid var(--amber);
+  background: color-mix(in srgb, var(--panel) 88%, var(--amber) 12%);
+}
+
+.conversation-head {
   display: flex;
   align-items: start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.unblock-summary h3 {
+.conversation-head h3 {
   margin: 0;
 }
 
-.unblock-summary > span {
+.conversation-head > span {
+  display: inline-grid;
+  place-items: center;
+  min-height: 26px;
+  border: 1px solid currentColor;
+  padding: 0 8px;
+  background: var(--pill-bg);
   color: var(--muted);
   font-size: 11px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
-.unblock-panel p {
+.conversation-thread {
+  display: grid;
+  gap: 8px;
+}
+
+.conversation-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.conversation-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.conversation-item > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.conversation-item span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.conversation-item strong,
+.conversation-item p {
+  overflow-wrap: anywhere;
+}
+
+.conversation-item p {
   margin: 0;
   color: var(--muted);
+  font-size: 12px;
   line-height: 1.45;
+}
+
+.conversation-composer {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.conversation-composer-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
 }
 
 .responder-strip {
@@ -2836,11 +2897,6 @@ textarea {
   font-size: 11px;
   font-weight: 900;
   text-transform: uppercase;
-}
-
-.unblock-form {
-  display: grid;
-  gap: 10px;
 }
 
 .checkbox-row {
@@ -3076,6 +3132,7 @@ textarea {
   .agent-inbox,
   .ceremonies-panel,
   .action-grid,
+  .conversation-composer-actions,
   .repo-mode-list,
   .path-suggestions > div,
   .fact-grid,

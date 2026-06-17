@@ -16,6 +16,7 @@ import {
   createCeremony,
   createProject,
   createRepo,
+  createTicketComment,
   createReview,
   createTicket,
   createValidation,
@@ -36,6 +37,7 @@ import {
   restartTicket,
   respondAgentMessage,
   startExecution,
+  steerExecution,
   transitionTicket,
   updateAgentMessage,
   updateTicket,
@@ -1913,17 +1915,16 @@ function TicketDetailPanel({
               onRefresh={onRefresh}
             />
           </section>
-          {inputRequests.length ? (
-            <UnblockRequestPanel
-              projectId={projectId}
-              ticket={ticket}
-              request={inputRequests[0]}
-              busy={busy}
-              onRun={runAction}
-              onRefresh={onRefresh}
-              onFullRefresh={onFullRefresh}
-            />
-          ) : null}
+          <TicketConversationSection
+            projectId={projectId}
+            ticket={ticket}
+            messages={agentMessages}
+            pendingRequest={inputRequests[0]}
+            busy={busy}
+            onRun={runAction}
+            onRefresh={onRefresh}
+            onFullRefresh={onFullRefresh}
+          />
           <section className="detail-section">
             <div className="section-heading">
               <h3>Overview</h3>
@@ -2474,10 +2475,11 @@ function WorktreeAndArtifactSection({
   );
 }
 
-function UnblockRequestPanel({
+function TicketConversationSection({
   projectId,
   ticket,
-  request,
+  messages,
+  pendingRequest,
   busy,
   onRun,
   onRefresh,
@@ -2485,57 +2487,173 @@ function UnblockRequestPanel({
 }: {
   projectId: string;
   ticket: TicketDetail;
-  request: AgentMessage;
+  messages: AgentMessage[];
+  pendingRequest?: AgentMessage;
   busy: string;
   onRun: (label: string, work: () => Promise<void>) => Promise<void>;
   onRefresh: (ticketId?: string) => Promise<void>;
   onFullRefresh: () => Promise<void>;
 }) {
-  const responders = Array.isArray(request.metadata?.suggestedResponders)
-    ? request.metadata.suggestedResponders.filter((value): value is string => typeof value === "string")
+  const activeExecution = ticket.executions.find((execution) => execution.status === "running");
+  const canStartFromComment = !activeExecution && (ticket.state === "READY" || ticket.state === "REWORK");
+  const [commentMode, setCommentMode] = useState<"context" | "steer" | "dispatch">("context");
+  const ticketMessages = messages
+    .filter((message) => message.target?.ticketId === ticket.id)
+    .filter((message) => message.intent === "comment_on_ticket" || message.intent === "request_input")
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  const responders = Array.isArray(pendingRequest?.metadata?.suggestedResponders)
+    ? pendingRequest.metadata.suggestedResponders.filter((value): value is string => typeof value === "string")
     : [];
-  const blockedKind = typeof request.metadata?.blockedKind === "string" ? request.metadata.blockedKind : "needs input";
+  const blockedKind = typeof pendingRequest?.metadata?.blockedKind === "string" ? pendingRequest.metadata.blockedKind : "";
+  const mode = pendingRequest ? "reply" : commentMode;
+  const submitLabel =
+    mode === "reply"
+      ? "Reply and continue"
+      : mode === "dispatch"
+        ? "Start with comment"
+        : mode === "steer"
+          ? "Add steering note"
+          : "Add comment";
+
+  useEffect(() => {
+    if ((commentMode === "steer" && !activeExecution) || (commentMode === "dispatch" && !canStartFromComment)) {
+      setCommentMode("context");
+    }
+  }, [activeExecution, canStartFromComment, commentMode]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    await onRun("Submitting unblock response", async () => {
-      await respondAgentMessage(projectId, request.id, {
-        responseMd: String(form.get("responseMd") || ""),
-        responderKind: String(form.get("responderKind") || "human"),
-        responderRef: String(form.get("responderRef") || "operator"),
-        continueExecution: form.get("continueExecution") === "on",
-      });
+    const body = String(form.get("body") || "").trim();
+    if (!body) return;
+    const requestedMode = String(form.get("commentMode") || "context");
+    const safeMode =
+      requestedMode === "steer" && activeExecution
+        ? "steer"
+        : requestedMode === "dispatch" && canStartFromComment
+          ? "dispatch"
+          : "context";
+    await onRun(pendingRequest ? "Replying to agent" : submitLabel, async () => {
+      if (pendingRequest) {
+        await respondAgentMessage(projectId, pendingRequest.id, {
+          responseMd: body,
+          responderKind: String(form.get("responderKind") || "human"),
+          responderRef: String(form.get("responderRef") || "operator"),
+          continueExecution: form.get("continueExecution") === "on",
+        });
+      } else {
+        const role = String(form.get("role") || ticket.assignedRole || "developer") as RoleName;
+        const actor = String(form.get("responderRef") || "operator");
+        const source = String(form.get("responderKind") || "human");
+        if (safeMode === "steer" && activeExecution) {
+          const canInterruptAndResume = activeExecution.harnessCapabilities?.includes("interrupt_and_resume") && activeExecution.externalThreadId;
+          await steerExecution(projectId, activeExecution.id, {
+            body,
+            mode: canInterruptAndResume ? "hard_steer" : "soft_steer",
+            actor,
+            source,
+          });
+        } else {
+          await createTicketComment(projectId, {
+            ticketId: ticket.id,
+            body,
+            actor,
+            source,
+            summary: safeMode === "dispatch" ? `${ticket.key} start note` : `${ticket.key} comment`,
+            metadata: {
+              commentMode: safeMode,
+              dispatchWithComment: safeMode === "dispatch",
+              activeExecutionId: activeExecution?.id,
+              role,
+            },
+          });
+        }
+        if (safeMode === "dispatch") {
+          await startExecution(projectId, ticket.id, {
+            role,
+            reason: body,
+          });
+        }
+      }
       formElement.reset();
+      setCommentMode("context");
       await onRefresh(ticket.id);
       await onFullRefresh();
     });
   }
 
   return (
-    <section className="unblock-panel">
-      <div className="unblock-summary">
+    <section className={`conversation-panel ${pendingRequest ? "has-pending-request" : ""}`}>
+      <div className="conversation-head">
         <div>
-          <p className="kicker">Needs Input</p>
-          <h3>{request.summary || `${ticket.key} needs input`}</h3>
+          <p className="kicker">Conversation</p>
+          <h3>{pendingRequest ? "Waiting for answer" : activeExecution ? "Comment or steer" : "Ticket comments"}</h3>
         </div>
-        <span>{blockedKind.replace(/[_-]/g, " ")}</span>
+        <span>
+          {pendingRequest
+            ? blockedKind.replace(/[_-]/g, " ")
+            : activeExecution
+              ? "active run"
+              : canStartFromComment
+                ? "ready"
+                : "context only"}
+        </span>
       </div>
-      <p>{request.body || "The agent needs a response before this ticket can continue."}</p>
-      {responders.length ? (
-        <div className="responder-strip" aria-label="Suggested responders">
-          {responders.map((responder) => (
-            <span key={responder}>{prettyRole(responder as RoleName)}</span>
-          ))}
-        </div>
-      ) : null}
-      <form className="unblock-form" onSubmit={handleSubmit}>
+      <div className="conversation-thread">
+        {ticketMessages.length === 0 ? (
+          <p className="lane-empty">No comments yet. Add context, steer active work, or start the next run from here.</p>
+        ) : null}
+        {ticketMessages.map((message) => (
+          <ConversationItem key={message.id} message={message} pending={pendingRequest?.id === message.id} />
+        ))}
+      </div>
+      <form className="conversation-composer" onSubmit={handleSubmit}>
         <label>
-          <span>Response</span>
-          <textarea name="responseMd" rows={3} required placeholder="Give the missing decision, constraint, credential status, or next instruction." />
+          <span>{pendingRequest ? "Answer" : "Comment"}</span>
+          <textarea
+            name="body"
+            rows={3}
+            required
+            placeholder={
+              pendingRequest
+                ? "Answer the agent so this lane can continue."
+                : activeExecution
+                  ? "Add context for the ticket or steer the active run."
+                  : canStartFromComment
+                    ? "Add context or start work with this note."
+                    : "Add context. This will not dispatch work."
+            }
+          />
         </label>
-        <div className="action-grid">
+        <div className="conversation-composer-actions">
+          {!pendingRequest ? (
+            <label>
+              <span>Intent</span>
+              <select
+                name="commentMode"
+                value={commentMode}
+                onChange={(event) => setCommentMode(event.target.value as "context" | "steer" | "dispatch")}
+              >
+                <option value="context">Context</option>
+                {activeExecution ? <option value="steer">Steer active run</option> : null}
+                {canStartFromComment ? <option value="dispatch">Start with agent</option> : null}
+              </select>
+            </label>
+          ) : null}
+          {!pendingRequest && commentMode === "dispatch" ? (
+            <label>
+              <span>Agent</span>
+              <select name="role" defaultValue={ticket.assignedRole || "developer"}>
+                <option value="product_manager">PM</option>
+                <option value="architect">Architect</option>
+                <option value="developer">Developer</option>
+                <option value="reviewer">Reviewer</option>
+                <option value="validator">Validator</option>
+                <option value="integrator">Integrator</option>
+              </select>
+            </label>
+          ) : null}
           <label>
             <span>Responder</span>
             <select name="responderKind" defaultValue="human">
@@ -2549,16 +2667,56 @@ function UnblockRequestPanel({
             <span>Reference</span>
             <input name="responderRef" defaultValue="operator" />
           </label>
+          <button className="primary-button" type="submit" disabled={Boolean(busy)}>
+            {busy || submitLabel}
+          </button>
         </div>
-        <label className="checkbox-row">
-          <input name="continueExecution" type="checkbox" defaultChecked />
-          <span>Continue this lane after submitting</span>
-        </label>
-        <button className="primary-button" type="submit" disabled={Boolean(busy)}>
-          {busy || "Submit and continue"}
-        </button>
+        {pendingRequest ? (
+          <>
+            {responders.length ? (
+              <div className="responder-strip" aria-label="Suggested responders">
+                {responders.map((responder) => (
+                  <span key={responder}>{prettyRole(responder as RoleName)}</span>
+                ))}
+              </div>
+            ) : null}
+            <label className="checkbox-row">
+              <input name="continueExecution" type="checkbox" defaultChecked />
+              <span>Continue the blocked lane after this answer</span>
+            </label>
+          </>
+        ) : null}
       </form>
     </section>
+  );
+}
+
+function ConversationItem({ message, pending }: { message: AgentMessage; pending: boolean }) {
+  const isQuestion = message.intent === "request_input" || message.metadata?.hitlQuestion === true;
+  const isAnswer = message.metadata?.unblockResponse === true;
+  const isSteering = message.metadata?.steeringNote === true;
+  const isDispatch = message.metadata?.dispatchWithComment === true;
+  const tone = pending ? "attention" : isAnswer || isDispatch ? "done" : isQuestion || isSteering ? "attention" : "neutral";
+  const label = pending
+    ? "Waiting"
+    : isAnswer
+      ? "Answer"
+      : isDispatch
+        ? "Started"
+        : isQuestion
+          ? "Question"
+          : isSteering
+            ? "Steer"
+            : "Comment";
+  return (
+    <article className={`conversation-item tone-${tone}`}>
+      <StateDot tone={tone as Tone} />
+      <div>
+        <span>{label} · {message.actor || message.source || "operator"} · {formatDate(message.createdAt)}</span>
+        <strong>{message.summary || label}</strong>
+        {message.body ? <p>{message.body}</p> : null}
+      </div>
+    </article>
   );
 }
 

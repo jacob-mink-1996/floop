@@ -109,6 +109,13 @@ export function executionDto(execution) {
     blockedKind: execution.blockedKind,
     claimed: Boolean(execution.claimToken),
     claimExpiresAt: execution.claimExpiresAt || "",
+    harnessKind: execution.harnessKind || "",
+    externalThreadId: execution.externalThreadId || "",
+    externalSessionId: execution.externalSessionId || "",
+    externalConversationId: execution.externalConversationId || "",
+    harnessCapabilities: Array.isArray(execution.harnessCapabilities) ? execution.harnessCapabilities : [],
+    resumedFromExecutionId: execution.resumedFromExecutionId || "",
+    steeringMetadata: { ...(execution.steeringMetadata || {}) },
     startedAt: execution.startedAt,
     finishedAt: execution.finishedAt,
     artifacts: (execution.artifacts || []).map(artifactDto),
@@ -725,6 +732,20 @@ export function parseContinueExecutionInput(body) {
   return {
     reason: requiredString(body, "reason"),
   };
+}
+
+export function parseSteerExecutionInput(body) {
+  assertObject(body);
+  const mode = optionalString(body, "mode") || "soft_steer";
+  if (mode !== "soft_steer" && mode !== "hard_steer") {
+    throw new Error(`Invalid steering mode: ${mode}`);
+  }
+  return compactObject({
+    body: requiredString(body, "body"),
+    mode,
+    actor: optionalString(body, "actor"),
+    source: optionalString(body, "source"),
+  });
 }
 
 export function parseCompleteExecutionInput(body) {

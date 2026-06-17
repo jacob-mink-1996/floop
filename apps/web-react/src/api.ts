@@ -215,6 +215,29 @@ export async function updateAgentMessage(
   return payload.message;
 }
 
+export async function createTicketComment(
+  projectId: string,
+  input: { ticketId: string; body: string; actor?: string; source?: string; summary?: string; metadata?: Record<string, unknown> },
+): Promise<AgentMessage> {
+  const payload = await fetchJson<{ message: AgentMessage }>(
+    `/api/v1/projects/${projectId}/agent-messages`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: input.actor || "operator",
+        source: input.source || "human",
+        intent: "comment_on_ticket",
+        target: { ticketId: input.ticketId },
+        summary: input.summary || "Ticket comment",
+        body: input.body,
+        metadata: { operatorComment: true, ...(input.metadata || {}) },
+      }),
+    },
+  );
+  return payload.message;
+}
+
 export async function respondAgentMessage(
   projectId: string,
   messageId: string,
@@ -229,6 +252,22 @@ export async function respondAgentMessage(
     },
   );
   return payload.message;
+}
+
+export async function steerExecution(
+  projectId: string,
+  executionId: string,
+  input: { body: string; mode?: "soft_steer" | "hard_steer"; actor?: string; source?: string },
+): Promise<unknown> {
+  const payload = await fetchJson<{ steering: unknown }>(
+    `/api/v1/projects/${projectId}/executions/${executionId}/steer`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  return payload.steering;
 }
 
 export async function updateProject(projectId: string, input: ProjectUpdateInput): Promise<Project> {

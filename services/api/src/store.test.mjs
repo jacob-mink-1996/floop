@@ -1332,6 +1332,85 @@ test("store allows ticket comments in every interaction mode without implicit re
   }
 });
 
+test("store hard steers active harness sessions by continuing the same ticket role with native session metadata", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Start work before steering arrives.",
+  });
+  store.updateExecutionHarnessSession("project_floop", execution.id, {
+    harnessKind: "codex_exec",
+    externalThreadId: "codex-thread-steer",
+    harnessCapabilities: ["queued_context", "interrupt_and_resume"],
+  });
+
+  const result = store.steerExecution("project_floop", execution.id, {
+    body: "Use SQLite first and avoid adding Redis.",
+    mode: "hard_steer",
+    actor: "jacob",
+    source: "human",
+  });
+  const original = store.getExecution("project_floop", execution.id);
+  const continued = result.execution;
+  const message = store.getAgentMessage("project_floop", result.message.id);
+
+  assert.equal(result.delivery.status, "resumed");
+  assert.equal(result.delivery.capability, "interrupt_and_resume");
+  assert.equal(original.outcome, "needs_continue");
+  assert.equal(continued.role, "developer");
+  assert.equal(continued.iteration, 2);
+  assert.equal(continued.resumedFromExecutionId, execution.id);
+  assert.equal(continued.harnessKind, "codex_exec");
+  assert.equal(continued.externalThreadId, "codex-thread-steer");
+  assert.deepEqual(continued.harnessCapabilities, ["queued_context", "interrupt_and_resume"]);
+  assert.equal(continued.steeringMetadata.resumeStrategy, "interrupt_and_resume");
+  assert.match(continued.steeringMetadata.steeringBody, /SQLite/);
+  assert.equal(message.metadata.deliveryStatus, "resumed");
+  assert.equal(message.metadata.resumedExecutionId, continued.id);
+
+  store.close();
+});
+
+test("store retargets rapid repeated steering to the latest active resumed session", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Start work before steering arrives.",
+  });
+  store.updateExecutionHarnessSession("project_floop", execution.id, {
+    harnessKind: "codex_exec",
+    externalThreadId: "codex-thread-rapid-steer",
+    harnessCapabilities: ["queued_context", "interrupt_and_resume"],
+  });
+
+  const first = store.steerExecution("project_floop", execution.id, {
+    body: "First steer: use SQLite.",
+    mode: "hard_steer",
+    actor: "jacob",
+    source: "human",
+  });
+  const second = store.steerExecution("project_floop", execution.id, {
+    body: "Second steer: also avoid Redis.",
+    mode: "hard_steer",
+    actor: "jacob",
+    source: "human",
+  });
+  const iteration2 = store.getExecution("project_floop", first.delivery.resumedExecutionId);
+  const iteration3 = store.getExecution("project_floop", second.delivery.resumedExecutionId);
+  const secondMessage = store.getAgentMessage("project_floop", second.message.id);
+
+  assert.equal(second.delivery.interruptedExecutionId, iteration2.id);
+  assert.equal(iteration2.outcome, "needs_continue");
+  assert.equal(iteration3.iteration, 3);
+  assert.equal(iteration3.resumedFromExecutionId, iteration2.id);
+  assert.equal(iteration3.externalThreadId, "codex-thread-rapid-steer");
+  assert.match(iteration3.steeringMetadata.steeringBody, /avoid Redis/);
+  assert.equal(secondMessage.target.executionId, iteration2.id);
+  assert.equal(secondMessage.target.requestedExecutionId, execution.id);
+
+  store.close();
+});
+
 test("store preserves blocked questions across interaction modes and only auto-attaches the visible question comment where policy allows", () => {
   const cases = [
     ["manual", "pending"],

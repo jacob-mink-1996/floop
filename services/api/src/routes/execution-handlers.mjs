@@ -4,6 +4,7 @@ import {
   parseCreateExecutionInput,
   parseCreateReviewInput,
   parseCreateValidationInput,
+  parseSteerExecutionInput,
 } from "../../../../packages/contracts/src/index.mjs";
 import { respondCreated, respondMaybe } from "./shared.mjs";
 
@@ -54,6 +55,22 @@ export function handleExecutionRoute(route, _url, body, store, context = {}) {
           body?.reason || "Execution cancelled by operator",
         );
         return respondMaybe(execution, "execution");
+      }
+    case "executionSteer":
+      {
+        const result = store.steerExecution(
+          route.params.projectId,
+          route.params.executionId,
+          parseSteerExecutionInput(body),
+        );
+        if (result?.delivery?.status === "resumed") {
+          context.executionDriver?.cancelExecution?.(
+            route.params.projectId,
+            result.delivery.interruptedExecutionId || route.params.executionId,
+            "Execution interrupted for steering.",
+          );
+        }
+        return respondMaybe(result, "steering");
       }
     case "ticketReviews":
       if (route.method === "GET") {

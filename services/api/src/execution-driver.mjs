@@ -209,6 +209,7 @@ class ExecutionDriver {
         await materializeWorktrees(ticket, execution);
         const runtime = await prepareRuntimeArtifacts(project, ticket, execution, this.store);
         const result = await executeAdapterRun(adapterRun, {
+          store: this.store,
           project,
           ticket,
           execution,
@@ -575,6 +576,7 @@ async function executeAdapterRun(adapterRun, options) {
       resultExitGraceMs: options.resultExitGraceMs,
       signal: options.signal,
       metadata: buildProcessMetadata(adapterRun, options),
+      onStdoutText: createCodexStdoutObserver(options),
     });
   }
 
@@ -611,6 +613,7 @@ function runProcess(
     resultExitGraceMs = DEFAULT_RESULT_EXIT_GRACE_MS,
     signal,
     metadata = {},
+    onStdoutText = null,
   },
 ) {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -679,6 +682,7 @@ function runProcess(
       stdout += text;
       if (stdoutPath) stdoutWrite = stdoutWrite.then(() => appendFile(stdoutPath, text, "utf8"));
       record({ event: "process.output", stream: "stdout", bytes: chunk.length, text });
+      onStdoutText?.(text);
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString();
@@ -1460,6 +1464,18 @@ function isArtifactLike(value) {
 function buildCodexArgs(adapterRun, { project, ticket, execution, runtime }) {
   const args = [
     "exec",
+    "--json",
+  ];
+
+  const steeringThreadId =
+    execution.steeringMetadata?.resumeStrategy === "interrupt_and_resume" && execution.externalThreadId
+      ? execution.externalThreadId
+      : "";
+  if (steeringThreadId) {
+    args.push("resume", steeringThreadId);
+  }
+
+  args.push(
     "-C",
     execution.worktrees[0]?.path || project.workspaceRoot,
     "--add-dir",
@@ -1469,7 +1485,7 @@ function buildCodexArgs(adapterRun, { project, ticket, execution, runtime }) {
     adapterRun.sandbox,
     "-c",
     `approval_policy=${JSON.stringify(adapterRun.approvalPolicy)}`,
-  ];
+  );
 
   if (adapterRun.ignoreUserConfig) {
     args.push("--ignore-user-config");
@@ -1511,7 +1527,8 @@ function buildCodexPrompt(project, ticket, execution, adapterRun, runtime) {
   const refinementPolicy = describeRefinementMode(project.policy?.refinementMode);
   const requiredValidationCommandProfile =
     project.policy?.requiredValidationCommandProfileForMerge || "none";
-  return `${preamble}You are the ${execution.role} lane for Floop ticket ${ticket.key}.
+  const steeringPreamble = buildSteeringPreamble(execution);
+  return `${preamble}${steeringPreamble}You are the ${execution.role} lane for Floop ticket ${ticket.key}.
 
 Operate inside the provided worktree and make the required code changes directly.
 
@@ -1550,6 +1567,55 @@ ${resultContract}
 If you lack a decision, product detail, credential, policy call, or environmental fact needed to proceed, ask for it explicitly by returning outcome "blocked" with blockedKind "needs_human_input". Fully autonomous mode still allows this: Floop will surface the question on the ticket and can continue the lane after a human or agent response.
 
 If you are blocked or incomplete, say so explicitly in the JSON outcome fields instead of pretending success.`;
+}
+
+function buildSteeringPreamble(execution) {
+  const metadata = execution.steeringMetadata || {};
+  if (metadata.resumeStrategy !== "interrupt_and_resume" || !metadata.steeringBody) {
+    return "";
+  }
+  return [
+    "Floop interrupted the previous active run so this same native agent session could be steered.",
+    `Steering note from ${metadata.steeringActor || "operator"}:`,
+    metadata.steeringBody,
+    "",
+    "Before changing files, inspect the current worktree state and adapt the previous plan to this steering note.",
+    "",
+  ].join("\n");
+}
+
+function createCodexStdoutObserver(options) {
+  let buffer = "";
+  return (text) => {
+    buffer += text;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const event = parseJsonLine(line);
+      if (!event) {
+        continue;
+      }
+      if (event.type === "thread.started" && typeof event.thread_id === "string" && event.thread_id) {
+        options.store?.updateExecutionHarnessSession?.(options.execution.projectId, options.execution.id, {
+          harnessKind: "codex_exec",
+          externalThreadId: event.thread_id,
+          harnessCapabilities: ["queued_context", "interrupt_and_resume"],
+        });
+      }
+    }
+  };
+}
+
+function parseJsonLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("{")) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
 }
 
 function buildCodexRoleGuidance(role, policy = {}) {

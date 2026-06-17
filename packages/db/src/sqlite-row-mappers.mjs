@@ -54,6 +54,13 @@ export function mapExecution(row) {
     blockedKind: row.blocked_kind,
     claimToken: row.claim_token || "",
     claimExpiresAt: row.claim_expires_at || "",
+    harnessKind: row.harness_kind || "",
+    externalThreadId: row.external_thread_id || "",
+    externalSessionId: row.external_session_id || "",
+    externalConversationId: row.external_conversation_id || "",
+    harnessCapabilities: JSON.parse(row.harness_capabilities_json || "[]"),
+    resumedFromExecutionId: row.resumed_from_execution_id || "",
+    steeringMetadata: JSON.parse(row.steering_metadata_json || "{}"),
     startedAt: row.started_at,
     finishedAt: row.finished_at,
   };

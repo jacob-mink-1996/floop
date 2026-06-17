@@ -789,6 +789,72 @@ test("agent message response API rejects ordinary comments and stale HITL answer
   });
 });
 
+test("execution steering API records comments and resumes native harness sessions when available", async () => {
+  await withServer(async (baseUrl, store) => {
+    const executionResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2/executions`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          role: "developer",
+          reason: "Start execution before steering.",
+        }),
+      },
+    );
+    const executionBody = await executionResponse.json();
+    assert.equal(executionResponse.status, 201);
+    store.updateExecutionHarnessSession("project_floop", executionBody.execution.id, {
+      harnessKind: "codex_exec",
+      externalThreadId: "codex-thread-api",
+      harnessCapabilities: ["queued_context", "interrupt_and_resume"],
+    });
+
+    const steerResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/executions/${executionBody.execution.id}/steer`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          body: "Use SQLite first and avoid Redis.",
+          mode: "hard_steer",
+          actor: "jacob",
+          source: "human",
+        }),
+      },
+    );
+    const steerBody = await steerResponse.json();
+    const original = store.getExecution("project_floop", executionBody.execution.id);
+
+    assert.equal(steerResponse.status, 200);
+    assert.equal(steerBody.steering.delivery.status, "resumed");
+    assert.equal(original.outcome, "needs_continue");
+    assert.equal(steerBody.steering.execution.externalThreadId, "codex-thread-api");
+    assert.equal(steerBody.steering.execution.resumedFromExecutionId, executionBody.execution.id);
+    assert.equal(steerBody.steering.message.metadata.deliveryStatus, "resumed");
+
+    const secondSteerResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/executions/${executionBody.execution.id}/steer`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          body: "Second note should replace the first pending resume context.",
+          mode: "hard_steer",
+          actor: "jacob",
+          source: "human",
+        }),
+      },
+    );
+    const secondSteerBody = await secondSteerResponse.json();
+
+    assert.equal(secondSteerResponse.status, 200);
+    assert.equal(secondSteerBody.steering.delivery.interruptedExecutionId, steerBody.steering.delivery.resumedExecutionId);
+    assert.equal(secondSteerBody.steering.execution.resumedFromExecutionId, steerBody.steering.delivery.resumedExecutionId);
+    assert.equal(secondSteerBody.steering.message.target.requestedExecutionId, executionBody.execution.id);
+  });
+});
+
 test("API surfaces merge-policy blocks when validation profile does not satisfy policy", async () => {
   await withServer(async (baseUrl) => {
     await fetch(`${baseUrl}/api/v1/projects/project_floop/policy`, {

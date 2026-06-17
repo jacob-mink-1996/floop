@@ -199,6 +199,9 @@ try {
   await waitForScript("!Array.from(document.querySelectorAll('article')).some((item) => item.innerText.includes('finish_to_start'))");
   await clickText("Stop editing");
 
+  await setFormValue("Add comment", "body", "Normal comment should add context without dispatching.");
+  await clickText("Add comment");
+  await waitForText("Normal comment should add context without dispatching.");
   await setFormValue("Dispatch agent", "summary", "Starting from the browser UI.");
   await clickText("Dispatch agent");
   await waitForText("CURRENT WORK");

@@ -115,6 +115,13 @@ create table if not exists executions (
   blocked_kind text not null default '',
   claim_token text not null default '',
   claim_expires_at text,
+  harness_kind text not null default '',
+  external_thread_id text not null default '',
+  external_session_id text not null default '',
+  external_conversation_id text not null default '',
+  harness_capabilities_json text not null default '[]',
+  resumed_from_execution_id text references executions(id) on delete set null,
+  steering_metadata_json text not null default '{}',
   started_at text not null,
   finished_at text,
   created_at text not null,
@@ -282,6 +289,8 @@ create index if not exists idx_ticket_repo_targets_ticket_id on ticket_repo_targ
 create index if not exists idx_ticket_dependencies_blocked_ticket_id on ticket_dependencies(blocked_ticket_id);
 create index if not exists idx_executions_project_id on executions(project_id);
 create index if not exists idx_executions_ticket_id on executions(ticket_id);
+create index if not exists idx_executions_external_thread_id on executions(external_thread_id);
+create index if not exists idx_executions_resumed_from_execution_id on executions(resumed_from_execution_id);
 create index if not exists idx_worktrees_project_id on worktrees(project_id);
 create index if not exists idx_worktrees_ticket_id on worktrees(ticket_id);
 create index if not exists idx_worktrees_execution_id on worktrees(execution_id);

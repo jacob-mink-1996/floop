@@ -6,6 +6,7 @@ import { migration as mergeRunClaimsAndFinishedAt } from "./005_merge_run_claims
 import { migration as artifactMergeRunFk } from "./006_artifact_merge_run_fk.mjs";
 import { migration as agentMessagesAndInteractionMode } from "./007_agent_messages_and_interaction_mode.mjs";
 import { migration as demoEvidencePolicy } from "./008_demo_evidence_policy.mjs";
+import { migration as executionHarnessSessions } from "./009_execution_harness_sessions.mjs";
 
 export const sqliteMigrations = [
   projectPolicyControls,
@@ -16,6 +17,7 @@ export const sqliteMigrations = [
   artifactMergeRunFk,
   agentMessagesAndInteractionMode,
   demoEvidencePolicy,
+  executionHarnessSessions,
 ];
 
 for (let index = 0; index < sqliteMigrations.length; index += 1) {

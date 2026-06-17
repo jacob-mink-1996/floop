@@ -82,6 +82,10 @@ if (!process.argv.includes("--ignore-user-config")) {
   process.stderr.write("missing ignore-user-config flag\\n");
   process.exit(2);
 }
+if (!process.argv.includes("--json")) {
+  process.stderr.write("missing json event flag\\n");
+  process.exit(2);
+}
 const modelIndex = process.argv.indexOf("-m");
 if (modelIndex >= 0 && process.argv[modelIndex + 1] === "codex-latest") {
   process.stderr.write("legacy codex-latest model was passed explicitly\\n");
@@ -107,7 +111,8 @@ process.stdin.on("end", () => {
   if (outputFile) {
     fs.writeFileSync(outputFile, "Final agent message from fake codex.");
   }
-  process.stdout.write("fake codex stdout\\n");
+  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "codex-thread-fixture" }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "fake codex stdout" } }) + "\\n");
 });
 `,
     { encoding: "utf8", mode: 0o755 },
@@ -141,6 +146,9 @@ process.stdin.on("end", () => {
     assert.equal(completed.outcome, "completed");
     assert.equal(completed.summaryMd, "Codex adapter completed the ticket.");
     assert.equal(completed.ticketState, "REVIEWING");
+    assert.equal(completed.harnessKind, "codex_exec");
+    assert.equal(completed.externalThreadId, "codex-thread-fixture");
+    assert.deepEqual(completed.harnessCapabilities, ["queued_context", "interrupt_and_resume"]);
     assert.equal(ticket.state, "REVIEWING");
     assert.ok(finalMessageArtifact);
     assert.ok(stdoutArtifact);
@@ -2628,6 +2636,81 @@ setInterval(() => {}, 1000);
     assert.equal(readFileSync(stoppedPath, "utf8"), "stopped");
     assert.match(events, /process\.result_detected/);
     assert.match(events, /"resultFileCompleted":true/);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test("execution driver resumes Codex exec sessions with steering prompts", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-codex-steer-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const fakeCodexPath = join(fixtureDir, "fake-codex-resume.js");
+  const argsPath = join(fixtureDir, "codex-args.json");
+  const promptPath = join(fixtureDir, "codex-prompt.txt");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    fakeCodexPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+});
+process.stdin.on("end", () => {
+  fs.writeFileSync(${JSON.stringify(promptPath)}, prompt);
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({ outcome: "completed", summaryMd: "Resumed Codex execution completed." }),
+  );
+  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "codex-thread-steer" }) + "\\n");
+});
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "codex",
+      model: "codex-latest",
+      config: {
+        executable: fakeCodexPath,
+      },
+    });
+    const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Start work before steering.",
+    });
+    store.updateExecutionHarnessSession("project_floop", execution.id, {
+      harnessKind: "codex_exec",
+      externalThreadId: "codex-thread-steer",
+      harnessCapabilities: ["queued_context", "interrupt_and_resume"],
+    });
+    const steered = store.steerExecution("project_floop", execution.id, {
+      body: "Use SQLite and avoid Redis.",
+      mode: "hard_steer",
+      actor: "jacob",
+      source: "human",
+    });
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+
+    await driver.pollOnce();
+
+    const args = JSON.parse(readFileSync(argsPath, "utf8"));
+    const prompt = readFileSync(promptPath, "utf8");
+    const completed = store.getExecution("project_floop", steered.delivery.resumedExecutionId);
+
+    assert.deepEqual(args.slice(0, 4), ["exec", "--json", "resume", "codex-thread-steer"]);
+    assert.match(prompt, /same native agent session could be steered/);
+    assert.match(prompt, /Use SQLite and avoid Redis/);
+    assert.equal(completed.outcome, "completed");
   } finally {
     store.close();
     rmSync(fixtureDir, { recursive: true, force: true });

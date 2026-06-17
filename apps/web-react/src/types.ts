@@ -200,6 +200,13 @@ export type Execution = {
   blockedKind?: string;
   claimed?: boolean;
   claimExpiresAt?: string;
+  harnessKind?: string;
+  externalThreadId?: string;
+  externalSessionId?: string;
+  externalConversationId?: string;
+  harnessCapabilities?: string[];
+  resumedFromExecutionId?: string;
+  steeringMetadata?: Record<string, unknown>;
   startedAt: string;
   finishedAt: string;
   artifacts?: Artifact[];

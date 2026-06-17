@@ -218,6 +218,15 @@ export function createExecutionCommands({
         blockedKind: "",
         claimToken: "",
         claimExpiresAt: null,
+        harnessKind: optionalText(input.harnessKind),
+        externalThreadId: optionalText(input.externalThreadId),
+        externalSessionId: optionalText(input.externalSessionId),
+        externalConversationId: optionalText(input.externalConversationId),
+        harnessCapabilities: Array.isArray(input.harnessCapabilities) ? input.harnessCapabilities.filter((item) => typeof item === "string") : [],
+        resumedFromExecutionId: optionalText(input.resumedFromExecutionId),
+        steeringMetadata: input.steeringMetadata && typeof input.steeringMetadata === "object" && !Array.isArray(input.steeringMetadata)
+          ? input.steeringMetadata
+          : {},
         startedAt: timestamp,
         finishedAt: null,
         createdAt: timestamp,
@@ -237,8 +246,10 @@ export function createExecutionCommands({
             `insert into executions (
               id, project_id, ticket_id, agent_profile_id, role, iteration, status, outcome,
               summary_md, remaining_work_md, expected_next_evidence_md, failure_kind, blocked_kind,
-              claim_token, claim_expires_at, started_at, finished_at, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              claim_token, claim_expires_at, harness_kind, external_thread_id, external_session_id,
+              external_conversation_id, harness_capabilities_json, resumed_from_execution_id,
+              steering_metadata_json, started_at, finished_at, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             execution.id,
@@ -256,6 +267,13 @@ export function createExecutionCommands({
             execution.blockedKind,
             execution.claimToken,
             execution.claimExpiresAt,
+            execution.harnessKind,
+            execution.externalThreadId,
+            execution.externalSessionId,
+            execution.externalConversationId,
+            JSON.stringify(execution.harnessCapabilities),
+            execution.resumedFromExecutionId || null,
+            JSON.stringify(execution.steeringMetadata),
             execution.startedAt,
             execution.finishedAt,
             execution.createdAt,
@@ -501,7 +519,151 @@ export function createExecutionCommands({
         agentProfileId: execution.agent_profile_id,
         iteration: nextIteration,
         reason: optionalText(input.reason, "Continuation requested"),
+        harnessKind: optionalText(input.harnessKind, execution.harness_kind || ""),
+        externalThreadId: optionalText(input.externalThreadId, execution.external_thread_id || ""),
+        externalSessionId: optionalText(input.externalSessionId, execution.external_session_id || ""),
+        externalConversationId: optionalText(input.externalConversationId, execution.external_conversation_id || ""),
+        harnessCapabilities: Array.isArray(input.harnessCapabilities)
+          ? input.harnessCapabilities
+          : JSON.parse(execution.harness_capabilities_json || "[]"),
+        resumedFromExecutionId: execution.id,
+        steeringMetadata: input.steeringMetadata || {},
       });
+    },
+
+    updateExecutionHarnessSession(projectId, executionId, input = {}) {
+      const execution = getExecutionRow(database, projectId, executionId);
+      if (!execution) {
+        return null;
+      }
+      const timestamp = now();
+      const capabilities = Array.isArray(input.harnessCapabilities)
+        ? input.harnessCapabilities.filter((item) => typeof item === "string")
+        : JSON.parse(execution.harness_capabilities_json || "[]");
+      database
+        .prepare(
+          `update executions
+           set harness_kind = ?, external_thread_id = ?, external_session_id = ?,
+               external_conversation_id = ?, harness_capabilities_json = ?, updated_at = ?
+           where project_id = ? and id = ?`,
+        )
+        .run(
+          optionalText(input.harnessKind, execution.harness_kind || ""),
+          optionalText(input.externalThreadId, execution.external_thread_id || ""),
+          optionalText(input.externalSessionId, execution.external_session_id || ""),
+          optionalText(input.externalConversationId, execution.external_conversation_id || ""),
+          JSON.stringify(capabilities),
+          timestamp,
+          projectId,
+          executionId,
+        );
+      return commands.getExecution(projectId, executionId);
+    },
+
+    steerExecution(projectId, executionId, input = {}) {
+      const requestedExecution = getExecutionRow(database, projectId, executionId);
+      if (!requestedExecution) {
+        return null;
+      }
+      const execution = resolveSteeringTargetExecution(database, projectId, requestedExecution);
+      const ticket = getTicketRow(database, projectId, execution.ticket_id);
+      const body = requiredText(input.body, "body");
+      const mode = input.mode === "hard_steer" ? "hard_steer" : "soft_steer";
+      const timestamp = now();
+      const actor = optionalText(input.actor, "operator");
+      const source = optionalText(input.source, "human");
+      const capabilities = JSON.parse(execution.harness_capabilities_json || "[]");
+      const canInterruptAndResume = capabilities.includes("interrupt_and_resume") && Boolean(execution.external_thread_id);
+      const delivery = {
+        status: mode === "hard_steer" && canInterruptAndResume ? "resumed" : "queued",
+        capability: mode === "hard_steer" && canInterruptAndResume ? "interrupt_and_resume" : "queued_context",
+        interruptedExecutionId: mode === "hard_steer" && canInterruptAndResume ? execution.id : "",
+        resumedExecutionId: "",
+      };
+
+      const store = getStore();
+      const message = store.createAgentMessage(projectId, {
+        actor,
+        source,
+        intent: "comment_on_ticket",
+        target: { ticketId: execution.ticket_id, executionId: execution.id, requestedExecutionId: executionId },
+        summary: `${ticket.key} steering note`,
+        body,
+        metadata: {
+          operatorComment: true,
+          commentMode: "steer",
+          steeringMode: mode,
+          targetExecutionId: execution.id,
+          requestedExecutionId: executionId,
+          targetHarnessKind: execution.harness_kind || "",
+          deliveryStatus: delivery.status,
+          deliveryCapability: delivery.capability,
+        },
+      });
+      store.updateAgentMessage(projectId, message.id, {
+        status: "attached",
+        promotedKind: "ticket_event",
+        promotedRef: execution.ticket_id,
+        reasonSource: source,
+      });
+
+      let continued = null;
+      if (mode === "hard_steer" && canInterruptAndResume) {
+        continued = commands.continueExecution(projectId, execution.id, {
+          reason: `Steering from ${actor}: ${body}`,
+          harnessKind: execution.harness_kind,
+          externalThreadId: execution.external_thread_id,
+          externalSessionId: execution.external_session_id,
+          externalConversationId: execution.external_conversation_id,
+          harnessCapabilities: capabilities,
+          steeringMetadata: {
+            steeringMessageId: message.id,
+            steeringBody: body,
+            steeringActor: actor,
+            steeringSource: source,
+            steeredAt: timestamp,
+            resumeStrategy: "interrupt_and_resume",
+          },
+        });
+        delivery.resumedExecutionId = continued?.id || "";
+        const updated = store.getAgentMessage(projectId, message.id);
+        store.updateAgentMessage(projectId, message.id, {
+          status: "attached",
+          promotedKind: "execution",
+          promotedRef: delivery.resumedExecutionId || executionId,
+          reasonSource: source,
+        });
+        if (updated) {
+          database
+            .prepare("update agent_messages set metadata_json = ?, updated_at = ? where project_id = ? and id = ?")
+            .run(
+              JSON.stringify({
+                ...updated.metadata,
+                deliveryStatus: delivery.status,
+                resumedExecutionId: delivery.resumedExecutionId,
+              }),
+              timestamp,
+              projectId,
+              message.id,
+            );
+        }
+      }
+
+      insertEvent(database, {
+        projectId,
+        ticketId: execution.ticket_id,
+        type: "agent.message_attached",
+        summary: `${ticket.key} steering note ${delivery.status}`,
+        detail: body,
+        reasonCode: mode,
+        reasonSource: source,
+      });
+
+      return {
+        message: store.getAgentMessage(projectId, message.id),
+        delivery,
+        execution: continued ? commands.getExecution(projectId, continued.id) : commands.getExecution(projectId, executionId),
+      };
     },
 
     cancelExecution(projectId, executionId, input = {}) {
@@ -611,6 +773,42 @@ export function createExecutionCommands({
 
 function isWorkerLaneRole(role) {
   return role !== "reviewer" && role !== "validator";
+}
+
+function resolveSteeringTargetExecution(database, projectId, execution) {
+  if (!execution.finished_at && execution.status === "running") {
+    return execution;
+  }
+  const hasThreadId = Boolean(execution.external_thread_id);
+  const activeContinuation = hasThreadId
+    ? database
+        .prepare(
+          `select *
+           from executions
+           where project_id = ?
+             and ticket_id = ?
+             and role = ?
+             and status = 'running'
+             and finished_at is null
+             and external_thread_id = ?
+           order by iteration desc, started_at desc
+           limit 1`,
+        )
+        .get(projectId, execution.ticket_id, execution.role, execution.external_thread_id)
+    : database
+        .prepare(
+          `select *
+           from executions
+           where project_id = ?
+             and ticket_id = ?
+             and role = ?
+             and status = 'running'
+             and finished_at is null
+           order by iteration desc, started_at desc
+           limit 1`,
+        )
+        .get(projectId, execution.ticket_id, execution.role);
+  return activeContinuation || execution;
 }
 
 function dismissPendingInputRequestsForExecution(database, { projectId, executionId, timestamp }) {
