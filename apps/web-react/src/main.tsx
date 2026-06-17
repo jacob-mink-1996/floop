@@ -1895,19 +1895,16 @@ function TicketDetailPanel({
       ) : (
         <div className="detail-stack">
           {error ? <div className="status is-error">{error}</div> : null}
-          {activeExecution ? (
-            <ActiveAgentPanel
+          <section className="ticket-cockpit">
+            <TicketCockpit
               projectId={projectId}
               ticket={ticket}
-              execution={activeExecution}
+              action={action}
               busy={busy}
               onRun={runAction}
               onRefresh={onRefresh}
               onFullRefresh={onFullRefresh}
             />
-          ) : null}
-          <section className="ticket-cockpit">
-            <TicketCockpit ticket={ticket} action={action} />
             <TicketActionForm
               projectId={projectId}
               ticket={ticket}
@@ -2014,6 +2011,13 @@ function TicketDetailPanel({
           </details>
           <details className="detail-disclosure">
             <summary>Advanced</summary>
+            <ManualTicketActionForm
+              projectId={projectId}
+              ticket={ticket}
+              busy={busy}
+              onRun={runAction}
+              onRefresh={onRefresh}
+            />
             <TicketDangerZone
               projectId={projectId}
               ticket={ticket}
@@ -2029,7 +2033,23 @@ function TicketDetailPanel({
   );
 }
 
-function TicketCockpit({ ticket, action }: { ticket: TicketDetail; action: { label: string; detail: string } }) {
+function TicketCockpit({
+  projectId,
+  ticket,
+  action,
+  busy,
+  onRun,
+  onRefresh,
+  onFullRefresh,
+}: {
+  projectId: string;
+  ticket: TicketDetail;
+  action: { label: string; detail: string };
+  busy: string;
+  onRun: (label: string, work: () => Promise<void>) => Promise<void>;
+  onRefresh: (ticketId?: string) => Promise<void>;
+  onFullRefresh: () => Promise<void>;
+}) {
   const activeExecution = ticket.executions.find((execution) => execution.status === "running");
   const latestExecution = ticket.executions[0];
   const latestReview = ticket.reviews[0];
@@ -2043,6 +2063,17 @@ function TicketCockpit({ ticket, action }: { ticket: TicketDetail; action: { lab
       </div>
       <div className="cockpit-flow">
         <PhaseRail items={ticketPhaseItems(ticket)} />
+      </div>
+      <div className="cockpit-work">
+        <TicketWorkPanel
+          projectId={projectId}
+          ticket={ticket}
+          execution={activeExecution}
+          busy={busy}
+          onRun={onRun}
+          onRefresh={onRefresh}
+          onFullRefresh={onFullRefresh}
+        />
       </div>
       <div className="cockpit-now">
         <div className="section-heading">
@@ -2060,7 +2091,7 @@ function TicketCockpit({ ticket, action }: { ticket: TicketDetail; action: { lab
   );
 }
 
-function ActiveAgentPanel({
+function TicketWorkPanel({
   projectId,
   ticket,
   execution,
@@ -2071,22 +2102,51 @@ function ActiveAgentPanel({
 }: {
   projectId: string;
   ticket: TicketDetail;
-  execution: NonNullable<TicketDetail["executions"][number]>;
+  execution?: NonNullable<TicketDetail["executions"][number]>;
   busy: string;
   onRun: (label: string, work: () => Promise<void>) => Promise<void>;
   onRefresh: (ticketId?: string) => Promise<void>;
   onFullRefresh: () => Promise<void>;
 }) {
-  const worktree = execution.worktrees?.[0] || ticket.worktrees.find((candidate) => candidate.executionId === execution.id);
-  const jsonlArtifact = execution.artifacts?.find((artifact) => artifact.label === "Adapter events JSONL");
-  const logArtifacts = (execution.artifacts || []).filter((artifact) => artifact.kind === "log").slice(0, 3);
-  const claimLabel = execution.claimed
-    ? execution.claimExpiresAt
-      ? `Claimed until ${formatDate(execution.claimExpiresAt)}`
-      : "Claimed"
-    : "Waiting for worker claim";
+  const latestExecution = ticket.executions[0];
+  const visibleExecution = execution || latestExecution;
+  const worktree = visibleExecution
+    ? visibleExecution.worktrees?.[0] || ticket.worktrees.find((candidate) => candidate.executionId === visibleExecution.id)
+    : undefined;
+  const logArtifacts = (visibleExecution?.artifacts || []).filter((artifact) => artifact.kind === "log").slice(0, 3);
+  const phases: PhaseItem[] = [
+    {
+      id: "claim",
+      label: "Claim",
+      complete: Boolean(execution?.claimed || !execution),
+      current: Boolean(execution && !execution.claimed),
+      tone: execution ? execution.claimed ? "done" : "active" : "neutral",
+    },
+    {
+      id: "output",
+      label: "Output",
+      complete: Boolean(visibleExecution?.artifacts?.length || visibleExecution?.summaryMd),
+      current: Boolean(execution && !visibleExecution?.summaryMd),
+      tone: visibleExecution?.summaryMd || visibleExecution?.artifacts?.length ? "done" : execution ? "active" : "neutral",
+    },
+    {
+      id: "evidence",
+      label: "Evidence",
+      complete: Boolean(ticket.reviews.length || ticket.validations.length),
+      current: ticket.state === "REVIEWING" || ticket.state === "VALIDATING",
+      tone: ticket.reviews.length || ticket.validations.length ? "done" : ticket.state === "REVIEWING" || ticket.state === "VALIDATING" ? "active" : "neutral",
+    },
+    {
+      id: "finish",
+      label: visibleExecution?.status === "failed" ? "Failed" : "Finish",
+      complete: Boolean(visibleExecution?.finishedAt || ticket.state === "DONE"),
+      current: Boolean(execution),
+      tone: visibleExecution?.failureKind || visibleExecution?.status === "failed" ? "danger" : visibleExecution?.finishedAt || ticket.state === "DONE" ? "done" : execution ? "active" : "neutral",
+    },
+  ];
 
   async function handleStop() {
+    if (!execution) return;
     await onRun("Stopping agent", async () => {
       await cancelExecution(projectId, execution.id, {
         reason: `Stopped active ${prettyRole(execution.role)} lane from ${ticket.key}.`,
@@ -2096,33 +2156,46 @@ function ActiveAgentPanel({
     });
   }
 
-  return (
-    <section className="active-agent-panel">
-      <div className="active-agent-head">
-        <div>
-          <p className="kicker">Agent Working</p>
-          <h3>{prettyRole(execution.role)} iteration {execution.iteration}</h3>
+  if (!visibleExecution) {
+    return (
+      <article className="ticket-work-panel">
+        <div className="ticket-work-head">
+          <div>
+            <p className="kicker">Current work</p>
+            <h3>No agent running</h3>
+          </div>
+          <span className="quiet-status">Ready</span>
         </div>
-        <span className="work-pulse" aria-label="Agent is active" />
+        <p className="ticket-work-summary">Dispatch an agent when this ticket is ready to move.</p>
+        <PhaseRail items={phases} compact />
+      </article>
+    );
+  }
+
+  return (
+    <article className={`ticket-work-panel ${execution ? "is-active" : ""}`}>
+      <div className="ticket-work-head">
+        <div>
+          <p className="kicker">Current work</p>
+          <h3>{prettyRole(visibleExecution.role)} iteration {visibleExecution.iteration}</h3>
+        </div>
+        {execution ? <span className="work-pulse" aria-label="Agent is active" /> : <span className="quiet-status">{visibleExecution.outcome || prettyState(visibleExecution.status)}</span>}
       </div>
-      <div className="active-agent-grid">
-        <Fact label="State" value={claimLabel} />
-        <Fact label="Branch" value={worktree?.branchName || "Preparing"} />
-        <Fact label="Worktree" value={worktree?.status || "Active"} />
-        <Fact label="Logs" value={jsonlArtifact ? "JSONL" : logArtifacts.length ? "Text" : "Starting"} />
-      </div>
-      <div className="active-agent-actions">
-        <button className="danger-button" type="button" disabled={Boolean(busy)} onClick={handleStop}>
-          <Square size={14} />
-          Stop agent
-        </button>
+      <p className="ticket-work-summary">{visibleExecution.summaryMd || (execution ? "Agent is working in the background." : "Latest run has no summary yet.")}</p>
+      <PhaseRail items={phases} compact />
+      {worktree?.branchName ? <span className="ticket-work-branch">{worktree.branchName}</span> : null}
+      <div className="ticket-work-actions">
+        {execution ? (
+          <button className="danger-button" type="button" disabled={Boolean(busy)} onClick={handleStop}>
+            <Square size={14} />
+            Stop agent
+          </button>
+        ) : null}
         {logArtifacts.map((artifact) => (
-          <a key={artifact.id} className="quiet-link" href={artifact.uri} target="_blank" rel="noreferrer">
-            {artifact.label}
-          </a>
+          <LogChip key={artifact.id} label={artifact.label} value={artifact.uri} />
         ))}
       </div>
-    </section>
+    </article>
   );
 }
 
@@ -2566,6 +2639,69 @@ function TicketActionForm({
   onRun: (label: string, work: () => Promise<void>) => Promise<void>;
   onRefresh: (ticketId?: string) => Promise<void>;
 }) {
+  if (ticket.state !== "READY" && ticket.state !== "REWORK") {
+    return null;
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const role = String(form.get("role") || ticket.assignedRole || "developer") as RoleName;
+    await onRun("Dispatching agent", async () => {
+      await startExecution(projectId, ticket.id, {
+        role,
+        reason: String(form.get("summary") || `Dispatch ${prettyRole(role)} for ${ticket.key}`),
+      });
+      await onRefresh(ticket.id);
+      formElement.reset();
+    });
+  }
+
+  return (
+    <ActionDock
+      label="Dispatch"
+      detail="Choose who should work next. The note is optional."
+      busy={Boolean(busy)}
+      disabled={Boolean(busy)}
+      defaultOpen
+    >
+      <form className="action-form dispatch-action-form" onSubmit={handleSubmit}>
+        <label>
+          <span>Agent</span>
+          <select name="role" defaultValue={ticket.assignedRole || "developer"}>
+            {roles.map((role) => (
+              <option key={role} value={role}>
+                {prettyRole(role)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Why</span>
+          <textarea name="summary" rows={2} placeholder="Optional instruction or constraint for this run." />
+        </label>
+        <button className="primary-button" type="submit" disabled={Boolean(busy)}>
+          {busy || "Dispatch agent"}
+        </button>
+      </form>
+    </ActionDock>
+  );
+}
+
+function ManualTicketActionForm({
+  projectId,
+  ticket,
+  busy,
+  onRun,
+  onRefresh,
+}: {
+  projectId: string;
+  ticket: TicketDetail;
+  busy: string;
+  onRun: (label: string, work: () => Promise<void>) => Promise<void>;
+  onRefresh: (ticketId?: string) => Promise<void>;
+}) {
   const activeExecution = ticket.executions.find((execution) => execution.status === "running");
   const latestCompletedExecution = ticket.executions.find(
     (execution) => execution.status === "completed" && execution.outcome === "completed",
@@ -2625,11 +2761,11 @@ function TicketActionForm({
 
   return (
     <ActionDock
-      label="Dispatch"
-      detail={`${primaryActionLabel(ticket)} · note is optional.`}
+      label="Manual lane control"
+      detail={`${primaryActionLabel(ticket)} · advanced override.`}
       busy={Boolean(busy)}
       disabled={!canSubmitPrimaryAction(ticket, activeExecution, latestCompletedExecution)}
-      defaultOpen={canSubmitPrimaryAction(ticket, activeExecution, latestCompletedExecution)}
+      defaultOpen
     >
       <form className="action-form" onSubmit={handleSubmit}>
         <ActionFields ticket={ticket} activeExecution={activeExecution} latestCompletedExecution={latestCompletedExecution} />

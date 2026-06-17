@@ -245,7 +245,7 @@ async function runTicketLoopFromUi(page, title) {
   }
   await page.getByText("Start developer lane").first().waitFor();
   await fillByName(page, "summary", "Operator starts the real developer agent.");
-  await clickByText(page, "Start run");
+  await clickByText(page, "Dispatch agent");
   await waitForTicketState(title, "WORKING", 12_000);
   await revealTicketState(page, title, "Working");
   await pause(1800);

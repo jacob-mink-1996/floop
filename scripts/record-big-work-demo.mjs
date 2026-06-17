@@ -266,6 +266,7 @@ async function runWalkthrough(page, appUrl) {
   await clickByText(page, "Board");
   await page.getByText(parentTicket.title).first().waitFor();
   await pause(1000);
+  await exerciseTicketHitl(page, project.id, parentTicket);
 
   store.createExecution(project.id, parentTicket.id, {
     role: "product_manager",
@@ -274,6 +275,7 @@ async function runWalkthrough(page, appUrl) {
   const featureTickets = await waitDuringIdle("product manager codex feature breakdown", () =>
     waitForFeatureTickets(project.id, parentTicket.id, 4),
   );
+  await runBacklogRefinement(page, project.id, featureTickets);
   const demoTickets = resolveDemoFeatureTickets(featureTickets);
   await refresh(page);
   await page.getByText(demoTickets.vertical.title).first().waitFor();
@@ -477,6 +479,99 @@ function commandFromEnv(role, fallback) {
   };
 }
 
+async function exerciseTicketHitl(page, projectId, ticket) {
+  const request = store.createAgentMessage(projectId, {
+    actor: "floop",
+    source: "demo_hitl",
+    intent: "request_input",
+    target: { ticketId: ticket.id, role: "product_manager" },
+    summary: `${ticket.key} calendar scope question`,
+    body: "Should the calendar demo assume a team schedule in the operator's local timezone, or should it support per-event timezone selection in the first pass?",
+    metadata: {
+      blockedKind: "needs_product_decision",
+      questionMd:
+        "Should the calendar demo assume a team schedule in the operator's local timezone, or should it support per-event timezone selection in the first pass?",
+      role: "product_manager",
+      suggestedResponders: ["human", "product_manager", "architect"],
+      formSchema: {
+        fields: [
+          {
+            id: "responseMd",
+            type: "textarea",
+            label: "Response",
+            required: true,
+            placeholder: "Give the scope decision the PM should use.",
+          },
+        ],
+        submitLabel: "Submit and continue",
+      },
+    },
+  });
+  store.createAgentMessage(projectId, {
+    actor: "floop",
+    source: "demo_hitl",
+    intent: "comment_on_ticket",
+    target: { ticketId: ticket.id, requestInputMessageId: request.id },
+    summary: `${ticket.key} blocked question`,
+    body: request.body,
+    metadata: {
+      requestInputMessageId: request.id,
+      blockedKind: "needs_product_decision",
+      role: "product_manager",
+      hitlQuestion: true,
+    },
+  });
+
+  await refresh(page);
+  await clickByText(page, "Board");
+  await clickByText(page, ticket.title);
+  await page.getByText("Needs Input").first().waitFor();
+  await fillByName(page, "responseMd", "Use the operator's local timezone for the first pass. Keep timezone selection as a follow-up so the demo stays focused on event creation, recurrence, reminders, and validation evidence.");
+  await clickByText(page, "Submit and continue");
+  await page.getByText("Response to").first().waitFor({ timeout: 10_000 }).catch(() => {});
+  await pause(1200);
+  await closeTicketDetail(page);
+}
+
+async function runBacklogRefinement(page, projectId, featureTickets) {
+  const featureTicketIds = new Set(featureTickets.map((ticket) => ticket.id));
+  for (const ticket of featureTickets) {
+    store.transitionTicket(projectId, ticket.id, {
+      targetState: "PROPOSED",
+      reason: "Queued for backlog refinement before execution.",
+      reasonCode: "demo_backlog_refinement_queue",
+      reasonSource: "demo",
+    });
+  }
+  const ceremony = store.createCeremonyRun(projectId, {
+    type: "refinement",
+    createdByKind: "human",
+    createdByRef: "demo-operator",
+    participantRoles: ["product_manager", "architect", "developer", "reviewer"],
+    deciderRole: "product_manager",
+    consensusPolicy: "decider_synthesizes_objections",
+    scope: {
+      ticketIds: Array.from(featureTicketIds),
+      purpose: "Refine the PM-created calendar feature backlog before dispatch.",
+    },
+  });
+  store.applyCeremonyRun(projectId, ceremony.id);
+  for (const ticket of featureTickets) {
+    store.transitionTicket(projectId, ticket.id, {
+      targetState: "READY",
+      reason: "Backlog refinement complete; feature is ready for agent execution.",
+      reasonCode: "demo_backlog_refinement_ready",
+      reasonSource: "demo",
+    });
+  }
+
+  await refresh(page);
+  await clickByText(page, "Cockpit");
+  await page.getByText("Attention").first().waitFor();
+  await pause(1600);
+  await clickByText(page, "Board");
+}
+
 async function runTicketLoopFromUi(page, title) {
   if ((await page.locator(".ticket-detail:visible").count()) === 0) {
     await clickByText(page, "Board");
@@ -484,7 +579,7 @@ async function runTicketLoopFromUi(page, title) {
   }
   await page.getByText("Start developer lane").first().waitFor();
   await fillByName(page, "summary", "Operator starts the first implementation slice.");
-  await clickByText(page, "Start run");
+  await clickByText(page, "Dispatch agent");
   const firstState = await waitForTicketInStates(title, ["WORKING", "REVIEWING", "VALIDATING", "READY_TO_MERGE", "DONE"], agentWaitMs(12_000, 90_000));
   if (firstState.state === "WORKING") {
     await revealTicketState(page, title, "Working");

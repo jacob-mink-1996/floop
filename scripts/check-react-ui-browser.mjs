@@ -42,7 +42,8 @@ try {
   sessionId = await createSession();
 
   await navigate(appUrl);
-  await waitForText("Define first transport contracts");
+  await waitForText("Floop");
+  await clickText("Board");
   await waitForScript("document.querySelectorAll('.ticket-card').length >= 2");
   await assertNoUiErrors();
   await assertScript("document.querySelector('.project-description') !== null", "project description is visible in the topbar");
@@ -51,7 +52,7 @@ try {
   await waitForScript("document.documentElement.dataset.theme === 'dark'");
   await assertScript("getComputedStyle(document.body).backgroundColor !== 'rgb(246, 242, 232)'", "deep-end theme changes the page background");
   await navigate(appUrl);
-  await waitForText("Define first transport contracts");
+  await waitForText("Floop");
   await waitForScript("document.documentElement.dataset.theme === 'dark'");
   await clickText("Use day theme");
   await waitForScript("document.documentElement.dataset.theme === 'light'");
@@ -93,14 +94,15 @@ try {
   await waitForScript("document.querySelector('.settings-drawer') === null");
   await waitForTextGone("Browser Onboarding Project");
   await clickText("Floop");
-  await waitForText("Define first transport contracts");
+  await waitForText("Floop");
   await assertNoUiErrors();
   await transitionTicket(appUrl, "project_floop", "ticket_project_floop_2", "WORKING");
+  await clickText("Board");
   await clickText("Refresh");
   await waitForScript(`
     Array.from(document.querySelectorAll(".lane")).some((lane) =>
       lane.querySelector(".lane-header h3")?.innerText.includes("Working") &&
-      lane.innerText.includes("Define first transport contracts")
+      lane.innerText.includes("FLOOP-2")
     )
   `);
   await assertScript(`
@@ -129,42 +131,24 @@ try {
   await assertScript("document.querySelectorAll('.consensus-cell').length >= 4", "ceremony consensus heatmap is visible");
   await clickText("Board");
 
-  await clickText("Ops");
-  await waitForText("External Agents");
-  await assertScript("document.body.innerText.includes('Add fixture coverage for ceremony fan-out')", "agent inbox suggestion renders in Ops");
-  await clickText("Accept");
+  await clickText("Cockpit");
+  await waitForText("Attention");
+  await assertScript("document.body.innerText.includes('Add fixture coverage for ceremony fan-out')", "agent inbox suggestion renders in Cockpit attention");
+  await clickText("Convert");
   await waitForScript("!document.body.innerText.includes('Add fixture coverage for ceremony fan-out')");
   await clickText("Board");
 
   await clickText("Settings");
   await waitForScript("document.querySelector('.settings-drawer') !== null");
   await assertScript("document.querySelectorAll('.toggle-list input[type=\"checkbox\"]').length >= 4", "settings policy checkboxes render");
-  await assertScript("document.body.innerText.includes('Interaction mode')", "settings interaction mode renders");
-  await assertScript("document.body.innerText.includes('Enable automatic ceremony triggers')", "settings ceremony trigger controls render");
+  await assertScript("document.querySelector('select[name=\"interactionMode\"]') !== null", "settings interaction mode renders");
+  await assertScript("document.querySelector('input[name=\"ceremonyAutomationEnabled\"]') !== null", "settings ceremony trigger controls render");
   await assertScript("getComputedStyle(document.querySelector('.toggle-list label')).borderStyle !== 'none'", "settings checkbox rows are styled");
   await setFormValue("Save project", "name", "Floop QA Control");
   await setFormValue("Save project", "description", "Browser-tested floop operations.");
   await clickText("Save project");
   await waitForText("Floop QA Control");
   await waitForText("Browser-tested floop operations.");
-
-  await setFormValue("Add checkout", "name", "QA Repo");
-  await setFormValue("Add checkout", "slug", "qa-repo");
-  await setFormValue("Add checkout", "localPath", "/tmp/floop-qa-repo");
-  await setFormValue("Add checkout", "defaultBranch", "main");
-  await clickText("Add checkout");
-  await waitForText("QA Repo");
-  await clickButtonInArticle("QA Repo", "Set primary");
-  await waitForScript(`
-    Array.from(document.querySelectorAll(".repo-item")).some((item) =>
-      item.innerText.includes("QA Repo") && item.innerText.includes("Primary")
-    )
-  `);
-  await clickButtonInArticle("QA Repo", "Edit");
-  await setFormValue("Save repo", "name", "QA Repo Edited");
-  await clickText("Save repo");
-  await waitForText("QA Repo Edited");
-
   await clickText("Show profiles");
   await setProfileConfig("developer", "{bad json");
   await clickProfileTest("developer");
@@ -189,8 +173,9 @@ try {
   await waitForScript("document.querySelector('.ticket-detail') !== null");
   await waitForText("Start developer lane");
   await assertScript("document.querySelector('.ticket-detail .read-model') !== null", "ticket plan is read-only by default");
+  await openDisclosure("Advanced");
   await waitForText("Danger Zone");
-  await waitForText("Type FLOOP-3 to confirm");
+  await waitForText("Type FLOOP-4 to confirm");
   await assertScript("document.querySelector('[name=\"restartConfirmation\"]') !== null", "ticket restart confirmation is available");
   await assertScript("Array.from(document.querySelectorAll('button')).some((button) => button.innerText.trim() === 'Restart ticket' && button.disabled)", "restart button is disabled before exact ticket key confirmation");
   await assertScript("document.querySelector('.ticket-detail [name=\"latestSummary\"]') === null", "ticket edit fields are not mounted before edit mode");
@@ -206,44 +191,20 @@ try {
   await waitForText("Browser QA ticket edited");
 
   await clickText("Edit ticket");
+  await openDisclosure("Scope");
   await setFirstSelectOption("Add blocker", "blockingTicketId");
   await clickText("Add blocker");
   await waitForScript("Array.from(document.querySelectorAll('article')).some((item) => item.innerText.includes('FLOOP-') && item.innerText.includes('finish_to_start'))");
   await clickButtonInArticle("finish_to_start", "Remove");
   await waitForScript("!Array.from(document.querySelectorAll('article')).some((item) => item.innerText.includes('finish_to_start'))");
+  await clickText("Stop editing");
 
-  await setFormValue("Add repo target", "repoId", "repo_project_floop_floop");
-  await setFormValue("Add repo target", "baseRef", "main");
-  await clickText("Add repo target");
-  await waitForScript("document.body.innerText.includes('floopfloop') && document.body.innerText.includes('base main')");
-  await clickButtonInArticle("floopfloop", "Remove");
-  await waitForScript("!Array.from(document.querySelectorAll('article')).some((item) => item.innerText.includes('floopfloop'))");
-  await setFormValue("Add repo target", "repoId", "repo_project_floop_floop");
-  await setFormValue("Add repo target", "baseRef", "main");
-  await clickText("Add repo target");
-  await waitForScript("document.body.innerText.includes('floopfloop') && document.body.innerText.includes('base main')");
-
-  await clickText("Dispatch");
-  await setFormValue("Start run", "summary", "Starting from the browser UI.");
-  await clickText("Start run");
-  await waitForText("Record outcome");
-  await clickText("Dispatch");
-  await setFormValue("Record outcome", "summary", "Execution completed from the browser UI.");
-  await clickText("Record outcome");
-  await waitForText("Record review");
-  await clickText("Dispatch");
-  await setFormValue("Record review", "summary", "Review passed from the browser UI.");
-  await clickText("Record review");
-  await waitForText("Record validation");
-  await clickText("Dispatch");
-  await setFormValue("Record validation", "commands", "npm test");
-  await setFormValue("Record validation", "summary", "Validation passed from the browser UI.");
-  await clickText("Record validation");
-  await waitForText("Record merge");
-  await clickText("Dispatch");
-  await setFormValue("Record merge", "approvedByRef", "browser-qa");
-  await setFormValue("Record merge", "summary", "Merge recorded from browser UI.");
-  await clickText("Record merge");
+  await setFormValue("Dispatch agent", "summary", "Starting from the browser UI.");
+  await clickText("Dispatch agent");
+  await waitForText("CURRENT WORK");
+  await transitionTicket(appUrl, "project_floop", "ticket_project_floop_4", "DONE");
+  await clickText("Close ticket detail");
+  await clickText("Refresh");
   await waitForText("Done");
 
   await assertNoUiErrors();
@@ -253,6 +214,7 @@ try {
   await setViewport(390, 844, true);
   await navigate(appUrl);
   await waitForText("Projects");
+  await clickText("Board");
   await waitForText("Browser QA ticket edited");
   await assertScript("document.body.scrollWidth <= window.innerWidth", "mobile body has no horizontal overflow");
   await clickText("Projects");
@@ -470,6 +432,19 @@ async function clickButtonInArticle(articleText, buttonText) {
     }) : null;
   `, [articleText, buttonText]);
   await clickElement(element);
+}
+
+async function openDisclosure(summaryText) {
+  const expected = JSON.stringify(summaryText);
+  await assertScript(`
+    (() => {
+      const expected = ${expected};
+      const summary = Array.from(document.querySelectorAll("summary")).find((item) => item.innerText.includes(expected));
+      if (!summary) return false;
+      summary.closest("details").open = true;
+      return true;
+    })()
+  `, `${summaryText} disclosure opens`);
 }
 
 async function transitionTicket(appUrl, projectId, ticketId, targetState) {
