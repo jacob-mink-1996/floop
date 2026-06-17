@@ -46,6 +46,7 @@ class CeremonyAutomationDriver {
 
   async pollOnce() {
     const created = [];
+    const dispatched = [];
     for (const project of this.store.listProjects()) {
       const policy = project.policy;
       const automation = policy?.ceremonyAutomation;
@@ -88,9 +89,75 @@ class CeremonyAutomationDriver {
           this.store.applyCeremonyRun(project.id, run.id);
         }
       }
+      dispatched.push(...dispatchReadyRefinementChildren(this.store, project));
     }
+    Object.defineProperty(created, "dispatched", {
+      value: dispatched,
+      enumerable: false,
+    });
     return created;
   }
+}
+
+function dispatchReadyRefinementChildren(store, project) {
+  const policy = project.policy || {};
+  if (policy.interactionMode !== "autopilot" && policy.interactionMode !== "fully_autonomous") {
+    return [];
+  }
+  const board = store.getProjectBoard(project.id);
+  if (!board) {
+    return [];
+  }
+  const dispatched = [];
+  const tickets = board.columns.flatMap((column) => column.tickets);
+  for (const ticket of tickets) {
+    if (!isReadyRefinementChild(store, project.id, ticket)) {
+      continue;
+    }
+    try {
+      const execution = store.createExecution(project.id, ticket.id, {
+        role: ticket.assignedRole || "developer",
+        reason: "Autonomous refinement child is ready after answered parent HITL.",
+      });
+      if (execution) {
+        dispatched.push(execution);
+      }
+    } catch {
+      // Concurrency and role policy gates are allowed to hold ready work for a later poll.
+    }
+  }
+  return dispatched;
+}
+
+function isReadyRefinementChild(store, projectId, ticket) {
+  if (!ticket || ticket.state !== "READY" || !ticket.parentTicketId) {
+    return false;
+  }
+  if (ticket.activeExecutionCount > 0 || !ticket.assignedRole) {
+    return false;
+  }
+  const detail = store.getTicket(projectId, ticket.id);
+  if (!detail || detail.executions.some((execution) => execution.status === "running")) {
+    return false;
+  }
+  const parent = store.getTicket(projectId, ticket.parentTicketId);
+  if (!parent) {
+    return false;
+  }
+  const pendingParentQuestion = store
+    .listAgentMessages(projectId, { intent: "submit_ceremony_input", status: "pending", limit: 100 })
+    .some((message) => message.target?.ticketId === parent.id && message.metadata?.refinementQuestion === true);
+  if (pendingParentQuestion) {
+    return false;
+  }
+  const answeredParentQuestion = store
+    .listAgentMessages(projectId, { intent: "comment_on_ticket", status: "attached", limit: 100 })
+    .some((message) =>
+      message.target?.ticketId === parent.id &&
+      message.metadata?.ceremonyResponse === true &&
+      message.metadata?.unblockResponse === true,
+    );
+  return answeredParentQuestion;
 }
 
 export function evaluateCeremonyLifecycle(store, project, type, trigger = {}) {

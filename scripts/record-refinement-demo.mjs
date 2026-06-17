@@ -338,10 +338,8 @@ async function runWalkthrough(page, appUrl, projectId) {
     .listTickets(projectId)
     .find((ticket) => ticket.title === "Create shared calendar invite model");
   assert.ok(childTicket);
-  store.createExecution(projectId, childTicket.id, {
-    role: "developer",
-    reason: "Implement first child ticket after refinement handoff.",
-  });
+  const dispatched = await automationDriver.pollOnce();
+  assert.equal(dispatched.dispatched.length >= 1, true);
   await refresh(page);
   await page.getByText("Working").first().waitFor();
   await pause(900);

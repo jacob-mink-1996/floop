@@ -103,6 +103,114 @@ test("ceremony automation driver applies proposals in fully automatic mode", asy
   }
 });
 
+test("ceremony automation driver dispatches ready refinement children after answered parent HITL", async () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  try {
+    store.updateProjectPolicy("project_floop", {
+      interactionMode: "autopilot",
+      refinementMode: "autonomous",
+      agentCreatedTicketDefaultState: "READY",
+      ceremonyAutomation: {
+        enabled: true,
+        mode: "operator_approved",
+        triggers: disabledTriggers(),
+      },
+    });
+    const parent = store.createTicket("project_floop", {
+      title: "Refined parent",
+      brief: "Answered parent context makes child executable.",
+      assignedRole: "product_manager",
+      state: "PROPOSED",
+    });
+    const child = store.createTicket("project_floop", {
+      title: "Ready child",
+      brief: "Should dispatch once parent HITL is answered.",
+      parentTicketId: parent.id,
+      assignedRole: "developer",
+      state: "READY",
+    });
+    const ceremony = store.createCeremonyRun("project_floop", { type: "refinement" });
+    const question = store.createAgentMessage("project_floop", {
+      actor: "product_manager",
+      source: "ceremony_participant",
+      intent: "submit_ceremony_input",
+      target: { runId: ceremony.id, ticketId: parent.id },
+      summary: "Refinement question",
+      body: "Can the child start?",
+      metadata: { refinementQuestion: true, ceremonyHitlQuestion: true },
+    });
+    store.respondAgentMessage("project_floop", question.id, {
+      responseMd: "Yes, start the child.",
+      responderKind: "human",
+      responderRef: "operator",
+      continueExecution: false,
+    });
+
+    const driver = createCeremonyAutomationDriver({ store, logger: silentLogger() });
+    const first = await driver.pollOnce();
+    const second = await driver.pollOnce();
+    const childDetail = store.getTicket("project_floop", child.id);
+
+    assert.equal(first.length, 0);
+    assert.equal(first.dispatched.length, 1);
+    assert.equal(first.dispatched[0].ticketId, child.id);
+    assert.equal(second.dispatched.length, 0);
+    assert.equal(childDetail.state, "WORKING");
+    assert.equal(childDetail.executions.filter((execution) => execution.status === "running").length, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("ceremony automation driver does not dispatch refinement children while parent HITL is pending", async () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  try {
+    store.updateProjectPolicy("project_floop", {
+      interactionMode: "autopilot",
+      refinementMode: "autonomous",
+      agentCreatedTicketDefaultState: "READY",
+      ceremonyAutomation: {
+        enabled: true,
+        mode: "operator_approved",
+        triggers: disabledTriggers(),
+      },
+    });
+    const parent = store.createTicket("project_floop", {
+      title: "Pending parent",
+      brief: "Pending parent HITL should hold child execution.",
+      assignedRole: "product_manager",
+      state: "PROPOSED",
+    });
+    const child = store.createTicket("project_floop", {
+      title: "Held child",
+      brief: "Should not dispatch while the parent question is pending.",
+      parentTicketId: parent.id,
+      assignedRole: "developer",
+      state: "READY",
+    });
+    const ceremony = store.createCeremonyRun("project_floop", { type: "refinement" });
+    store.createAgentMessage("project_floop", {
+      actor: "product_manager",
+      source: "ceremony_participant",
+      intent: "submit_ceremony_input",
+      target: { runId: ceremony.id, ticketId: parent.id },
+      summary: "Pending refinement question",
+      body: "Can the child start?",
+      metadata: { refinementQuestion: true, ceremonyHitlQuestion: true },
+    });
+
+    const driver = createCeremonyAutomationDriver({ store, logger: silentLogger() });
+    const result = await driver.pollOnce();
+    const childDetail = store.getTicket("project_floop", child.id);
+
+    assert.equal(result.dispatched.length, 0);
+    assert.equal(childDetail.state, "READY");
+    assert.equal(childDetail.executions.length, 0);
+  } finally {
+    store.close();
+  }
+});
+
 test("ceremony automation driver runs agent check-ins for active work lifecycle", async () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   try {
