@@ -126,6 +126,10 @@ try {
   assert.equal(proof.executedFeatureTickets.every((ticket) => ticket.state === "DONE"), true);
   assert.equal(proof.reviewCount >= proof.executedFeatureTickets.length, true);
   assert.equal(proof.validationCount >= proof.executedFeatureTickets.length, true);
+  assert.equal(
+    proof.executedFeatureTickets.every((ticket) => (proof.demoEvidenceByTicket[ticket.id] || []).length > 0),
+    true,
+  );
   assert.equal(proof.appDemoSnapshots.some((snapshot) => snapshot.stage === "final"), true);
   const proofedAgentConversations = proof.agentConversations.filter((conversation) => conversation.inputContext && conversation.result);
   assert.equal(proofedAgentConversations.length >= 8, true);
@@ -1451,6 +1455,7 @@ function collectProof() {
   const demoFeatureTickets = featureTickets.filter((ticket) => (ticket.assignedRole || ticket.assigned_role || "") === "developer");
   const executedFeatureTickets = demoFeatureTickets.filter((ticket) => ticket.state === "DONE");
   const artifacts = project ? store.listArtifacts(project.id, { limit: 200 }) : [];
+  const demoEvidenceByTicket = buildDemoEvidenceByTicket(executedFeatureTickets, artifacts);
   const runObservability = project ? collectRunObservability(project.id) : { summary: {}, runs: [] };
   return {
     agentMode,
@@ -1487,6 +1492,7 @@ function collectProof() {
     executedFeatureTickets,
     reviewCount: executedFeatureTickets.reduce((count, ticket) => count + (store.getTicket(project.id, ticket.id)?.reviews.length || 0), 0),
     validationCount: executedFeatureTickets.reduce((count, ticket) => count + (store.getTicket(project.id, ticket.id)?.validations.length || 0), 0),
+    demoEvidenceByTicket,
     doneTickets: tickets.filter((ticket) => ticket.state === "DONE"),
     artifacts,
     workLogs: artifacts
@@ -1567,6 +1573,35 @@ function collectAgentConversations(project) {
       workLog: readOptionalText(join(artifactRoot, "agent-work-log.md")),
     };
   });
+}
+
+function buildDemoEvidenceByTicket(tickets, artifacts) {
+  const byTicket = {};
+  for (const ticket of tickets) {
+    byTicket[ticket.id] = artifacts
+      .filter((artifact) => artifact.ticketId === ticket.id && isDemoEvidenceArtifact(artifact))
+      .map((artifact) => ({
+        id: artifact.id,
+        kind: artifact.kind,
+        label: artifact.label,
+        uri: artifact.uri,
+        validationRunId: artifact.validationRunId || "",
+      }));
+  }
+  return byTicket;
+}
+
+function isDemoEvidenceArtifact(artifact) {
+  const kind = String(artifact.kind || "").toLowerCase();
+  const label = String(artifact.label || "").toLowerCase();
+  return (
+    kind === "demo" ||
+    kind === "recording" ||
+    kind === "screenshot" ||
+    artifact.metadata?.demoEvidence === true ||
+    artifact.metadata?.floopDemoEvidence === true ||
+    label.includes("demo")
+  );
 }
 
 function readOptionalText(filename) {
