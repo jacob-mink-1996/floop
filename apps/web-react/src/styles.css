@@ -1127,6 +1127,45 @@ h3 {
   font-size: 13px;
 }
 
+.agent-milestones {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-milestone {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+
+.agent-milestone:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.agent-milestone > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-milestone span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.agent-milestone strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .log-chip {
   display: inline-flex;
   flex-wrap: wrap;

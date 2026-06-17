@@ -132,6 +132,7 @@ function buildLiveAgentLog(project, execution) {
     stderrTail,
     ...recentEvents.map((event) => (typeof event.text === "string" ? event.text : "")),
   ].join("\n");
+  const milestones = normalizeAgentMilestones({ recentEvents, stdoutTail, stderrTail });
   const updatedAt = latestMtime([stdoutPath, stderrPath, agentEventsPath]);
   const available = Boolean(stdoutTail || stderrTail || recentEvents.length > 0);
 
@@ -143,10 +144,116 @@ function buildLiveAgentLog(project, execution) {
     stdoutUri: existsSync(stdoutPath) ? pathToFileURL(stdoutPath).href : "",
     stderrUri: existsSync(stderrPath) ? pathToFileURL(stderrPath).href : "",
     recentEvents,
+    milestones,
     progressSignalCount: countProgressSignals(signalText),
     questionSignalCount: countQuestionSignals(signalText),
     updatedAt,
   };
+}
+
+function normalizeAgentMilestones({ recentEvents, stdoutTail, stderrTail }) {
+  const milestones = [];
+  for (const event of recentEvents) {
+    const milestone = milestoneFromJsonlEvent(event);
+    if (milestone) {
+      milestones.push(milestone);
+    }
+  }
+
+  if (milestones.length < 4) {
+    milestones.push(...milestonesFromTail(stdoutTail, "stdout", 4 - milestones.length));
+  }
+  if (milestones.length < 4) {
+    milestones.push(...milestonesFromTail(stderrTail, "stderr", 4 - milestones.length));
+  }
+
+  return milestones.slice(-8).map((milestone, index) => ({
+    id: `${milestone.kind}:${index}:${hashText(milestone.text)}`,
+    ...milestone,
+  }));
+}
+
+function milestoneFromJsonlEvent(event) {
+  const eventName = String(event?.event || event?.type || "event");
+  const text = trimMilestoneText(event?.text || event?.message || event?.summary || "");
+  if (!text && eventName === "process.output") return null;
+  if (/command|tool|exec/i.test(eventName)) {
+    return {
+      kind: event?.status === "completed" || event?.status === "finished" ? "command_done" : "command",
+      label: event?.status === "completed" || event?.status === "finished" ? "Command done" : "Command",
+      text: text || trimMilestoneText(event?.command || event?.name || eventName),
+      stream: String(event?.stream || ""),
+    };
+  }
+  if (eventName === "process.output") {
+    return milestoneFromText(text, String(event?.stream || "stdout"));
+  }
+  return {
+    kind: classifyMilestoneKind(text || eventName),
+    label: milestoneLabel(classifyMilestoneKind(text || eventName)),
+    text: text || eventName,
+    stream: String(event?.stream || ""),
+  };
+}
+
+function milestonesFromTail(text, stream, limit) {
+  if (limit <= 0) return [];
+  return signalLines(text)
+    .slice(-12)
+    .map((line) => milestoneFromText(line, stream))
+    .filter(Boolean)
+    .slice(-limit);
+}
+
+function milestoneFromText(text, stream) {
+  const cleanText = trimMilestoneText(text);
+  if (!cleanText) return null;
+  const kind = classifyMilestoneKind(cleanText, stream);
+  return {
+    kind,
+    label: milestoneLabel(kind),
+    text: cleanText,
+    stream,
+  };
+}
+
+function classifyMilestoneKind(text, stream = "") {
+  if (/\?|blocked|needs input|need input|clarify|question/i.test(text)) return "question";
+  if (/error|failed|exception|traceback/i.test(text) || stream === "stderr") return "warning";
+  if (/\b(test|validated|passed|checked|verified)\b/i.test(text)) return "validation";
+  if (isProgressSignal(text)) return "progress";
+  return "output";
+}
+
+function milestoneLabel(kind) {
+  switch (kind) {
+    case "command":
+      return "Command";
+    case "command_done":
+      return "Command done";
+    case "question":
+      return "Question";
+    case "warning":
+      return "Warning";
+    case "validation":
+      return "Validation";
+    case "progress":
+      return "Progress";
+    default:
+      return "Output";
+  }
+}
+
+function trimMilestoneText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+function hashText(text) {
+  let hash = 0;
+  for (const char of String(text || "")) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  }
+  return hash.toString(36);
 }
 
 function readTail(filename) {

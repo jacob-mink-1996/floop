@@ -627,6 +627,8 @@ test("run observability endpoint surfaces live agent logs for active executions"
           [
             JSON.stringify({ event: "process.output", stream: "stdout", text: "working on API smoke" }),
             JSON.stringify({ event: "process.output", stream: "stderr", text: "needs input for timezone?" }),
+            JSON.stringify({ event: "tool.command", status: "started", command: "npm test" }),
+            JSON.stringify({ event: "tool.command", status: "completed", text: "npm test passed" }),
           ].join("\n") + "\n",
           "utf8",
         );
@@ -641,7 +643,10 @@ test("run observability endpoint surfaces live agent logs for active executions"
         assert.equal(executionRun.liveAgentLog.available, true);
         assert.match(executionRun.liveAgentLog.stdoutTail, /implemented calendar route/);
         assert.match(executionRun.liveAgentLog.stderrTail, /validate recurrence/);
-        assert.equal(executionRun.liveAgentLog.recentEvents.length, 2);
+        assert.equal(executionRun.liveAgentLog.recentEvents.length, 4);
+        assert.equal(executionRun.liveAgentLog.milestones.some((milestone) => milestone.kind === "progress"), true);
+        assert.equal(executionRun.liveAgentLog.milestones.some((milestone) => milestone.kind === "question"), true);
+        assert.equal(executionRun.liveAgentLog.milestones.some((milestone) => milestone.kind === "command_done"), true);
         assert.equal(executionRun.agentProgressSignalCount > 0, true);
         assert.equal(executionRun.agentQuestionSignalCount > 0, true);
         assert.match(executionRun.liveAgentLog.stdoutUri, /^file:/);

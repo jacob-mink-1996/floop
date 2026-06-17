@@ -1111,6 +1111,7 @@ function RunSubwayItem({
             </article>
           ) : null}
           {run.kind === "execution" ? <AgentTraceSummary run={run} /> : null}
+          {run.kind === "execution" ? <AgentMilestoneList run={run} /> : null}
           {hasProofLinks ? (
             <details className="run-proof-links">
               <summary>Proof links</summary>
@@ -1159,6 +1160,34 @@ function AgentTraceSummary({ run }: { run: RunObservability["runs"][number] }) {
       </div>
     </article>
   );
+}
+
+function AgentMilestoneList({ run }: { run: RunObservability["runs"][number] }) {
+  const milestones = run.liveAgentLog?.milestones || [];
+  if (!milestones.length) return null;
+  return (
+    <div className="agent-milestones" aria-label="Agent milestones">
+      {milestones.slice(-5).map((milestone) => {
+        const tone = toneForAgentMilestone(milestone.kind);
+        return (
+          <article className={`agent-milestone tone-${tone}`} key={milestone.id}>
+            <StateDot tone={tone} />
+            <div>
+              <span>{milestone.label}</span>
+              <strong>{milestone.text}</strong>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function toneForAgentMilestone(kind: string): Tone {
+  if (kind === "question" || kind === "warning") return "attention";
+  if (kind === "validation" || kind === "command_done") return "done";
+  if (kind === "progress" || kind === "command") return "active";
+  return "neutral";
 }
 
 function runPriority(run: RunObservability["runs"][number]) {

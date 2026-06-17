@@ -324,6 +324,25 @@ export type RunObservabilityItem = {
   artifactCount: number;
   worktreeCount: number;
   needsAttention: boolean;
+  liveAgentLog?: {
+    available: boolean;
+    stdoutTail: string;
+    stderrTail: string;
+    agentEventsUri: string;
+    stdoutUri: string;
+    stderrUri: string;
+    recentEvents: unknown[];
+    milestones: Array<{
+      id: string;
+      kind: string;
+      label: string;
+      text: string;
+      stream: string;
+    }>;
+    progressSignalCount: number;
+    questionSignalCount: number;
+    updatedAt: string;
+  };
   pendingProposalCount?: number;
   participantCount?: number;
 };
