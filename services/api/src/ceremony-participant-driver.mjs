@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
+import { buildProjectLookupContext } from "./project-context.mjs";
+
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_MAX_PARALLEL = 4;
 
@@ -105,7 +107,7 @@ class CeremonyParticipantDriver {
       return;
     }
 
-    const runtime = await prepareRuntime(project, run, started);
+    const runtime = await prepareRuntime(this.store, project, run, started);
     const result = await runAdapter(adapter, {
       project,
       run,
@@ -153,14 +155,27 @@ function selectAdapter(profile) {
   return null;
 }
 
-async function prepareRuntime(project, run, participant) {
+async function prepareRuntime(store, project, run, participant) {
   const root = resolve(project.workspaceRoot, ".floop", "ceremonies", run.id, participant.role);
   const contextPath = join(root, "context.json");
   const resultPath = join(root, "result.json");
   const promptPath = join(root, "prompt.md");
   const finalMessagePath = join(root, "agent-final-message.md");
   await mkdir(dirname(contextPath), { recursive: true });
-  await writeFile(contextPath, JSON.stringify({ project, ceremony: run, participant }, null, 2), "utf8");
+  await writeFile(
+    contextPath,
+    JSON.stringify(
+      {
+        project,
+        projectContext: buildProjectLookupContext(store, project),
+        ceremony: run,
+        participant,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
   return { root, contextPath, resultPath, promptPath, finalMessagePath };
 }
 

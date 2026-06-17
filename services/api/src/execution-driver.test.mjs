@@ -56,6 +56,48 @@ test("execution driver runs configured adapter commands and persists completion 
   }
 });
 
+test("execution driver writes structured project lookup context for agents", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-project-context-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  try {
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "shell",
+      model: "fixture",
+      config: {
+        command: `"${process.execPath}" -e "const fs=require('node:fs'); const context=JSON.parse(fs.readFileSync(process.env.FLOOP_CONTEXT_PATH,'utf8')); if (!context.projectContext?.tickets?.backlog || !context.projectContext.repositories?.length || !context.projectContext.policy) process.exit(3); fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({ outcome: 'completed', summaryMd: 'Saw structured project context.' }));"`,
+      },
+    });
+
+    const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Verify structured project context.",
+    });
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+
+    await driver.pollOnce();
+
+    const context = JSON.parse(
+      readFileSync(join(workspaceRoot, ".floop", "executions", execution.id, "context.json"), "utf8"),
+    );
+    const completed = store.getExecution("project_floop", execution.id);
+
+    assert.equal(completed.outcome, "completed");
+    assert.equal(context.projectContext.project.id, "project_floop");
+    assert.equal(context.projectContext.tickets.target.id, "ticket_project_floop_2");
+    assert.equal(context.projectContext.repositories.length > 0, true);
+    assert.equal(context.projectContext.lookupHints.length > 0, true);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("execution driver can launch the codex adapter path and persist the final agent message", async () => {
   const fixtureDir = mkdtempSync(join(tmpdir(), "floop-codex-driver-"));
   const workspaceRoot = join(fixtureDir, "workspace");
@@ -2094,7 +2136,9 @@ fs.writeFileSync(
       createdByKind: "human",
       createdByRef: "test",
     });
-    const proposal = run.proposals.find((item) => item.ticketId === draft.id && item.kind === "ticket_patch");
+    const proposal = run.proposals.find(
+      (item) => item.kind === "ticket_batch_patch" && item.payload.patches.some((patch) => patch.ticketId === draft.id),
+    );
     store.applyCeremonyRun("project_floop", run.id, {
       proposalIds: [proposal.id],
     });

@@ -4,6 +4,8 @@ import { access, appendFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { buildProjectLookupContext } from "./project-context.mjs";
+
 const DEFAULT_POLL_INTERVAL_MS = 2000;
 const DEFAULT_LEASE_MS = 30_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -526,6 +528,7 @@ async function prepareRuntimeArtifacts(project, ticket, execution, store) {
     JSON.stringify(
       {
         project,
+        projectContext: buildProjectLookupContext(store, project, { ticket }),
         ticket,
         relatedTickets: buildRelatedTicketContext(store, project.id, ticket),
         execution,

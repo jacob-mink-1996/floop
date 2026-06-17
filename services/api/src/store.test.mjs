@@ -261,6 +261,50 @@ test("store creates batched refinement proposals and applies approved ticket pat
   store.close();
 });
 
+test("store refinement ceremony combines similar tickets and removes unnecessary backlog items", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  const keeper = store.createTicket("project_floop", {
+    title: "Add calendar reminders",
+    brief: "Create reminder metadata for calendar events and expose upcoming reminders to users.",
+    assignedRole: "developer",
+    state: "PROPOSED",
+    acceptanceCriteriaMd: "- Reminder metadata exists",
+  });
+  const duplicate = store.createTicket("project_floop", {
+    title: "Implement calendar reminders",
+    brief: "Support event reminder metadata and a reminder-oriented view.",
+    assignedRole: "developer",
+    state: "PROPOSED",
+  });
+  const unnecessary = store.createTicket("project_floop", {
+    title: "Obsolete reminder spike",
+    brief: "This duplicate spike is no longer needed.",
+    assignedRole: "developer",
+    state: "DRAFT",
+  });
+
+  const run = store.createCeremonyRun("project_floop", {
+    type: "refinement",
+    createdByKind: "human",
+    createdByRef: "test",
+  });
+  const cleanup = run.proposals.find((item) => item.kind === "ticket_backlog_cleanup");
+
+  assert.ok(cleanup);
+  assert.equal(cleanup.payload.actions.some((action) => action.type === "combine"), true);
+  assert.equal(cleanup.payload.actions.some((action) => action.type === "cancel" && action.ticketId === unnecessary.id), true);
+
+  store.applyCeremonyRun("project_floop", run.id, { proposalIds: [cleanup.id] });
+  const updatedKeeper = store.getTicket("project_floop", keeper.id);
+  const updatedDuplicate = store.getTicket("project_floop", duplicate.id);
+  const updatedUnnecessary = store.getTicket("project_floop", unnecessary.id);
+
+  assert.match(updatedKeeper.brief, /Merged during refinement/);
+  assert.equal(updatedDuplicate.state, "CANCELLED");
+  assert.equal(updatedUnnecessary.state, "CANCELLED");
+  store.close();
+});
+
 test("store work generation ceremony creates product breakdown child for a single idea ticket", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   const idea = store.createTicket("project_floop", {

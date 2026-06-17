@@ -579,6 +579,7 @@ function buildRefinementProposals(snapshot, timestamp) {
   const candidates = snapshot.tickets
     .filter((ticket) => ticket.state === "DRAFT" || ticket.state === "PROPOSED")
     .slice(0, 6);
+  const cleanup = buildBacklogCleanupProposal(candidates, timestamp);
   const patches = candidates.map((ticket) => {
     const patch = {
       latestSummary: "Refinement pass proposed clearer scope and readiness criteria.",
@@ -602,11 +603,145 @@ function buildRefinementProposals(snapshot, timestamp) {
   if (patches.length === 0) {
     return [noteProposal("Backlog refinement found no draft or proposed tickets needing action.", timestamp)];
   }
-  return [
+  const proposals = [
     proposal("ticket_batch_patch", `Refine ${patches.length} ticket(s) before agent execution`, timestamp, {
       patches,
     }),
   ];
+  if (cleanup) {
+    proposals.push(cleanup);
+  }
+  return proposals;
+}
+
+function buildBacklogCleanupProposal(candidates, timestamp) {
+  const actions = [];
+  const consumed = new Set();
+  for (let index = 0; index < candidates.length; index += 1) {
+    const ticket = candidates[index];
+    if (consumed.has(ticket.id)) {
+      continue;
+    }
+    if (isClearlyUnnecessaryBacklogTicket(ticket)) {
+      actions.push(cancelBacklogAction(ticket, "Refinement marked this backlog item unnecessary or out of scope."));
+      consumed.add(ticket.id);
+      continue;
+    }
+    for (let otherIndex = index + 1; otherIndex < candidates.length; otherIndex += 1) {
+      const other = candidates[otherIndex];
+      if (consumed.has(other.id) || !ticketsAppearSimilar(ticket, other)) {
+        continue;
+      }
+      const keeper = chooseBacklogKeeper(ticket, other);
+      const duplicate = keeper.id === ticket.id ? other : ticket;
+      actions.push({
+        type: "combine",
+        keeperTicketId: keeper.id,
+        duplicateTicketId: duplicate.id,
+        reason: `${duplicate.key} appears to overlap ${keeper.key}; refinement should keep one clearer backlog item.`,
+        keeperPatch: {
+          brief: mergeBacklogText(keeper.brief, duplicate.brief, duplicate),
+          latestSummary: `Refinement combined overlapping backlog item ${duplicate.key} into this ticket.`,
+        },
+        duplicateTransition: {
+          targetState: "CANCELLED",
+          reason: `Combined into ${keeper.key} during backlog refinement.`,
+          reasonCode: "ceremony_backlog_combined",
+          reasonSource: "ceremony",
+          mode: "automatic",
+        },
+      });
+      consumed.add(duplicate.id);
+      if (duplicate.id === ticket.id) {
+        break;
+      }
+    }
+  }
+  if (actions.length === 0) {
+    return null;
+  }
+  return proposal("ticket_backlog_cleanup", `Clean up ${actions.length} similar or unnecessary backlog item(s)`, timestamp, {
+    actions,
+  });
+}
+
+function cancelBacklogAction(ticket, reason) {
+  return {
+    type: "cancel",
+    ticketId: ticket.id,
+    ticketKey: ticket.key,
+    reason,
+    transition: {
+      targetState: "CANCELLED",
+      reason,
+      reasonCode: "ceremony_backlog_removed",
+      reasonSource: "ceremony",
+      mode: "automatic",
+    },
+  };
+}
+
+function isClearlyUnnecessaryBacklogTicket(ticket) {
+  const text = `${ticket.title || ""}\n${ticket.brief || ""}\n${ticket.latestSummary || ""}`.toLowerCase();
+  return /\b(duplicate|unnecessary|not needed|obsolete|out of scope|wontfix|won't fix)\b/.test(text);
+}
+
+function ticketsAppearSimilar(left, right) {
+  if (left.parentTicketId && right.parentTicketId && left.parentTicketId !== right.parentTicketId) {
+    return false;
+  }
+  const leftTitle = normalizeBacklogText(left.title);
+  const rightTitle = normalizeBacklogText(right.title);
+  if (!leftTitle || !rightTitle) {
+    return false;
+  }
+  if (leftTitle.includes(rightTitle) || rightTitle.includes(leftTitle)) {
+    return true;
+  }
+  const leftTokens = tokenSet(leftTitle);
+  const rightTokens = tokenSet(rightTitle);
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  const union = new Set([...leftTokens, ...rightTokens]).size || 1;
+  return intersection / union >= 0.55;
+}
+
+function chooseBacklogKeeper(left, right) {
+  const leftScore = backlogCompletenessScore(left);
+  const rightScore = backlogCompletenessScore(right);
+  if (rightScore > leftScore) {
+    return right;
+  }
+  return left;
+}
+
+function backlogCompletenessScore(ticket) {
+  return [
+    ticket.acceptanceCriteriaMd,
+    ticket.definitionOfDoneMd,
+    ticket.brief && ticket.brief.length >= 80,
+    (ticket.repoTargets || []).length > 0,
+  ].filter(Boolean).length;
+}
+
+function mergeBacklogText(keeperBrief = "", duplicateBrief = "", duplicate) {
+  const duplicateText = String(duplicateBrief || "").trim();
+  if (!duplicateText || String(keeperBrief || "").includes(duplicateText)) {
+    return keeperBrief || duplicateText || duplicate.title;
+  }
+  return `${keeperBrief || duplicate.title}\n\nMerged during refinement from ${duplicate.key}: ${duplicateText}`;
+}
+
+function normalizeBacklogText(value = "") {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(add|build|create|implement|support|make|the|a|an|for|to|and|with|ticket|task)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenSet(value) {
+  return new Set(value.split(/\s+/).filter((token) => token.length >= 3));
 }
 
 function buildWorkGenerationProposals(snapshot, timestamp) {
@@ -833,6 +968,23 @@ function applyCeremonyProposal(store, projectId, proposalRow, payload) {
         const ticketId = requiredText(item.ticketId, "ticketId");
         store.updateTicket(projectId, ticketId, item.patch || {});
         lastTicketId = ticketId;
+      }
+      return lastTicketId;
+    }
+    case "ticket_backlog_cleanup": {
+      let lastTicketId = "";
+      for (const action of Array.isArray(payload.actions) ? payload.actions : []) {
+        if (action.type === "combine") {
+          const keeperTicketId = requiredText(action.keeperTicketId, "keeperTicketId");
+          const duplicateTicketId = requiredText(action.duplicateTicketId, "duplicateTicketId");
+          store.updateTicket(projectId, keeperTicketId, action.keeperPatch || {});
+          store.transitionTicket(projectId, duplicateTicketId, action.duplicateTransition || {});
+          lastTicketId = duplicateTicketId;
+        } else if (action.type === "cancel") {
+          const ticketId = requiredText(action.ticketId, "ticketId");
+          store.transitionTicket(projectId, ticketId, action.transition || {});
+          lastTicketId = ticketId;
+        }
       }
       return lastTicketId;
     }
