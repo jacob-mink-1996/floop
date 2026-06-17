@@ -2529,10 +2529,13 @@ function TicketConversationSection({
   const activeExecution = ticket.executions.find((execution) => execution.status === "running");
   const canStartFromComment = !activeExecution && (ticket.state === "READY" || ticket.state === "REWORK");
   const [commentMode, setCommentMode] = useState<"context" | "steer" | "dispatch">("context");
-  const ticketMessages = messages
-    .filter((message) => message.target?.ticketId === ticket.id)
-    .filter((message) => message.intent === "comment_on_ticket" || message.intent === "request_input")
-    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  const ticketMessages = collapseTicketConversationMessages(
+    messages
+      .filter((message) => message.target?.ticketId === ticket.id)
+      .filter((message) => message.intent === "comment_on_ticket" || message.intent === "request_input")
+      .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()),
+    pendingRequest?.id,
+  );
   const responders = Array.isArray(pendingRequest?.metadata?.suggestedResponders)
     ? pendingRequest.metadata.suggestedResponders.filter((value): value is string => typeof value === "string")
     : [];
@@ -2570,14 +2573,14 @@ function TicketConversationSection({
       if (pendingRequest) {
         await respondAgentMessage(projectId, pendingRequest.id, {
           responseMd: body,
-          responderKind: String(form.get("responderKind") || "human"),
-          responderRef: String(form.get("responderRef") || "operator"),
+          responderKind: "human",
+          responderRef: "operator",
           continueExecution: form.get("continueExecution") === "on",
         });
       } else {
         const role = String(form.get("role") || ticket.assignedRole || "developer") as RoleName;
-        const actor = String(form.get("responderRef") || "operator");
-        const source = String(form.get("responderKind") || "human");
+        const actor = "operator";
+        const source = "human";
         if (safeMode === "steer" && activeExecution) {
           const canInterruptAndResume = activeExecution.harnessCapabilities?.includes("interrupt_and_resume") && activeExecution.externalThreadId;
           await steerExecution(projectId, activeExecution.id, {
@@ -2641,6 +2644,47 @@ function TicketConversationSection({
         ))}
       </div>
       <form className="conversation-composer" onSubmit={handleSubmit}>
+        {!pendingRequest ? (
+          <div className="conversation-mode-row" role="radiogroup" aria-label="Comment action">
+            <label className={`conversation-mode ${commentMode === "context" ? "is-active" : ""}`}>
+              <input
+                type="radio"
+                name="commentMode"
+                value="context"
+                checked={commentMode === "context"}
+                onChange={() => setCommentMode("context")}
+              />
+              <span>Add note</span>
+              <small>Save context for the ticket.</small>
+            </label>
+            {activeExecution ? (
+              <label className={`conversation-mode ${commentMode === "steer" ? "is-active" : ""}`}>
+                <input
+                  type="radio"
+                  name="commentMode"
+                  value="steer"
+                  checked={commentMode === "steer"}
+                  onChange={() => setCommentMode("steer")}
+                />
+                <span>Steer run</span>
+                <small>Send this to the active agent.</small>
+              </label>
+            ) : null}
+            {canStartFromComment ? (
+              <label className={`conversation-mode ${commentMode === "dispatch" ? "is-active" : ""}`}>
+                <input
+                  type="radio"
+                  name="commentMode"
+                  value="dispatch"
+                  checked={commentMode === "dispatch"}
+                  onChange={() => setCommentMode("dispatch")}
+                />
+                <span>Start work</span>
+                <small>Dispatch an agent with this note.</small>
+              </label>
+            ) : null}
+          </div>
+        ) : null}
         <label>
           <span>{pendingRequest ? "Answer" : "Comment"}</span>
           <textarea
@@ -2659,20 +2703,6 @@ function TicketConversationSection({
           />
         </label>
         <div className="conversation-composer-actions">
-          {!pendingRequest ? (
-            <label>
-              <span>Intent</span>
-              <select
-                name="commentMode"
-                value={commentMode}
-                onChange={(event) => setCommentMode(event.target.value as "context" | "steer" | "dispatch")}
-              >
-                <option value="context">Context</option>
-                {activeExecution ? <option value="steer">Steer active run</option> : null}
-                {canStartFromComment ? <option value="dispatch">Start with agent</option> : null}
-              </select>
-            </label>
-          ) : null}
           {!pendingRequest && commentMode === "dispatch" ? (
             <label>
               <span>Agent</span>
@@ -2686,19 +2716,6 @@ function TicketConversationSection({
               </select>
             </label>
           ) : null}
-          <label>
-            <span>Responder</span>
-            <select name="responderKind" defaultValue="human">
-              <option value="human">Human</option>
-              <option value="product_manager">PM agent</option>
-              <option value="architect">Architect agent</option>
-              <option value="developer">Developer agent</option>
-            </select>
-          </label>
-          <label>
-            <span>Reference</span>
-            <input name="responderRef" defaultValue="operator" />
-          </label>
           <button className="primary-button" type="submit" disabled={Boolean(busy)}>
             {busy || submitLabel}
           </button>
@@ -2723,6 +2740,19 @@ function TicketConversationSection({
   );
 }
 
+function collapseTicketConversationMessages(messages: AgentMessage[], pendingRequestId?: string) {
+  const requestIdsWithMirror = new Set(
+    messages
+      .filter((message) => message.intent === "comment_on_ticket" && typeof message.metadata?.requestInputMessageId === "string")
+      .map((message) => String(message.metadata.requestInputMessageId)),
+  );
+  return messages.filter((message) => {
+    if (message.intent !== "request_input") return true;
+    if (message.id === pendingRequestId) return true;
+    return !requestIdsWithMirror.has(message.id);
+  });
+}
+
 function ConversationItem({ message, pending }: { message: AgentMessage; pending: boolean }) {
   const isQuestion = message.intent === "request_input" || message.metadata?.hitlQuestion === true;
   const isAnswer = message.metadata?.unblockResponse === true;
@@ -2744,7 +2774,7 @@ function ConversationItem({ message, pending }: { message: AgentMessage; pending
     <article className={`conversation-item tone-${tone}`}>
       <StateDot tone={tone as Tone} />
       <div>
-        <span>{label} · {message.actor || message.source || "operator"} · {formatDate(message.createdAt)}</span>
+        <span>{label} · {formatDate(message.createdAt)}</span>
         <strong>{message.summary || label}</strong>
         {message.body ? <p>{message.body}</p> : null}
       </div>
