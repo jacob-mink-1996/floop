@@ -275,7 +275,7 @@ export function createCeremonyCommands({
           },
         });
       }
-      maybeSynthesizeCeremonyParticipants(database, projectId, existing.run_id, timestamp);
+      maybeSynthesizeCeremonyParticipants(database, getStore, projectId, existing.run_id, timestamp);
       return mapCeremonyParticipant(
         database.prepare("select * from ceremony_participants where project_id = ? and id = ?").get(projectId, participantId),
       );
@@ -413,7 +413,7 @@ function getCeremonyParticipantsByRunId(database, projectId, runIds) {
   return byRunId;
 }
 
-function maybeSynthesizeCeremonyParticipants(database, projectId, runId, timestamp) {
+function maybeSynthesizeCeremonyParticipants(database, getStore, projectId, runId, timestamp) {
   const participants = database
     .prepare("select * from ceremony_participants where project_id = ? and run_id = ? order by created_at asc")
     .all(projectId, runId)
@@ -447,7 +447,7 @@ function maybeSynthesizeCeremonyParticipants(database, projectId, runId, timesta
     .filter(Boolean)
     .join("\n");
   const summary = `Agent consensus: ${deciderRole} synthesized ${participants.length} participant contribution(s).`;
-  const agentProposals = buildParticipantRecommendationProposals(run, participants, timestamp);
+  const { proposals: agentProposals, questions: agentQuestions } = buildParticipantRecommendationProposals(run, participants, timestamp);
 
   const insertProposal = database.prepare(
     `insert into ceremony_proposals (
@@ -491,6 +491,30 @@ function maybeSynthesizeCeremonyParticipants(database, projectId, runId, timesta
       timestamp,
     );
   }
+  for (const question of agentQuestions) {
+    getStore().createAgentMessage(projectId, {
+      actor: question.participantRole,
+      source: "ceremony_participant",
+      intent: "submit_ceremony_input",
+      target: {
+        runId,
+        participantId: question.participantId,
+        role: question.participantRole,
+        ticketId: question.ticketId,
+      },
+      summary: question.summary,
+      body: question.questionMd,
+      metadata: {
+        ceremonyHitlQuestion: true,
+        refinementQuestion: true,
+        participantId: question.participantId,
+        role: question.participantRole,
+        ticketId: question.ticketId,
+        ticketKey: question.ticketKey,
+        reason: question.reason,
+      },
+    });
+  }
 
   database
     .prepare(
@@ -522,12 +546,13 @@ function maybeSynthesizeCeremonyParticipants(database, projectId, runId, timesta
 
 function buildParticipantRecommendationProposals(run, participants, timestamp) {
   if (run.type !== "refinement") {
-    return [];
+    return { proposals: [], questions: [] };
   }
   const tickets = Array.isArray(run.inputSnapshot?.tickets) ? run.inputSnapshot.tickets : [];
   const ticketsById = new Map(tickets.map((ticket) => [ticket.id, ticket]));
   const cleanupActions = [];
   const proposals = [];
+  const questions = [];
   const seenCleanup = new Set();
   for (const participant of participants) {
     for (const recommendation of refinementRecommendationsFromParticipant(participant)) {
@@ -599,14 +624,15 @@ function buildParticipantRecommendationProposals(run, participants, timestamp) {
         if (!questionMd) {
           continue;
         }
-        proposals.push(proposal("note", `Refinement question${ticket?.key ? ` for ${ticket.key}` : ""}`, timestamp, {
-          note: questionMd,
+        questions.push({
+          participantId: participant.id,
+          participantRole: participant.role,
           ticketId: ticket?.id || "",
           ticketKey: ticket?.key || "",
-          participantRole: participant.role,
+          summary: `Refinement question${ticket?.key ? ` for ${ticket.key}` : ""}`,
+          questionMd,
           reason: textOr(recommendation.reason, "Agent-assisted refinement needs more context before planning."),
-          refinementQuestion: true,
-        }, ticket?.id || ""));
+        });
       }
     }
   }
@@ -616,7 +642,7 @@ function buildParticipantRecommendationProposals(run, participants, timestamp) {
       source: "participant_recommendations",
     }));
   }
-  return proposals;
+  return { proposals, questions };
 }
 
 function refinementRecommendationsFromParticipant(participant) {

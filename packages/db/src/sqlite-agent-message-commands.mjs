@@ -193,7 +193,7 @@ export function createAgentMessageCommands({
       if (!existing) {
         return null;
       }
-      if (existing.intent !== "request_input") {
+      if (existing.intent !== "request_input" && existing.intent !== "submit_ceremony_input") {
         throw new Error("Only input requests can be responded to");
       }
       if (existing.status !== "pending") {
@@ -206,20 +206,21 @@ export function createAgentMessageCommands({
       const responderRef = optionalText(input.responderRef, "operator");
       const executionId = typeof existing.target?.executionId === "string" ? existing.target.executionId : "";
       const ticketId = typeof existing.target?.ticketId === "string" ? existing.target.ticketId : "";
+      const runId = typeof existing.target?.runId === "string" ? existing.target.runId : "";
       const responseIsSensitive = looksCredentialLike(responseMd) || input.sensitive === true;
       const eventSafeResponseMd = responseIsSensitive ? "[sensitive response redacted]" : responseMd;
       const updated = commands.updateAgentMessage(projectId, messageId, {
         status: "attached",
-        promotedKind: "ticket_event",
-        promotedRef: ticketId,
+        promotedKind: ticketId ? "ticket_event" : runId ? "ceremony_proposal" : "",
+        promotedRef: ticketId || "",
         reasonSource: responderKind,
       });
 
       const responseMessage = store.createAgentMessage(projectId, {
         actor: responderRef,
         source: responderKind,
-        intent: "comment_on_ticket",
-        target: { ticketId, executionId, responseToMessageId: messageId },
+        intent: ticketId ? "comment_on_ticket" : "submit_ceremony_input",
+        target: { ticketId, executionId, runId, responseToMessageId: messageId },
         summary: `Response to ${existing.summary}`,
         body: responseMd,
         metadata: {
@@ -228,12 +229,13 @@ export function createAgentMessageCommands({
           responderRef,
           sensitive: responseIsSensitive,
           unblockResponse: true,
+          ceremonyResponse: existing.intent === "submit_ceremony_input",
         },
       });
       commands.updateAgentMessage(projectId, responseMessage.id, {
         status: "attached",
-        promotedKind: "ticket_event",
-        promotedRef: ticketId,
+        promotedKind: ticketId ? "ticket_event" : runId ? "ceremony_proposal" : "",
+        promotedRef: ticketId || "",
         reasonSource: responderKind,
       });
 
@@ -343,6 +345,9 @@ function lowRiskAutonomousDecision(message) {
     return { status: "accepted" };
   }
   if (message.intent === "submit_ceremony_input" && hasTarget(message, "runId")) {
+    if (message.metadata?.ceremonyHitlQuestion === true || message.metadata?.refinementQuestion === true) {
+      return null;
+    }
     return { status: "accepted" };
   }
   return null;

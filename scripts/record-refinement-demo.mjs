@@ -101,7 +101,7 @@ function seedProject() {
     name: "Calendar Backlog Refinement",
     slug: "calendar-refinement",
     workspaceRoot,
-    description: "Focused proof for lifecycle refinement, cleanup, split, and question proposals.",
+    description: "Focused proof for lifecycle refinement, cleanup, split, and actionable question HITL.",
     defaultBaseBranch: "main",
   });
   store.createRepo(project.id, {
@@ -267,7 +267,7 @@ async function runWalkthrough(page, appUrl, projectId) {
   await page.getByText("Agent-assisted cleanup").first().waitFor();
   await page.getByText("Keep").first().waitFor();
   await page.getByText("Split into ticket").first().waitFor();
-  await page.getByText("Needs answer").first().waitFor();
+  assert.equal(synthesized.pendingRefinementQuestions >= 1, true);
   await pause(1800);
 
   await clickByText(page, "Apply pending");
@@ -293,6 +293,9 @@ function collectProof(projectId) {
     lifecycleReasonCode: refinement?.scope?.lifecycleReason?.code || "",
     proposalKinds: refinement?.proposals.map((proposal) => proposal.kind) || [],
     agentCleanupProposal: Boolean(refinement?.proposals.some((proposal) => proposal.kind === "ticket_backlog_cleanup" && proposal.payload.source === "participant_recommendations")),
+    pendingRefinementQuestions: store
+      .listAgentMessages(projectId, { intent: "submit_ceremony_input", status: "pending", limit: 100 })
+      .filter((message) => message.metadata?.refinementQuestion === true).length,
     splitProposalApplied: Boolean(refinement?.proposals.some((proposal) => proposal.kind === "ticket_create" && proposal.status === "applied")),
     duplicateCancelled: tickets.some((ticket) => ticket.title === "Implement shared calendar invitations" && ticket.state === "CANCELLED"),
     obsoleteCancelled: tickets.some((ticket) => ticket.title === "Obsolete invitation spike" && ticket.state === "CANCELLED"),

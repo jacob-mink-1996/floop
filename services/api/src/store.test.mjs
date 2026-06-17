@@ -1340,6 +1340,51 @@ test("store surfaces blocked questions as attached ticket comments in fully auto
   store.close();
 });
 
+test("store keeps ceremony HITL questions pending in fully autonomous mode", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "fully_autonomous",
+  });
+
+  const ceremony = store.createCeremonyRun("project_floop", { type: "refinement" });
+  const question = store.createAgentMessage("project_floop", {
+    actor: "product_manager",
+    source: "ceremony_participant",
+    intent: "submit_ceremony_input",
+    target: {
+      runId: ceremony.id,
+      ticketId: "ticket_project_floop_2",
+      role: "product_manager",
+    },
+    summary: "Refinement question for FLOOP-2",
+    body: "Should the transport contract warning require blocking validation?",
+    metadata: {
+      ceremonyHitlQuestion: true,
+      refinementQuestion: true,
+    },
+  });
+
+  assert.equal(question.status, "pending");
+  assert.equal(question.promotedKind, "");
+
+  const answered = store.respondAgentMessage("project_floop", question.id, {
+    responseMd: "Yes, treat transport contract warnings as validation blockers.",
+    responderKind: "human",
+    responderRef: "jacob",
+    continueExecution: false,
+  });
+
+  assert.equal(answered.status, "attached");
+  assert.equal(
+    store
+      .getTicket("project_floop", "ticket_project_floop_2")
+      .events.some((event) => event.type === "agent.message_attached" && event.detail.includes("validation blockers")),
+    true,
+  );
+
+  store.close();
+});
+
 test("store does not treat ordinary ticket comments as unblock responses", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   const execution = store.createExecution("project_floop", "ticket_project_floop_2", {

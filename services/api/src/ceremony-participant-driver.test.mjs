@@ -176,9 +176,9 @@ test("ceremony participant recommendations produce refinement proposals", async 
     const split = completed.proposals.find(
       (proposal) => proposal.kind === "ticket_create" && proposal.payload.sourceTicketId === broad.id,
     );
-    const question = completed.proposals.find(
-      (proposal) => proposal.kind === "note" && proposal.payload.refinementQuestion === true,
-    );
+    const question = store
+      .listAgentMessages("project_floop", { intent: "submit_ceremony_input", status: "pending" })
+      .find((message) => message.target.runId === run.id && message.target.ticketId === broad.id);
 
     assert.ok(cleanup);
     assert.equal(cleanup.payload.actions.some((action) => action.duplicateTicketKey === duplicate.key), true);
@@ -187,7 +187,16 @@ test("ceremony participant recommendations produce refinement proposals", async 
     assert.equal(split.payload.ticket.parentTicketId, broad.id);
     assert.equal(split.payload.ticket.title, "Create shared calendar invite model");
     assert.ok(question);
-    assert.match(question.payload.note, /require account login/);
+    assert.equal(question.metadata.refinementQuestion, true);
+    assert.equal(question.metadata.ceremonyHitlQuestion, true);
+    assert.match(question.body, /require account login/);
+
+    store.respondAgentMessage("project_floop", question.id, {
+      responseMd: "Require account login for MVP invite acceptance.",
+      responderKind: "human",
+      responderRef: "operator",
+      continueExecution: false,
+    });
 
     const applied = store.applyCeremonyRun("project_floop", run.id, { proposalIds: [cleanup.id, split.id] });
     const createdSplitTicket = store.getTicket("project_floop", applied.proposals.find((proposal) => proposal.id === split.id).appliedTicketId);
@@ -195,6 +204,12 @@ test("ceremony participant recommendations produce refinement proposals", async 
     assert.equal(store.getTicket("project_floop", duplicate.id).state, "CANCELLED");
     assert.equal(store.getTicket("project_floop", obsolete.id).state, "CANCELLED");
     assert.equal(createdSplitTicket.parentTicketId, broad.id);
+    assert.equal(
+      store
+        .getTicket("project_floop", broad.id)
+        .events.some((event) => event.type === "agent.message_attached" && event.detail.includes("Require account login")),
+      true,
+    );
   } finally {
     store.close();
   }

@@ -2110,7 +2110,7 @@ function TicketDetailPanel({
     () =>
       agentMessages.filter(
         (message) =>
-          message.intent === "request_input" &&
+          (message.intent === "request_input" || message.intent === "submit_ceremony_input") &&
           message.status === "pending" &&
           typeof message.target?.ticketId === "string" &&
           message.target.ticketId === ticket?.id,
@@ -2855,7 +2855,12 @@ function TicketConversationSection({
   const ticketMessages = collapseTicketConversationMessages(
     messages
       .filter((message) => message.target?.ticketId === ticket.id)
-      .filter((message) => message.intent === "comment_on_ticket" || message.intent === "request_input")
+      .filter(
+        (message) =>
+          message.intent === "comment_on_ticket" ||
+          message.intent === "request_input" ||
+          message.intent === "submit_ceremony_input",
+      )
       .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()),
     pendingRequest?.id,
   );
@@ -3052,10 +3057,12 @@ function TicketConversationSection({
                 ))}
               </div>
             ) : null}
-            <label className="checkbox-row">
-              <input name="continueExecution" type="checkbox" defaultChecked />
-              <span>Continue the blocked lane after this answer</span>
-            </label>
+            {pendingRequest.intent === "request_input" ? (
+              <label className="checkbox-row">
+                <input name="continueExecution" type="checkbox" defaultChecked />
+                <span>Continue the blocked lane after this answer</span>
+              </label>
+            ) : null}
           </>
         ) : null}
       </form>
@@ -3070,14 +3077,18 @@ function collapseTicketConversationMessages(messages: AgentMessage[], pendingReq
       .map((message) => String(message.metadata.requestInputMessageId)),
   );
   return messages.filter((message) => {
-    if (message.intent !== "request_input") return true;
+    if (message.intent !== "request_input" && message.intent !== "submit_ceremony_input") return true;
     if (message.id === pendingRequestId) return true;
     return !requestIdsWithMirror.has(message.id);
   });
 }
 
 function ConversationItem({ message, pending }: { message: AgentMessage; pending: boolean }) {
-  const isQuestion = message.intent === "request_input" || message.metadata?.hitlQuestion === true;
+  const isQuestion =
+    message.intent === "request_input" ||
+    message.intent === "submit_ceremony_input" ||
+    message.metadata?.hitlQuestion === true ||
+    message.metadata?.ceremonyHitlQuestion === true;
   const isAnswer = message.metadata?.unblockResponse === true;
   const isSteering = message.metadata?.steeringNote === true;
   const isDispatch = message.metadata?.dispatchWithComment === true;
