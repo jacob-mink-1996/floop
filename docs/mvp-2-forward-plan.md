@@ -17,6 +17,94 @@ MVP 2.0 is not just "agents can run." It means the user can trust the loop, unde
 - Demo output includes idle-trimmed video, proof manifest, agent activity proof, checks run, review evidence, validation evidence, demo evidence, and merge evidence when applicable.
 - Focused authenticated integration tests pass in an environment with Codex available, or fail clearly with setup instructions.
 
+## Current Path To MVP 2.0
+
+Last reviewed: 2026-06-17.
+
+The next work should focus on proving and tightening the loop that already exists, not expanding scope. Fixture-backed MVP 2.0 verification passes, so the remaining MVP 2.0 work is mostly authenticated proof, release-grade UX polish, and hardening the recovery paths that make the system trustworthy.
+
+### 1. Run Authenticated Codex Release Proof
+
+Goal: prove MVP 2.0 with real Codex sessions, not only fixture agents.
+
+Actions:
+
+- Run `npm run verify:mvp2:codex` on a machine with Codex installed and authenticated.
+- Confirm merge rework can resume the original developer session when possible.
+- Confirm integrator fallback still works when the original developer session cannot resume.
+- Capture the authenticated big-work demo proof manifest.
+- Record failures as release blockers or explicit known limitations.
+
+Exit signal: authenticated Codex gates pass, or the remaining failures are narrow enough to produce a focused fix list.
+
+### 2. Polish The User-Facing Loop
+
+Goal: make the UI explain what is happening and what the user can do next without exposing internal machinery.
+
+Actions:
+
+- Audit ticket detail, board cards, conversation, ceremonies, constellation, execution dock, evidence, and merge queue.
+- Remove or hide controls that only exist to mutate internal state, such as generic manual outcome recording.
+- Keep ticket-visible agent output compact, with full logs and transcripts stored as artifacts.
+- Make active work, blocked questions, review, validation, demo evidence, merge state, and rework state visible at scan level.
+- Verify desktop and narrow layouts with screenshot or recording evidence.
+
+Exit signal: a user can operate a ticket from idea through merge without opening raw logs or guessing which panel matters.
+
+### 3. Tighten HITL And Steering
+
+Goal: make all user and agent conversation paths predictable.
+
+Actions:
+
+- Keep one visible representation for each agent question.
+- Infer responder and reference wherever possible.
+- Preserve important clarifications across developer, reviewer, validator, demo, merge, and rework phases.
+- Queue rapid comments safely so one steering comment does not erase another before the harness consumes it.
+- Show whether each comment became context, an answer, active steering, or a reopen/start instruction.
+
+Exit signal: HITL, comments, and steering are reliable enough for demos and normal use.
+
+### 4. Harden Lifecycle Product Creation
+
+Goal: make one idea become a product backlog and keep the product moving.
+
+Actions:
+
+- Run batch refinement over multiple backlog tickets.
+- Let refinement split, combine, remove, clarify, reorder, and accept work.
+- Trigger planning, work generation, demo preparation, and retros from lifecycle state instead of time alone.
+- Use project context lookup handles for agents instead of dumping large prompt bodies.
+- Add proof that a broad idea becomes executable child tickets and a sensible next-work queue.
+
+Exit signal: a greenfield project can move from idea to executable work without manual ticket grooming.
+
+### 5. Improve Demo Evidence
+
+Goal: make proof videos short, credible, and repeatable.
+
+Actions:
+
+- Cut idle time more aggressively when there is no visible transition, user action, screen work, or meaningful agent milestone.
+- Preserve roughly one second around each transition so the video remains understandable.
+- Produce snippet demos for focused UX flows and one full-loop release demo.
+- Include agent proof, file changes, checks, artifacts, review, validation, demo evidence, merge state, and cut metadata in manifests.
+
+Exit signal: the demo can be reviewed quickly while still proving real agent work.
+
+### 6. Decide MVP 2.0 Release Readiness
+
+Goal: make the release decision explicit.
+
+Actions:
+
+- Run `npm run verify:mvp2`.
+- Run `npm run verify:mvp2:codex`.
+- Review known limitations and push anything nonessential to MVP 3.0.
+- Produce final release notes with proof links, demo artifacts, and unresolved risks.
+
+Exit signal: all required gates pass and the remaining work is clearly post-MVP 2.0.
+
 ## Current Strengths To Preserve
 
 - The main execution loop now supports developer, reviewer, validator, demo, and merge concepts.
