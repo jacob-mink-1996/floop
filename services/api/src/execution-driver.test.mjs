@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -156,6 +156,67 @@ process.stdin.on("end", () => {
     assert.match(readFileSync(new URL(stdoutArtifact.uri), "utf8"), /fake codex stdout/);
     assert.match(readFileSync(promptPath, "utf8"), /Refinement policy: user approved/);
     assert.match(readFileSync(promptPath, "utf8"), /Use bounded commands only/);
+  } finally {
+    store.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test("execution driver can launch Codex SDK bridge adapters behind role profile config", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-codex-sdk-bridge-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  const bridgePath = join(fixtureDir, "fake-codex-sdk-bridge.js");
+  const bridgeInputPath = join(fixtureDir, "bridge-input.txt");
+  const store = createStore({
+    filename: join(fixtureDir, "floop.sqlite"),
+    seedDemo: true,
+    workspaceRoot,
+  });
+
+  writeFileSync(
+    bridgePath,
+    `const fs = require("node:fs");
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+});
+process.stdin.on("end", () => {
+  fs.writeFileSync(${JSON.stringify(bridgeInputPath)}, process.env.FLOOP_HARNESS_KIND + "\\n" + prompt);
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({ outcome: "completed", summaryMd: process.env.FLOOP_HARNESS_KIND + " bridge completed." }),
+  );
+});
+`,
+    "utf8",
+  );
+
+  try {
+    store.updateRoleProfile("project_floop", "developer", {
+      adapter: "codex_sdk",
+      model: "codex-sdk-fixture",
+      config: {
+        command: `"${process.execPath}" "${bridgePath}"`,
+        promptPreamble: "SDK bridge preamble.",
+      },
+    });
+    const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Run through the SDK bridge.",
+    });
+    const driver = createExecutionDriver({ store, logger: silentLogger() });
+
+    await driver.pollOnce();
+
+    const completed = store.getExecution("project_floop", execution.id);
+    const bridgeInput = readFileSync(bridgeInputPath, "utf8");
+
+    assert.equal(completed.outcome, "completed");
+    assert.equal(completed.summaryMd, "codex_sdk bridge completed.");
+    assert.match(bridgeInput, /^codex_sdk\n/);
+    assert.match(bridgeInput, /SDK bridge preamble/);
+    assert.match(bridgeInput, /Ticket/);
   } finally {
     store.close();
     rmSync(fixtureDir, { recursive: true, force: true });
@@ -2084,8 +2145,8 @@ process.stdin.resume();
 process.stdin.on("end", () => {
   fs.writeFileSync(process.env.FLOOP_RESULT_PATH, JSON.stringify({
     outcome: "blocked",
-    blockedKind: "filesystem_read_only_git_metadata",
-    summaryMd: "Work is present but the agent could not write git metadata."
+    blockedKind: "environment_git_read_only",
+    summaryMd: "Work is present but the shared Git worktree metadata is read-only when git add creates index.lock."
   }));
 });
 `,
@@ -2665,7 +2726,14 @@ process.stdin.on("data", (chunk) => {
   prompt += chunk;
 });
 process.stdin.on("end", () => {
-  fs.writeFileSync(${JSON.stringify(promptPath)}, prompt);
+    fs.writeFileSync(${JSON.stringify(promptPath)}, prompt);
+  if (!fs.existsSync("notes/steer.txt")) {
+    fs.writeFileSync(
+      process.env.FLOOP_RESULT_PATH,
+      JSON.stringify({ outcome: "failed", summaryMd: "Copied steer note was missing.", failureKind: "missing_steer_copy" }),
+    );
+    return;
+  }
   fs.writeFileSync(
     process.env.FLOOP_RESULT_PATH,
     JSON.stringify({ outcome: "completed", summaryMd: "Resumed Codex execution completed." }),
@@ -2677,6 +2745,9 @@ process.stdin.on("end", () => {
   );
 
   try {
+    store.updateProjectPolicy("project_floop", {
+      steeringWorktreePolicy: "copy_interrupted_worktree",
+    });
     store.updateRoleProfile("project_floop", "developer", {
       adapter: "codex",
       model: "codex-latest",
@@ -2688,6 +2759,10 @@ process.stdin.on("end", () => {
       role: "developer",
       reason: "Start work before steering.",
     });
+    mkdirSync(join(execution.worktrees[0].path, "notes"), { recursive: true });
+    mkdirSync(join(execution.worktrees[0].path, "node_modules"), { recursive: true });
+    writeFileSync(join(execution.worktrees[0].path, "notes", "steer.txt"), "operator context", "utf8");
+    writeFileSync(join(execution.worktrees[0].path, "node_modules", "skip.txt"), "generated", "utf8");
     store.updateExecutionHarnessSession("project_floop", execution.id, {
       harnessKind: "codex_exec",
       externalThreadId: "codex-thread-steer",
@@ -2706,11 +2781,15 @@ process.stdin.on("end", () => {
     const args = JSON.parse(readFileSync(argsPath, "utf8"));
     const prompt = readFileSync(promptPath, "utf8");
     const completed = store.getExecution("project_floop", steered.delivery.resumedExecutionId);
+    const resumedWorktree = completed.worktrees[0];
 
     assert.deepEqual(args.slice(0, 4), ["exec", "--json", "resume", "codex-thread-steer"]);
     assert.match(prompt, /same native agent session could be steered/);
     assert.match(prompt, /Use SQLite and avoid Redis/);
     assert.equal(completed.outcome, "completed");
+    assert.equal(resumedWorktree.resumedFromWorktreeId, execution.worktrees[0].id);
+    assert.equal(readFileSync(join(resumedWorktree.path, "notes", "steer.txt"), "utf8"), "operator context");
+    assert.equal(existsSync(join(resumedWorktree.path, "node_modules", "skip.txt")), false);
   } finally {
     store.close();
     rmSync(fixtureDir, { recursive: true, force: true });

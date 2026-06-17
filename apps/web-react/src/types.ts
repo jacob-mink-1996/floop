@@ -15,6 +15,7 @@ export type TicketState =
 export type TicketPriority = "low" | "medium" | "high" | "urgent";
 
 export type RefinementMode = "autonomous" | "user_approved" | "user_participant" | "user_only";
+export type SteeringWorktreePolicy = "new_iteration_worktree" | "reuse_interrupted_worktree" | "copy_interrupted_worktree";
 export type InteractionMode = "manual" | "operator_approved" | "autonomous_with_review" | "autopilot" | "fully_autonomous";
 export type CeremonyType = "refinement" | "planning" | "daily_triage" | "review_demo_prep" | "retro";
 export type AgentMessageIntent =
@@ -61,6 +62,7 @@ export type ProjectPolicy = {
   maxAutoContinueIterations: number;
   interactionMode: InteractionMode;
   refinementMode: RefinementMode;
+  steeringWorktreePolicy: SteeringWorktreePolicy;
   agentCreatedTicketDefaultState: TicketState;
   ceremonyAutomation: CeremonyAutomation;
 };
@@ -109,6 +111,7 @@ export type ProjectPolicyInput = {
   maxAutoContinueIterations: number;
   interactionMode: InteractionMode;
   refinementMode: RefinementMode;
+  steeringWorktreePolicy: SteeringWorktreePolicy;
   agentCreatedTicketDefaultState: TicketState;
   ceremonyAutomation?: CeremonyAutomation;
 };
@@ -256,6 +259,8 @@ export type Worktree = {
   repoId: string;
   ticketId: string;
   executionId: string;
+  resumedFromWorktreeId?: string;
+  lineageId?: string;
   repoSlug: string;
   repoName: string;
   executionRole: RoleName;

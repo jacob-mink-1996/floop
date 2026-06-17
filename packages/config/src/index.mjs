@@ -12,6 +12,7 @@ export function defaultProjectPolicy() {
     maxAutoContinueIterations: 5,
     interactionMode: "manual",
     refinementMode: "user_approved",
+    steeringWorktreePolicy: "new_iteration_worktree",
     agentCreatedTicketDefaultState: "PROPOSED",
     ceremonyAutomation: defaultCeremonyAutomation(),
   };

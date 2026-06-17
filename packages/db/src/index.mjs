@@ -531,6 +531,7 @@ function mapProjectPolicy(row) {
     maxAutoContinueIterations: Number(row.max_auto_continue_iterations),
     interactionMode: row.interaction_mode || "manual",
     refinementMode: row.refinement_mode || "user_approved",
+    steeringWorktreePolicy: row.steering_worktree_policy || "new_iteration_worktree",
     agentCreatedTicketDefaultState: row.agent_created_ticket_default_state,
     ceremonyAutomation: mergeCeremonyAutomation(parseJsonObject(row.ceremony_automation_json, {})),
   };
@@ -817,15 +818,27 @@ function planExecutionWorktrees(database, projectId, ticket, execution, timestam
   const repoTargets = getRepoTargetsByTicketId(database, [ticket.id]).get(ticket.id) || [];
   const worktreeLeaf =
     execution.role === "developer" ? `iter-${execution.iteration}` : `${execution.role}-iter-${execution.iteration}`;
+  const resumedWorktreesByRepoId = execution.resumedFromExecutionId
+    ? new Map(
+        database
+          .prepare("select * from worktrees where project_id = ? and execution_id = ?")
+          .all(projectId, execution.resumedFromExecutionId)
+          .map((worktree) => [worktree.repo_id, worktree]),
+      )
+    : new Map();
 
   return repoTargets.map((target) => {
     const plannedBranch = planExecutionBranchName(database, projectId, ticket, target, execution);
+    const resumedWorktree = resumedWorktreesByRepoId.get(target.repoId);
+    const id = `worktree_${randomUUID()}`;
     return {
-      id: `worktree_${randomUUID()}`,
+      id,
       projectId,
       repoId: target.repoId,
       ticketId: ticket.id,
       executionId: execution.id,
+      resumedFromWorktreeId: resumedWorktree?.id || "",
+      lineageId: resumedWorktree ? resumedWorktree.lineage_id || resumedWorktree.id : id,
       repoName: target.repoName,
       path: resolve(
         project.workspace_root,
@@ -1197,9 +1210,10 @@ function insertProjectPolicy(database, projectId, policy, timestamp) {
         require_human_approval_before_merge, require_demo_evidence_before_merge,
         required_validation_command_profile_for_merge,
         max_parallel_executions, max_parallel_merges, max_auto_continue_iterations,
-        interaction_mode, refinement_mode, agent_created_ticket_default_state, ceremony_automation_json,
+        interaction_mode, refinement_mode, steering_worktree_policy,
+        agent_created_ticket_default_state, ceremony_automation_json,
         created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       `policy_${slugify(projectId)}`,
@@ -1214,6 +1228,7 @@ function insertProjectPolicy(database, projectId, policy, timestamp) {
       policy.maxAutoContinueIterations,
       policy.interactionMode || "manual",
       policy.refinementMode || "user_approved",
+      policy.steeringWorktreePolicy || "new_iteration_worktree",
       policy.agentCreatedTicketDefaultState,
       JSON.stringify(policy.ceremonyAutomation || defaultCeremonyAutomation()),
       timestamp,

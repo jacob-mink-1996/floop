@@ -1223,6 +1223,28 @@ h3 {
   line-height: 1.4;
 }
 
+.decision-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.decision-meta small {
+  border: 1px solid var(--line);
+  padding: 2px 6px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.decision-action {
+  min-width: 118px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
 .ops-column,
 .settings-card,
 .profile-card {

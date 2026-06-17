@@ -134,7 +134,7 @@ try {
   await clickText("Cockpit");
   await waitForText("Attention");
   await assertScript("document.body.innerText.includes('Add fixture coverage for ceremony fan-out')", "agent inbox suggestion renders in Cockpit attention");
-  await clickText("Convert");
+  await clickText("Create ticket");
   await waitForScript("!document.body.innerText.includes('Add fixture coverage for ceremony fan-out')");
   await clickText("Board");
 

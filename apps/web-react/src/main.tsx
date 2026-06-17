@@ -102,6 +102,7 @@ type AttentionItem = {
   age: string;
   severity: number;
   actionLabel: string;
+  meta?: string[];
   ticketId?: string;
   ceremonyRunId?: string;
   proposalIds?: string[];
@@ -882,9 +883,14 @@ function OpsPanel({
                 <span>{item.label} · {item.age}</span>
                 <strong>{item.title}</strong>
                 <p>{item.detail}</p>
+                {item.meta?.length ? (
+                  <div className="decision-meta">
+                    {item.meta.map((value) => <small key={value}>{value}</small>)}
+                  </div>
+                ) : null}
               </div>
               <button
-                className="quiet-button"
+                className={item.agentMessage ? "primary-button decision-action" : "quiet-button decision-action"}
                 type="button"
                 disabled={busyAttentionId === item.id}
                 onClick={() => actOnAttention(item)}
@@ -1103,19 +1109,13 @@ function buildAttentionQueue({
     items.push({
       id: `agent:${message.id}`,
       kind: "external_agent",
-      label: `${message.actor} · ${prettyState(message.intent)}`,
+      label: attentionLabelForAgentMessage(message),
       title: message.summary,
       detail: message.body || "External agent input is waiting.",
       age: formatDate(message.createdAt),
       severity: message.intent === "raise_risk" ? 4 : 2,
-      actionLabel:
-        message.intent === "suggest_ticket" || message.intent === "raise_risk"
-          ? "Convert"
-          : message.intent === "suggest_dispatch"
-            ? "Dispatch"
-            : message.intent === "comment_on_ticket"
-              ? "Attach"
-              : "Accept",
+      actionLabel: attentionActionForAgentMessage(message),
+      meta: attentionMetaForAgentMessage(message),
       ticketId: typeof message.target.ticketId === "string" ? message.target.ticketId : undefined,
       agentMessage: message,
     });
@@ -1198,6 +1198,38 @@ function buildAttentionQueue({
   return items
     .sort((a, b) => b.severity - a.severity)
     .slice(0, 12);
+}
+
+function attentionLabelForAgentMessage(message: AgentMessage) {
+  if (message.intent === "suggest_dispatch") return `${message.actor} · dispatch`;
+  if (message.intent === "submit_artifact") return `${message.actor} · evidence`;
+  if (message.intent === "comment_on_ticket") return `${message.actor} · comment`;
+  if (message.intent === "raise_risk") return `${message.actor} · risk`;
+  if (message.intent === "request_status") return `${message.actor} · status`;
+  return `${message.actor} · ${prettyState(message.intent)}`;
+}
+
+function attentionActionForAgentMessage(message: AgentMessage) {
+  if (message.intent === "suggest_ticket" || message.intent === "raise_risk") return "Create ticket";
+  if (message.intent === "suggest_dispatch") return "Dispatch";
+  if (message.intent === "comment_on_ticket") return "Attach";
+  if (message.intent === "submit_artifact") return "Attach evidence";
+  if (message.intent === "request_status") return "Acknowledge";
+  return "Accept";
+}
+
+function attentionMetaForAgentMessage(message: AgentMessage) {
+  const meta = [message.source || "agent"];
+  if (typeof message.target.ticketId === "string" && message.target.ticketId) {
+    meta.push("ticket");
+  }
+  if (typeof message.metadata?.role === "string" && message.metadata.role) {
+    meta.push(prettyRole(message.metadata.role as RoleName));
+  }
+  if (message.intent === "submit_artifact" && typeof message.metadata?.artifact === "object") {
+    meta.push("evidence");
+  }
+  return meta;
 }
 
 function isStaleActiveTicket(ticket: BoardTicket) {

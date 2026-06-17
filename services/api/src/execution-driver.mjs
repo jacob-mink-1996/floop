@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { access, appendFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_POLL_INTERVAL_MS = 2000;
@@ -343,6 +343,20 @@ function selectAdapterRun(profile, execution) {
     };
   }
 
+  if (profile.adapter === "codex_sdk" || profile.adapter === "codex_mcp") {
+    const command = typeof profile.config?.command === "string" ? profile.config.command.trim() : "";
+    if (!command) {
+      return null;
+    }
+    return {
+      kind: profile.adapter,
+      command,
+      model: profile.model,
+      promptPreamble:
+        typeof profile.config?.promptPreamble === "string" ? profile.config.promptPreamble.trim() : "",
+    };
+  }
+
   if (typeof profile.config?.command === "string" && profile.config.command.trim()) {
     return {
       kind: "shell",
@@ -362,6 +376,7 @@ function selectAdapterRun(profile, execution) {
 
 async function materializeWorktrees(ticket, execution) {
   const repoTargetsByRepoId = new Map(ticket.repoTargets.map((target) => [target.repoId, target]));
+  const worktreesById = new Map((ticket.worktrees || []).map((worktree) => [worktree.id, worktree]));
   for (const worktree of execution.worktrees) {
     const target = repoTargetsByRepoId.get(worktree.repoId);
     if (!target) {
@@ -369,6 +384,12 @@ async function materializeWorktrees(ticket, execution) {
     }
 
     await ensureWorktreeMaterialized(target, worktree);
+    if (execution.steeringMetadata?.worktreePolicy === "copy_interrupted_worktree" && worktree.resumedFromWorktreeId) {
+      const sourceWorktree = worktreesById.get(worktree.resumedFromWorktreeId);
+      if (sourceWorktree?.path && sourceWorktree.path !== worktree.path && await fileExists(sourceWorktree.path)) {
+        await copyInterruptedWorktree(sourceWorktree.path, worktree.path);
+      }
+    }
     await writeFile(
       join(worktree.path, ".floop-worktree.json"),
       JSON.stringify(
@@ -388,6 +409,40 @@ async function materializeWorktrees(ticket, execution) {
       "utf8",
     );
   }
+}
+
+async function copyInterruptedWorktree(sourcePath, destinationPath) {
+  await cp(sourcePath, destinationPath, {
+    recursive: true,
+    force: true,
+    errorOnExist: false,
+    filter: (source) => shouldCopyInterruptedWorktreePath(sourcePath, source),
+  });
+}
+
+function shouldCopyInterruptedWorktreePath(sourceRoot, sourcePath) {
+  const rel = relative(sourceRoot, sourcePath);
+  if (!rel) {
+    return true;
+  }
+  if (rel.startsWith("..")) {
+    return false;
+  }
+  const parts = rel.split(/[\\/]+/).filter(Boolean);
+  const skippedNames = new Set([
+    ".git",
+    ".floop",
+    ".floop-worktree.json",
+    "node_modules",
+    ".next",
+    "dist",
+    "build",
+    "coverage",
+    ".cache",
+    ".turbo",
+    ".vite",
+  ]);
+  return !parts.some((part) => skippedNames.has(part));
 }
 
 async function ensureWorktreeMaterialized(target, worktree) {
@@ -580,7 +635,33 @@ async function executeAdapterRun(adapterRun, options) {
     });
   }
 
+  if (adapterRun.kind === "codex_sdk" || adapterRun.kind === "codex_mcp") {
+    const prompt = buildCodexPrompt(options.project, options.ticket, options.execution, adapterRun, options.runtime);
+    await writeFile(options.runtime.promptPath, prompt, "utf8");
+    return runHarnessBridgeCommand(adapterRun, options, prompt);
+  }
+
   return runShellCommand(adapterRun.command, options);
+}
+
+function runHarnessBridgeCommand(adapterRun, { cwd, env, runtime, signal, resultExitGraceMs }, prompt) {
+  return runProcess(adapterRun.command, [], {
+    cwd,
+    env: {
+      ...env,
+      FLOOP_HARNESS_KIND: adapterRun.kind,
+      FLOOP_HARNESS_MODEL: adapterRun.model || "",
+    },
+    shell: true,
+    stdin: prompt,
+    stdoutPath: runtime.stdoutPath,
+    stderrPath: runtime.stderrPath,
+    jsonlPath: runtime.agentEventsPath,
+    resultPath: runtime.resultPath,
+    resultExitGraceMs,
+    signal,
+    metadata: { adapter: adapterRun.kind, command: adapterRun.command },
+  });
 }
 
 function runShellCommand(command, { cwd, env, runtime, signal, resultExitGraceMs }) {
@@ -1397,6 +1478,8 @@ async function recoverGitMetadataBlockedCompletion(completion, execution) {
 
 function isGitMetadataReadOnlyBlockedKind(value) {
   return [
+    "environment_git_read_only",
+    "environment-git-read-only",
     "git_metadata_read_only",
     "git-metadata-readonly",
     "git_metadata_readonly",
@@ -1421,7 +1504,7 @@ function isRecoverableGitMetadataCompletion(completion) {
     completion.expectedNextEvidenceMd,
   ].join("\n").toLowerCase();
   return (
-    (text.includes("git metadata") || text.includes("index.lock")) &&
+    (text.includes("git metadata") || text.includes("worktree metadata") || text.includes("index.lock")) &&
     (text.includes("read-only") || text.includes("read only") || text.includes("mounted read-only"))
   );
 }

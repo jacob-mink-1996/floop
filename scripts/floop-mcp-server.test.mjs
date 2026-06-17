@@ -7,6 +7,8 @@ test("Floop MCP facade advertises project and agent inbox tools", () => {
   assert.equal(tools.some((tool) => tool.name === "floop_list_projects"), true);
   assert.equal(tools.some((tool) => tool.name === "floop_append_agent_message"), true);
   assert.equal(tools.some((tool) => tool.name === "floop_request_dispatch"), true);
+  assert.equal(tools.some((tool) => tool.name === "floop_steer_execution"), true);
+  assert.equal(tools.some((tool) => tool.name === "floop_attach_artifact"), true);
 });
 
 test("Floop MCP facade forwards agent inbox tools to the HTTP API", async () => {
@@ -78,5 +80,69 @@ test("Floop MCP facade forwards agent inbox tools to the HTTP API", async () => 
     body: "Review lane is ready",
     target: { ticketId: "ticket_project_floop_2" },
     metadata: { role: "reviewer" },
+  });
+
+  await handleMcpRequest(
+    {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "floop_steer_execution",
+        arguments: {
+          projectId: "project_floop",
+          executionId: "execution_123",
+          actor: "openclaw",
+          body: "Prefer a SQLite-backed implementation.",
+          mode: "hard_steer",
+        },
+      },
+    },
+    { apiUrl: "http://floop.local", fetch },
+  );
+  assert.equal(requests[2].url, "http://floop.local/api/v1/projects/project_floop/executions/execution_123/steer");
+  assert.deepEqual(JSON.parse(requests[2].options.body), {
+    actor: "openclaw",
+    source: "mcp",
+    body: "Prefer a SQLite-backed implementation.",
+    mode: "hard_steer",
+  });
+
+  await handleMcpRequest(
+    {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "floop_attach_artifact",
+        arguments: {
+          projectId: "project_floop",
+          ticketId: "ticket_project_floop_2",
+          actor: "hermes",
+          kind: "demo",
+          label: "Smoke recording",
+          uri: "file:///tmp/demo.mp4",
+          metadata: { durationSeconds: 18 },
+        },
+      },
+    },
+    { apiUrl: "http://floop.local", fetch },
+  );
+  assert.deepEqual(JSON.parse(requests[3].options.body), {
+    actor: "hermes",
+    source: "mcp",
+    intent: "submit_artifact",
+    summary: "Smoke recording",
+    body: "",
+    target: { ticketId: "ticket_project_floop_2" },
+    metadata: {
+      durationSeconds: 18,
+      artifact: {
+        kind: "demo",
+        label: "Smoke recording",
+        uri: "file:///tmp/demo.mp4",
+        metadata: { durationSeconds: 18 },
+      },
+    },
   });
 });

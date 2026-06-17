@@ -98,3 +98,36 @@ If an operator leaves two steer comments quickly:
 - it creates the next continuation with the same native session id and the newer steering note.
 
 This prevents the first resumed run from racing ahead with stale steering context when the operator has already superseded it.
+
+## Big-Pass Update: Worktree Policy, Harness Bridges, And Inbox Actions
+
+### Implemented
+
+- Added `steeringWorktreePolicy` to project policy with three named modes:
+  - `new_iteration_worktree`;
+  - `copy_interrupted_worktree`;
+  - `reuse_interrupted_worktree`.
+- Added worktree continuation metadata:
+  - `resumedFromWorktreeId`;
+  - `lineageId`.
+- Hard-steer continuations now stamp the selected worktree policy into execution steering metadata.
+- `copy_interrupted_worktree` now copies useful interrupted-worktree files into the resumed worktree while skipping Git internals and bulky generated directories.
+- Rapid repeated hard steering now preserves worktree lineage from the latest active resumed run.
+- Added explicit `codex_sdk` and `codex_mcp` bridge adapter kinds behind role-profile config while keeping `codex_exec` as the default reliable path.
+- Extended the MCP facade with first-class tools for:
+  - steering an execution;
+  - attaching ticket evidence;
+  - dispatch suggestion;
+  - run status;
+  - existing generic Agent Inbox append.
+- Polished the Cockpit Attention queue for external-agent messages with intent-specific labels, action text, and compact metadata chips.
+
+### Verified
+
+- `npm test`
+- `npm run check:ui`
+
+### Current Follow-Ups
+
+- `reuse_interrupted_worktree` is represented as a policy option, but the safe production default remains `new_iteration_worktree`; `copy_interrupted_worktree` is the practical middle path for preserving in-flight files without sharing ownership of the same directory.
+- The `codex_sdk` and `codex_mcp` adapters are bridge-command spikes, not native SDK/MCP clients yet. They prove the role-profile contract and result path while preserving the tested `codex_exec` behavior.

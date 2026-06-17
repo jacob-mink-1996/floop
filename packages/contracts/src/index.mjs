@@ -5,6 +5,7 @@ import {
   isAgentMessageStatus,
   isInteractionMode,
   isRefinementMode,
+  isSteeringWorktreePolicy,
   isRoleName,
   isExecutionOutcome,
   isMergeStatus,
@@ -149,6 +150,8 @@ export function worktreeDto(worktree) {
     repoId: worktree.repoId,
     ticketId: worktree.ticketId,
     executionId: worktree.executionId,
+    resumedFromWorktreeId: worktree.resumedFromWorktreeId || "",
+    lineageId: worktree.lineageId || worktree.id,
     repoSlug: worktree.repoSlug,
     repoName: worktree.repoName,
     executionRole: worktree.executionRole,
@@ -501,6 +504,14 @@ export function parseUpdateProjectPolicyInput(body) {
       throw new Error(`Invalid interaction mode: ${interactionMode}`);
     }
     parsed.interactionMode = interactionMode;
+  }
+
+  if (hasOwn(body, "steeringWorktreePolicy")) {
+    const steeringWorktreePolicy = requiredString(body, "steeringWorktreePolicy");
+    if (!isSteeringWorktreePolicy(steeringWorktreePolicy)) {
+      throw new Error(`Invalid steering worktree policy: ${steeringWorktreePolicy}`);
+    }
+    parsed.steeringWorktreePolicy = steeringWorktreePolicy;
   }
 
   if (hasOwn(body, "maxParallelExecutions")) {

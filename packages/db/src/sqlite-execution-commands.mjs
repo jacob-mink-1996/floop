@@ -284,9 +284,9 @@ export function createExecutionCommands({
           database
             .prepare(
               `insert into worktrees (
-                id, project_id, repo_id, ticket_id, execution_id, path, branch_name,
+                id, project_id, repo_id, ticket_id, execution_id, resumed_from_worktree_id, lineage_id, path, branch_name,
                 base_ref, status, is_dirty, created_at, updated_at, cleaned_at
-              ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
               worktree.id,
@@ -294,6 +294,8 @@ export function createExecutionCommands({
               worktree.repoId,
               worktree.ticketId,
               worktree.executionId,
+              worktree.resumedFromWorktreeId || null,
+              worktree.lineageId || worktree.id,
               worktree.path,
               worktree.branchName,
               worktree.baseRef,
@@ -527,7 +529,13 @@ export function createExecutionCommands({
           ? input.harnessCapabilities
           : JSON.parse(execution.harness_capabilities_json || "[]"),
         resumedFromExecutionId: execution.id,
-        steeringMetadata: input.steeringMetadata || {},
+        steeringMetadata: {
+          ...(input.steeringMetadata || {}),
+          worktreePolicy: optionalText(
+            input.steeringWorktreePolicy,
+            policy.steering_worktree_policy || "new_iteration_worktree",
+          ),
+        },
       });
     },
 
@@ -609,6 +617,7 @@ export function createExecutionCommands({
 
       let continued = null;
       if (mode === "hard_steer" && canInterruptAndResume) {
+        const policy = requiredProjectPolicy(database, projectId);
         continued = commands.continueExecution(projectId, execution.id, {
           reason: `Steering from ${actor}: ${body}`,
           harnessKind: execution.harness_kind,
@@ -616,6 +625,7 @@ export function createExecutionCommands({
           externalSessionId: execution.external_session_id,
           externalConversationId: execution.external_conversation_id,
           harnessCapabilities: capabilities,
+          steeringWorktreePolicy: policy.steering_worktree_policy || "new_iteration_worktree",
           steeringMetadata: {
             steeringMessageId: message.id,
             steeringBody: body,

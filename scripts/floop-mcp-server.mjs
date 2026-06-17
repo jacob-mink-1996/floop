@@ -90,6 +90,44 @@ export function toolDefinitions() {
       },
     },
     {
+      name: "floop_steer_execution",
+      description: "Send a steering note to an active execution. Hard steering interrupts and resumes when the harness supports it.",
+      inputSchema: {
+        type: "object",
+        required: ["projectId", "executionId", "actor", "body"],
+        properties: {
+          projectId: { type: "string" },
+          executionId: { type: "string" },
+          actor: { type: "string" },
+          source: { type: "string" },
+          body: { type: "string" },
+          mode: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "floop_attach_artifact",
+      description: "Attach evidence to a ticket through the Agent Inbox artifact promotion path.",
+      inputSchema: {
+        type: "object",
+        required: ["projectId", "ticketId", "actor", "kind", "label", "uri"],
+        properties: {
+          projectId: { type: "string" },
+          ticketId: { type: "string" },
+          actor: { type: "string" },
+          source: { type: "string" },
+          kind: { type: "string" },
+          label: { type: "string" },
+          uri: { type: "string" },
+          summary: { type: "string" },
+          body: { type: "string" },
+          metadata: { type: "object" },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
       name: "floop_get_run_status",
       description: "Read the current run observability feed for a project.",
       inputSchema: {
@@ -151,6 +189,35 @@ async function callTool(name, args, { apiUrl, fetch }) {
         body: args.body || args.summary,
         target: { ticketId: required(args, "ticketId") },
         metadata: { role: required(args, "role") },
+      });
+    case "floop_steer_execution":
+      return apiPost(
+        fetch,
+        `${apiUrl}/api/v1/projects/${encodeURIComponent(required(args, "projectId"))}/executions/${encodeURIComponent(required(args, "executionId"))}/steer`,
+        {
+          actor: required(args, "actor"),
+          source: args.source || "mcp",
+          body: required(args, "body"),
+          mode: args.mode === "hard_steer" ? "hard_steer" : "soft_steer",
+        },
+      );
+    case "floop_attach_artifact":
+      return apiPost(fetch, `${apiUrl}/api/v1/projects/${encodeURIComponent(required(args, "projectId"))}/agent-messages`, {
+        actor: required(args, "actor"),
+        source: args.source || "mcp",
+        intent: "submit_artifact",
+        summary: args.summary || required(args, "label"),
+        body: args.body || "",
+        target: { ticketId: required(args, "ticketId") },
+        metadata: {
+          ...(args.metadata && typeof args.metadata === "object" ? args.metadata : {}),
+          artifact: {
+            kind: required(args, "kind"),
+            label: required(args, "label"),
+            uri: required(args, "uri"),
+            metadata: args.metadata && typeof args.metadata === "object" ? args.metadata : {},
+          },
+        },
       });
     case "floop_get_run_status": {
       const query = new URLSearchParams();

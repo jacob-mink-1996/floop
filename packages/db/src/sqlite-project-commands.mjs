@@ -195,6 +195,10 @@ export function createProjectCommands({
         required: true,
       });
       applyRefinementModePatch(updates, changedFields, input, existing);
+      applyTextPatch(updates, changedFields, input, existing, "steeringWorktreePolicy", {
+        column: "steering_worktree_policy",
+        required: true,
+      });
       applyTextPatch(updates, changedFields, input, existing, "agentCreatedTicketDefaultState", {
         column: "agent_created_ticket_default_state",
         required: true,

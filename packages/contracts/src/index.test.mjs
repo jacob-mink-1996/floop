@@ -350,6 +350,7 @@ test("request parsers normalize project and ticket payloads", () => {
     maxAutoContinueIterations: 7,
     interactionMode: " fully_autonomous ",
     refinementMode: " user_participant ",
+    steeringWorktreePolicy: " copy_interrupted_worktree ",
     agentCreatedTicketDefaultState: " READY ",
     ceremonyAutomation: {
       enabled: true,
@@ -390,6 +391,7 @@ test("request parsers normalize project and ticket payloads", () => {
     maxAutoContinueIterations: 7,
     interactionMode: "fully_autonomous",
     refinementMode: "user_participant",
+    steeringWorktreePolicy: "copy_interrupted_worktree",
     agentCreatedTicketDefaultState: "READY",
     ceremonyAutomation: {
       enabled: true,

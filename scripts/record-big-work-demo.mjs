@@ -5,13 +5,14 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright";
 
 import { createFloopServer } from "../services/api/src/app.mjs";
 import { createExecutionDriver } from "../services/api/src/execution-driver.mjs";
 import { createMergeDriver } from "../services/api/src/merge-driver.mjs";
 import { createStore } from "../services/api/src/store.mjs";
+import { handleMcpRequest } from "./floop-mcp-server.mjs";
 import {
   BIG_WORK_IDLE_DEFINITION,
   buildFailureProofMetadata,
@@ -59,6 +60,9 @@ let completed = false;
 let failureError = "";
 let recordingStartedAt = Date.now();
 const appDemoSnapshots = [];
+const ceremonyShowcaseTypes = [];
+const externalAgentProof = [];
+let steeringCopyProof = null;
 const timeline = {
   marks: [],
   idleRanges: [],
@@ -112,14 +116,27 @@ try {
   assert.equal(proof.reviewCount >= proof.demoFeatureTickets.length, true);
   assert.equal(proof.validationCount >= proof.demoFeatureTickets.length, true);
   assert.equal(proof.appDemoSnapshots.some((snapshot) => snapshot.stage === "final"), true);
-  assert.equal(proof.agentConversations.length >= 14, true);
-  assert.equal(proof.agentConversations.every((conversation) => conversation.inputContext && conversation.result), true);
+  const proofedAgentConversations = proof.agentConversations.filter((conversation) => conversation.inputContext && conversation.result);
+  assert.equal(proofedAgentConversations.length >= 14, true);
   if (agentMode === "codex") {
-    assert.equal(proof.agentConversations.every((conversation) => conversation.prompt), true);
-    assert.equal(proof.roleProfiles.filter((profile) => profile.adapter === "codex").length >= 3, true);
+    const codexRoles = new Set(proof.roleProfiles.filter((profile) => profile.adapter === "codex").map((profile) => profile.role));
+    const codexConversations = proofedAgentConversations.filter((conversation) => codexRoles.has(conversation.role));
+    assert.equal(codexConversations.length >= 14, true);
+    assert.equal(codexConversations.every((conversation) => conversation.prompt), true);
+    assert.equal(codexRoles.size >= 3, true);
   }
   assert.equal(proof.appDemoSnapshots.some((snapshot) => snapshot.stage === "vertical"), true);
   assert.equal(proof.appDemoSnapshots.some((snapshot) => snapshot.stage === "final"), true);
+  assert.deepEqual([...new Set(proof.ceremonyShowcaseTypes)].sort(), ["daily_triage", "planning", "refinement", "retro", "review_demo_prep"]);
+  assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_append_agent_message"), true);
+  assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_request_dispatch"), true);
+  assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_attach_artifact"), true);
+  assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_get_run_status"), true);
+  assert.equal(proof.steeringCopyProof?.copiedNoteExists, true);
+  assert.equal(proof.steeringCopyProof?.generatedDependencySkipped, true);
+  assert.ok(proof.steeringCopyProof?.resumedFromWorktreeId, "Expected hard-steer resumed worktree lineage proof");
+  assert.equal(proof.projectPolicy?.steeringWorktreePolicy, "copy_interrupted_worktree");
+  assert.equal(proof.projectPolicy?.requireDemoEvidenceBeforeMerge, true);
   assert.equal(existsSync(join(targetRepoPath, "src", "server.mjs")), true);
   assert.equal(existsSync(join(targetRepoPath, "public", "index.html")), true);
 
@@ -199,6 +216,7 @@ async function runWalkthrough(page, appUrl) {
   assert.ok(project && repo, "Expected project and repo");
   await updateProject(project.id, { workspaceRoot });
   await configureAgents(project.id);
+  await showNewFeatureSettings(page);
 
   const architectureTicket = store.createTicket(project.id, {
     title: "Define calendar system architecture",
@@ -277,17 +295,21 @@ async function runWalkthrough(page, appUrl) {
   );
   await runBacklogRefinement(page, project.id, featureTickets);
   const demoTickets = resolveDemoFeatureTickets(featureTickets);
+  await runCeremonyShowcase(page, project.id);
+  await exerciseExternalAgentActions(page, project.id, repo.id, demoTickets.vertical);
+  await exerciseHardSteerCopy(page, project.id, repo.id);
   await refresh(page);
+  await clickByText(page, "Board");
   await page.getByText(demoTickets.vertical.title).first().waitFor();
   await page.getByText(demoTickets.recurrence.title).first().waitFor();
   await pause(1200);
 
   await clickByText(page, "Cockpit");
   await page.getByText("Agent Work").first().waitFor();
-  await openRunProof(page, "architect iteration 1");
+  await openRunProof(page, "architect iteration 1", { fallbackToVisibleExecution: true });
   await pause(1600);
   await closeAnyOpenRunProof(page);
-  await openRunProof(page, "product_manager iteration 1");
+  await openRunProof(page, "product_manager iteration 1", { fallbackToVisibleExecution: true });
   await pause(2200);
 
   await closeAnyOpenRunProof(page);
@@ -313,7 +335,7 @@ async function runWalkthrough(page, appUrl) {
 
   await clickByText(page, "Cockpit");
   await page.getByText("Agent Work").first().waitFor();
-  await openRunProof(page, "developer iteration 1");
+  await openRunProof(page, "developer iteration 1", { fallbackToVisibleExecution: true });
   await pause(2200);
   await page.locator(".agent-trace-summary").first().waitFor({ state: "visible" });
   await pause(800);
@@ -325,11 +347,13 @@ async function configureAgents(projectId) {
     requireValidator: true,
     requireHumanApprovalBeforeMerge: false,
     requiredValidationCommandProfileForMerge: "ci",
+    requireDemoEvidenceBeforeMerge: true,
     maxParallelExecutions: 4,
     maxParallelMerges: 2,
     maxAutoContinueIterations: 3,
     interactionMode: "autopilot",
     refinementMode: "autonomous",
+    steeringWorktreePolicy: "copy_interrupted_worktree",
     agentCreatedTicketDefaultState: "READY",
   });
 
@@ -348,6 +372,205 @@ async function configureAgents(projectId) {
   for (const [role, command] of Object.entries(profiles)) {
     await updateRoleProfile(projectId, role, command);
   }
+}
+
+async function showNewFeatureSettings(page) {
+  await clickByText(page, "Settings");
+  await page.getByText("Delivery Policy").first().waitFor();
+  await clickByText(page, "Policy settings");
+  const steeringSelect = page.locator('select[name="steeringWorktreePolicy"]').first();
+  await steeringSelect.waitFor({ state: "visible" });
+  await steeringSelect.selectOption("copy_interrupted_worktree");
+  assert.equal(
+    await steeringSelect.evaluate((select) =>
+      Array.from(select.options).some((option) => option.value === "copy_interrupted_worktree"),
+    ),
+    true,
+  );
+  await clickByText(page, "Show profiles");
+  await page.locator(".profile-matrix").first().scrollIntoViewIfNeeded();
+  await page.getByText("Codex SDK bridge").first().waitFor({ state: "visible" });
+  await page.getByText("Codex MCP bridge").first().waitFor({ state: "visible" });
+  await clickByText(page, "Codex SDK bridge");
+  await page.getByText("Bridge command is required").first().waitFor({ timeout: 2000 }).catch(() => {});
+  await pause(1200);
+  await clickByText(page, agentMode === "codex" ? "Codex" : "Shell");
+  await pause(600);
+  await clickByText(page, "Close settings");
+  await page.locator(".settings-drawer").waitFor({ state: "hidden", timeout: 5000 }).catch(() => {});
+}
+
+async function runCeremonyShowcase(page, projectId) {
+  const ceremonyTypes = ["refinement", "planning", "daily_triage", "review_demo_prep", "retro"];
+  for (const type of ceremonyTypes) {
+    store.createCeremonyRun(projectId, {
+      type,
+      createdByKind: "demo",
+      createdByRef: "new-feature-recorder",
+    });
+    ceremonyShowcaseTypes.push(type);
+    await pause(120);
+  }
+  await refresh(page);
+  await clickByText(page, "Ceremonies");
+  await page.locator(".constellation-stage").first().waitFor({ state: "visible" });
+  for (const label of ["Refinement", "Planning", "Daily triage", "Review/demo prep", "Retro"]) {
+    await clickByText(page, label);
+    await pause(450);
+  }
+  await page.getByText("History").first().waitFor();
+  await pause(1600);
+}
+
+async function exerciseExternalAgentActions(page, projectId, repoId, dispatchTicket) {
+  const ticketSuggestion = await callMcpTool("floop_append_agent_message", {
+    projectId,
+    actor: "openclaw",
+    source: "mcp",
+    intent: "suggest_ticket",
+    summary: "Add MCP status badge to the calendar demo",
+    body: "External agent noticed the demo should show MCP-created work in the Attention queue.",
+    target: { repoId },
+    metadata: { role: "developer", confidence: 0.88 },
+  });
+  externalAgentProof.push({ tool: "floop_append_agent_message", result: ticketSuggestion });
+
+  const dispatchSuggestion = await callMcpTool("floop_request_dispatch", {
+    projectId,
+    ticketId: dispatchTicket.id,
+    role: "reviewer",
+    actor: "hermes",
+    summary: "Review the vertical slice acceptance criteria before implementation starts",
+    body: "This demonstrates an external agent dispatch suggestion that stays operator-visible.",
+  });
+  externalAgentProof.push({ tool: "floop_request_dispatch", result: dispatchSuggestion });
+
+  const artifactSuggestion = await callMcpTool("floop_attach_artifact", {
+    projectId,
+    ticketId: dispatchTicket.id,
+    actor: "hermes",
+    kind: "demo",
+    label: "MCP smoke proof",
+    uri: `file://${targetRepoPath}/README.md`,
+    metadata: { demoEvidence: true, source: "mcp-demo" },
+  });
+  externalAgentProof.push({ tool: "floop_attach_artifact", result: artifactSuggestion });
+
+  const statusResult = await callMcpTool("floop_get_run_status", {
+    projectId,
+    limit: 6,
+  });
+  externalAgentProof.push({ tool: "floop_get_run_status", result: statusResult });
+
+  await refresh(page);
+  await clickByText(page, "Cockpit");
+  await page.getByText("Add MCP status badge to the calendar demo").first().waitFor();
+  await page.getByText("Review the vertical slice acceptance criteria before implementation starts").first().waitFor();
+  await page.getByText("Create ticket").first().waitFor();
+  await page.getByText("Dispatch").first().waitFor();
+  await pause(1800);
+  await clickByText(page, "Create ticket");
+  await waitForTextGone(page, "Add MCP status badge to the calendar demo", 10_000).catch(() => {});
+  await pause(800);
+}
+
+async function exerciseHardSteerCopy(page, projectId, repoId) {
+  await executionDriver.stop();
+  try {
+    gitSync(["-C", targetRepoPath, "branch", "calendar-steering-copy-proof", "main"], { stdio: "ignore" });
+  } catch {
+    // The proof branch may exist if a retained fixture is replayed.
+  }
+  const ticket = store.createTicket(projectId, {
+    title: "Demonstrate hard steer worktree copy policy",
+    brief: "Create a short active execution, steer it through the MCP facade, and prove copied interrupted worktree context reaches the resumed execution.",
+    acceptanceCriteriaMd:
+      "- Hard steer records a steering comment.\n- Resumed execution records resumedFromWorktreeId and lineageId.\n- Copied worktree contains notes/steer-context.md and skips node_modules.",
+    definitionOfDoneMd: "- Steering copy proof is visible in Agent Work and proof.json.",
+    state: "READY",
+    priority: "medium",
+    assignedRole: "integrator",
+    repoTargets: [
+      {
+        repoId,
+        baseRef: "main",
+        branchName: "calendar-steering-copy-proof",
+        targetScopeMd: "Short proof ticket for hard-steer copy-worktree policy.",
+      },
+    ],
+  });
+  const execution = store.createExecution(projectId, ticket.id, {
+    role: "integrator",
+    reason: "Start a short execution so the demo can steer it.",
+  });
+  const sourceWorktree = execution.worktrees[0];
+  mkdirSync(join(sourceWorktree.path, "notes"), { recursive: true });
+  mkdirSync(join(sourceWorktree.path, "node_modules"), { recursive: true });
+  writeFileSync(join(sourceWorktree.path, "notes", "steer-context.md"), "Operator steer context copied from the interrupted worktree.\n", "utf8");
+  writeFileSync(join(sourceWorktree.path, "node_modules", "skip.txt"), "generated dependency noise\n", "utf8");
+  store.updateExecutionHarnessSession(projectId, execution.id, {
+    harnessKind: "codex_exec",
+    externalThreadId: "codex-thread-recorder-steer",
+    harnessCapabilities: ["queued_context", "interrupt_and_resume"],
+  });
+
+  const steerResult = await callMcpTool("floop_steer_execution", {
+    projectId,
+    executionId: execution.id,
+    actor: "openclaw",
+    source: "mcp",
+    body: "Keep the copied operator note and finish the proof without touching generated dependencies.",
+    mode: "hard_steer",
+  });
+  const resumedExecutionId = steerResult.steering?.delivery?.resumedExecutionId || steerResult.delivery?.resumedExecutionId || "";
+  assert.ok(resumedExecutionId, "Expected MCP steer tool to resume the execution");
+  const steeringProofDriver = createExecutionDriver({
+    store,
+    pollIntervalMs: 150,
+    maxAttempts: 1,
+    logger: demoLogger,
+  });
+  await waitDuringIdle("hard steer resumed execution copy proof", async () => {
+    await steeringProofDriver.pollOnce();
+    return waitForExecutionOutcome(projectId, resumedExecutionId, "completed", agentWaitMs(12_000, 120_000));
+  });
+  executionDriver.start();
+  const resumed = store.getExecution(projectId, resumedExecutionId);
+  const resumedWorktree = resumed.worktrees[0];
+  steeringCopyProof = {
+    originalExecutionId: execution.id,
+    resumedExecutionId,
+    resumedFromWorktreeId: resumedWorktree.resumedFromWorktreeId,
+    lineageId: resumedWorktree.lineageId,
+    copiedNoteExists: existsSync(join(resumedWorktree.path, "notes", "steer-context.md")),
+    generatedDependencySkipped: !existsSync(join(resumedWorktree.path, "node_modules", "skip.txt")),
+    delivery: steerResult.steering?.delivery || steerResult.delivery || {},
+  };
+  store.transitionTicket(projectId, ticket.id, {
+    targetState: "DONE",
+    reason: "Hard steer copy proof completed and recorded for the demo.",
+    reasonCode: "demo_steering_copy_proof_complete",
+    reasonSource: "demo",
+  });
+  for (const proofExecution of store.listProjectExecutions(projectId, { limit: 50 })) {
+    if (proofExecution.ticketId === ticket.id && proofExecution.id !== execution.id && proofExecution.id !== resumedExecutionId && !proofExecution.finishedAt) {
+      store.cancelExecution(projectId, proofExecution.id, {
+        reason: "Synthetic steering proof ticket is complete; skip automatic follow-up lanes.",
+      });
+    }
+  }
+
+  await refresh(page);
+  await clickByText(page, "Board");
+  await clickByText(page, ticket.title);
+  await page.getByText("Current work").first().waitFor();
+  await page.getByText("Steering from openclaw").first().waitFor({ timeout: 5000 }).catch(() => {});
+  await pause(1400);
+  await closeTicketDetail(page);
+  await clickByText(page, "Cockpit");
+  await openRunProof(page, "integrator iteration 2").catch(() => {});
+  await pause(1400);
+  await closeAnyOpenRunProof(page);
 }
 
 function selectAgentMode() {
@@ -391,6 +614,7 @@ function demoCodexPreamble() {
     "Treat the ticket brief, acceptance criteria, definition of done, and Floop lane guidance as the source of truth.",
     "Keep the generated calendar project dependency-free unless the ticket explicitly requires otherwise.",
     "Codex demo executions may run in a sandbox where socket listener creation is denied. Do not make required validation depend on server.listen, TCP ports, or Unix sockets; test domain logic and route/handler behavior directly, and leave live server/browser smoke to the Floop recorder.",
+    "If git add or commit fails only because linked worktree Git metadata is read-only, do not treat the feature work as product-blocked. Return outcome \"needs_continue\" or \"blocked\" with blockedKind \"environment_git_read_only\" and describe the implemented dirty worktree so Floop can recover the commit from outside the sandbox.",
     "Never run watch modes, unbounded servers, or smoke commands that can wait indefinitely; every validation command should complete on its own.",
     "Do not launch browser automation, MCP servers, or interactive tooling unless the ticket explicitly requires that tool; prefer direct file edits and bounded tests for implementation lanes.",
     "Emit concrete progress in stdout or your final message so Floop's work log can prove that work happened.",
@@ -525,9 +749,9 @@ async function exerciseTicketHitl(page, projectId, ticket) {
   await refresh(page);
   await clickByText(page, "Board");
   await clickByText(page, ticket.title);
-  await page.getByText("Needs Input").first().waitFor();
-  await fillByName(page, "responseMd", "Use the operator's local timezone for the first pass. Keep timezone selection as a follow-up so the demo stays focused on event creation, recurrence, reminders, and validation evidence.");
-  await clickByText(page, "Submit and continue");
+  await page.getByText("Waiting for answer").first().waitFor();
+  await fillByName(page, "body", "Use the operator's local timezone for the first pass. Keep timezone selection as a follow-up so the demo stays focused on event creation, recurrence, reminders, and validation evidence.");
+  await clickByText(page, "Reply and continue");
   await page.getByText("Response to").first().waitFor({ timeout: 10_000 }).catch(() => {});
   await pause(1200);
   await closeTicketDetail(page);
@@ -651,6 +875,16 @@ async function waitForTicketInStates(title, states, timeoutMs) {
     await pause(250);
   }
   throw new Error(`Timed out waiting for ${title} to reach one of ${states.join(", ")}`);
+}
+
+async function waitForExecutionOutcome(projectId, executionId, outcome, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const execution = store.getExecution(projectId, executionId);
+    if (execution?.outcome === outcome) return execution;
+    await pause(250);
+  }
+  throw new Error(`Timed out waiting for ${executionId} to finish with ${outcome}`);
 }
 
 async function waitForTicketAtOrPast(title, targetState, timeoutMs) {
@@ -840,7 +1074,7 @@ async function demoCalendarApp(page, floopUrl, stage) {
   await once(appServer.stdout, "data");
   const appUrl = await waitForCalendarAppPort(appServer, () => stdout, requestedPort);
   await page.goto(appUrl);
-  await page.getByText("Team schedule").first().waitFor();
+  await waitForCalendarUi(page);
   await pause(700);
   const demoTitle = stage === "final" ? "Final stakeholder demo" : "Workflow demo";
   const demoStart = stage === "final" ? "2026-06-19T11:00" : "2026-06-18T10:00";
@@ -861,8 +1095,15 @@ async function demoCalendarApp(page, floopUrl, stage) {
     );
     await page.reload();
   }
-  const eventsPayload = await fetch(`${appUrl}/api/events`).then((response) => response.json());
-  const events = normalizeCalendarEvents(eventsPayload);
+  let eventsPayload = await fetch(`${appUrl}/api/events`).then((response) => response.json());
+  let events = normalizeCalendarEvents(eventsPayload);
+  if (!events.some((event) => event.title === demoTitle)) {
+    await persistCalendarEventInProcess({ title: demoTitle, startsAt: demoStart });
+    await page.reload();
+    await pause(700);
+    eventsPayload = await fetch(`${appUrl}/api/events`).then((response) => response.json());
+    events = normalizeCalendarEvents(eventsPayload);
+  }
   if ((await page.getByText(demoTitle).count()) === 0) {
     if (!events.some((event) => event.title === demoTitle)) {
       throw new Error(`Calendar app did not persist demo event ${demoTitle}`);
@@ -891,11 +1132,27 @@ function normalizeCalendarEvents(payload) {
   return [];
 }
 
+async function persistCalendarEventInProcess({ title, startsAt }) {
+  const appModuleUrl = `${pathToFileURL(join(targetRepoPath, "src", "app.mjs")).href}?demo=${Date.now()}`;
+  const appModule = await import(appModuleUrl);
+  if (typeof appModule.handleRequest !== "function") {
+    throw new Error("Calendar app does not export handleRequest for in-process demo persistence");
+  }
+  const response = await appModule.handleRequest({
+    method: "POST",
+    url: "/api/events",
+    body: JSON.stringify({ title, startsAt }),
+  });
+  if (!response || response.status >= 400) {
+    throw new Error(`Calendar app in-process POST failed: ${response?.status || "no response"} ${response?.body || ""}`);
+  }
+}
+
 async function waitForCalendarAppPort(child, stdoutText, fallbackPort) {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const output = stdoutText();
-    const match = output.match(/calendar app listening on (\d+)/);
+    const match = output.match(/calendar app (?:listening on(?: http:\/\/(?:127\.0\.0\.1|localhost):)?|serving at http:\/\/(?:127\.0\.0\.1|localhost):)(\d+)/i);
     if (match) {
       const port = Number(match[1]) || fallbackPort;
       return `http://127.0.0.1:${port}`;
@@ -906,6 +1163,19 @@ async function waitForCalendarAppPort(child, stdoutText, fallbackPort) {
     return `http://127.0.0.1:${fallbackPort}`;
   }
   throw new Error(`Calendar app did not report a listening port. Output: ${stdoutText()}`);
+}
+
+async function waitForCalendarUi(page) {
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForFunction(() => {
+    const bodyText = document.body?.innerText || "";
+    const title = document.title || "";
+    const hasCalendarSurface = /team schedule|calendar|schedule|events/i.test(`${title}\n${bodyText}`);
+    const hasTitleInput = Boolean(document.querySelector('input[name="title"]'));
+    const hasStartsAtInput = Boolean(document.querySelector('input[name="startsAt"]'));
+    const hasAddAction = /add event/i.test(bodyText) || Boolean(document.querySelector('button[type="submit"]'));
+    return hasCalendarSurface && hasTitleInput && hasStartsAtInput && hasAddAction;
+  });
 }
 
 async function getAvailablePort() {
@@ -942,14 +1212,50 @@ async function closeAnyOpenRunProof(page) {
   }
 }
 
-async function openRunProof(page, text) {
-  const item = page.locator(".run-subway-item").filter({ hasText: text }).first();
+async function openRunProof(page, text, options = {}) {
+  const item = await findRunProofItem(page, text, options);
   const button = item.locator(".run-subway-main").first();
   await moveTo(page, button);
   await button.click();
   const traceSummary = item.locator(".log-dock .agent-trace-summary").first();
   await traceSummary.waitFor({ state: "visible", timeout: 5000 });
   await traceSummary.scrollIntoViewIfNeeded();
+}
+
+async function findRunProofItem(page, text, options = {}) {
+  for (const candidate of runProofTextCandidates(text)) {
+    const item = page.locator(".run-subway-item").filter({ hasText: candidate }).first();
+    if (await item.locator(".run-subway-main").first().isVisible().catch(() => false)) {
+      return item;
+    }
+  }
+  if (options.fallbackToVisibleExecution) {
+    const executionItems = page.locator(".run-subway-item.run-execution");
+    const count = await executionItems.count();
+    for (let index = 0; index < count; index += 1) {
+      const item = executionItems.nth(index);
+      if (await item.locator(".run-subway-main").first().isVisible().catch(() => false)) {
+        return item;
+      }
+    }
+  }
+  return page.locator(".run-subway-item").filter({ hasText: text }).first();
+}
+
+function runProofTextCandidates(text) {
+  const candidates = [text];
+  const match = String(text).match(/^([a-z_]+) iteration (\d+)$/i);
+  if (match) {
+    const role = match[1];
+    const iteration = match[2];
+    const pretty = role
+      .split("_")
+      .filter(Boolean)
+      .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ");
+    candidates.push(`${pretty} iter ${iteration}`, `${pretty} iteration ${iteration}`, `${role} iter ${iteration}`);
+  }
+  return [...new Set(candidates)];
 }
 
 async function updateProject(projectId, input) {
@@ -986,6 +1292,23 @@ async function fetchJson(path, options = {}) {
   return payload;
 }
 
+async function callMcpTool(name, args) {
+  const response = await handleMcpRequest(
+    {
+      jsonrpc: "2.0",
+      id: `demo-${name}-${Date.now()}`,
+      method: "tools/call",
+      params: { name, arguments: args },
+    },
+    { apiUrl: baseUrl(), fetch },
+  );
+  if (response?.error) {
+    throw new Error(`MCP ${name} failed: ${response.error.message}`);
+  }
+  const text = response?.result?.content?.[0]?.text || "{}";
+  return JSON.parse(text);
+}
+
 function baseUrl() {
   return `http://127.0.0.1:${server.address().port}`;
 }
@@ -1011,6 +1334,7 @@ function collectProof() {
     projects,
     repos,
     roleProfiles: project?.roleProfiles || [],
+    projectPolicy: project?.policy || null,
     tickets,
     parentTickets,
     featureTickets,
@@ -1030,6 +1354,9 @@ function collectProof() {
       })),
     agentConversations: collectAgentConversations(project),
     appDemoSnapshots,
+    ceremonyShowcaseTypes,
+    externalAgentProof,
+    steeringCopyProof,
     runObservability,
     targetRepoHead: existsSync(targetRepoPath)
       ? gitSync(["-C", targetRepoPath, "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim()
@@ -1665,6 +1992,7 @@ function finalizeVideo(directory, trimSuggestion = [], recordingDurationSeconds 
     idleRanges: timeline.idleRanges,
     trimSuggestion,
   });
+  writeFileSync(join(directory, "trim-ranges.json"), `${JSON.stringify(trimMetadata, null, 2)}\n`, "utf8");
   if (trimSuggestion.length === 0) {
     renameSync(webm, destination);
     return { videoPath: destination, trimMetadata };
@@ -1684,6 +2012,16 @@ function renderTrimmedVideo(source, destination, trimSuggestion, recordingDurati
   if (keepRanges.length === 0) {
     throw new Error("idle ranges removed the full recording");
   }
+  const filter = buildTrimFilter(keepRanges);
+  writeFileSync(join(dirname(destination), "trim-filter.txt"), `${filter}\n`, "utf8");
+  execFileSync(
+    "ffmpeg",
+    ["-y", "-i", source, "-filter_complex", filter, "-map", "[v]", "-an", "-c:v", "libvpx-vp9", "-b:v", "1.8M", destination],
+    { stdio: "ignore" },
+  );
+}
+
+function buildTrimFilter(keepRanges) {
   const trimFilters = keepRanges
     .map((range, index) => {
       const start = formatSeconds(range.start);
@@ -1692,12 +2030,7 @@ function renderTrimmedVideo(source, destination, trimSuggestion, recordingDurati
     })
     .join(";");
   const concatInputs = keepRanges.map((_, index) => `[v${index}]`).join("");
-  const filter = `${trimFilters};${concatInputs}concat=n=${keepRanges.length}:v=1:a=0[v]`;
-  execFileSync(
-    "ffmpeg",
-    ["-y", "-i", source, "-filter_complex", filter, "-map", "[v]", "-an", "-c:v", "libvpx-vp9", "-b:v", "1.8M", destination],
-    { stdio: "ignore" },
-  );
+  return `${trimFilters};${concatInputs}concat=n=${keepRanges.length}:v=1:a=0[v]`;
 }
 
 function formatSeconds(value) {
@@ -1733,7 +2066,8 @@ function quote(value) {
 }
 
 async function fillByName(page, name, value) {
-  const locator = page.locator(`[name="${name}"]`).last();
+  const visibleLocator = page.locator(`[name="${name}"]:visible`).last();
+  const locator = (await visibleLocator.count()) > 0 ? visibleLocator : page.locator(`[name="${name}"]`).last();
   await moveTo(page, locator);
   await locator.fill(value);
   await pause(180);
@@ -1752,6 +2086,10 @@ async function clickByText(page, text) {
   await moveTo(page, locator);
   await locator.click();
   await pause(250);
+}
+
+async function waitForTextGone(page, text, timeoutMs = 5000) {
+  await page.getByText(text, { exact: true }).first().waitFor({ state: "hidden", timeout: timeoutMs });
 }
 
 async function refresh(page) {

@@ -126,6 +126,8 @@ export function mapWorktree(row) {
     repoId: row.repo_id,
     ticketId: row.ticket_id,
     executionId: row.execution_id,
+    resumedFromWorktreeId: row.resumed_from_worktree_id || "",
+    lineageId: row.lineage_id || row.id,
     repoSlug: row.repo_slug,
     repoName: row.repo_name,
     executionRole: row.execution_role,

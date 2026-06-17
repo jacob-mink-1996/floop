@@ -96,6 +96,7 @@ test("store updates project policy and role profiles", () => {
     maxAutoContinueIterations: 8,
     interactionMode: "autonomous_with_review",
     refinementMode: "user_participant",
+    steeringWorktreePolicy: "copy_interrupted_worktree",
     agentCreatedTicketDefaultState: "READY",
     ceremonyAutomation: {
       enabled: true,
@@ -127,6 +128,7 @@ test("store updates project policy and role profiles", () => {
   assert.equal(updatedPolicy.maxAutoContinueIterations, 8);
   assert.equal(updatedPolicy.interactionMode, "autonomous_with_review");
   assert.equal(updatedPolicy.refinementMode, "user_participant");
+  assert.equal(updatedPolicy.steeringWorktreePolicy, "copy_interrupted_worktree");
   assert.equal(updatedPolicy.agentCreatedTicketDefaultState, "READY");
   assert.equal(updatedPolicy.ceremonyAutomation.enabled, true);
   assert.equal(updatedPolicy.ceremonyAutomation.mode, "fully_automatic");
@@ -145,6 +147,7 @@ test("store updates project policy and role profiles", () => {
   assert.equal(project.policy.maxParallelMerges, 2);
   assert.equal(project.policy.interactionMode, "autonomous_with_review");
   assert.equal(project.policy.refinementMode, "user_participant");
+  assert.equal(project.policy.steeringWorktreePolicy, "copy_interrupted_worktree");
   assert.equal(project.policy.agentCreatedTicketDefaultState, "READY");
   assert.equal(project.policy.ceremonyAutomation.triggers.refinement.deciderRole, "product_manager");
   assert.equal(project.roleProfiles.find((profile) => profile.role === "developer").adapter, "codex-cli");
@@ -1334,6 +1337,9 @@ test("store allows ticket comments in every interaction mode without implicit re
 
 test("store hard steers active harness sessions by continuing the same ticket role with native session metadata", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    steeringWorktreePolicy: "copy_interrupted_worktree",
+  });
   const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
     role: "developer",
     reason: "Start work before steering arrives.",
@@ -1360,10 +1366,13 @@ test("store hard steers active harness sessions by continuing the same ticket ro
   assert.equal(continued.role, "developer");
   assert.equal(continued.iteration, 2);
   assert.equal(continued.resumedFromExecutionId, execution.id);
+  assert.equal(continued.worktrees[0].resumedFromWorktreeId, execution.worktrees[0].id);
+  assert.equal(continued.worktrees[0].lineageId, execution.worktrees[0].id);
   assert.equal(continued.harnessKind, "codex_exec");
   assert.equal(continued.externalThreadId, "codex-thread-steer");
   assert.deepEqual(continued.harnessCapabilities, ["queued_context", "interrupt_and_resume"]);
   assert.equal(continued.steeringMetadata.resumeStrategy, "interrupt_and_resume");
+  assert.equal(continued.steeringMetadata.worktreePolicy, "copy_interrupted_worktree");
   assert.match(continued.steeringMetadata.steeringBody, /SQLite/);
   assert.equal(message.metadata.deliveryStatus, "resumed");
   assert.equal(message.metadata.resumedExecutionId, continued.id);
@@ -1373,6 +1382,9 @@ test("store hard steers active harness sessions by continuing the same ticket ro
 
 test("store retargets rapid repeated steering to the latest active resumed session", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    steeringWorktreePolicy: "copy_interrupted_worktree",
+  });
   const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
     role: "developer",
     reason: "Start work before steering arrives.",
@@ -1403,6 +1415,8 @@ test("store retargets rapid repeated steering to the latest active resumed sessi
   assert.equal(iteration2.outcome, "needs_continue");
   assert.equal(iteration3.iteration, 3);
   assert.equal(iteration3.resumedFromExecutionId, iteration2.id);
+  assert.equal(iteration3.worktrees[0].resumedFromWorktreeId, iteration2.worktrees[0].id);
+  assert.equal(iteration3.worktrees[0].lineageId, execution.worktrees[0].id);
   assert.equal(iteration3.externalThreadId, "codex-thread-rapid-steer");
   assert.match(iteration3.steeringMetadata.steeringBody, /avoid Redis/);
   assert.equal(secondMessage.target.executionId, iteration2.id);

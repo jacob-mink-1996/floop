@@ -66,6 +66,12 @@ export const interactionModes = [
   "fully_autonomous",
 ];
 
+export const steeringWorktreePolicies = [
+  "new_iteration_worktree",
+  "reuse_interrupted_worktree",
+  "copy_interrupted_worktree",
+];
+
 export const agentMessageIntents = [
   "suggest_ticket",
   "comment_on_ticket",
@@ -167,6 +173,10 @@ export function isCeremonyType(value) {
 
 export function isInteractionMode(value) {
   return interactionModes.includes(value);
+}
+
+export function isSteeringWorktreePolicy(value) {
+  return steeringWorktreePolicies.includes(value);
 }
 
 export function isAgentMessageIntent(value) {

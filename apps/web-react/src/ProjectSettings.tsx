@@ -24,6 +24,7 @@ import type {
   RefinementMode,
   RoleName,
   RoleProfile,
+  SteeringWorktreePolicy,
   TicketState,
 } from "./types";
 
@@ -42,6 +43,24 @@ const refinementModes: Array<{ value: RefinementMode; label: string; detail: str
   { value: "user_only", label: "User only", detail: "Only user action brings tickets out of refinement." },
 ];
 
+const steeringWorktreePolicies: Array<{ value: SteeringWorktreePolicy; label: string; detail: string }> = [
+  {
+    value: "new_iteration_worktree",
+    label: "New worktree",
+    detail: "Resume in a clean iteration worktree.",
+  },
+  {
+    value: "copy_interrupted_worktree",
+    label: "Copy interrupted worktree",
+    detail: "Copy in-progress files before resuming the agent.",
+  },
+  {
+    value: "reuse_interrupted_worktree",
+    label: "Reuse interrupted worktree",
+    detail: "Hand the same worktree to the resumed agent.",
+  },
+];
+
 const ceremonyLabels: Record<CeremonyType, string> = {
   refinement: "Refinement",
   planning: "Planning",
@@ -50,7 +69,7 @@ const ceremonyLabels: Record<CeremonyType, string> = {
   retro: "Retro",
 };
 
-type AdapterKind = "codex" | "shell" | "mock";
+type AdapterKind = "codex" | "codex_sdk" | "codex_mcp" | "shell" | "mock";
 type ProfileDraft = {
   adapter: AdapterKind;
   model: string;
@@ -65,6 +84,22 @@ const adapterPresets: Record<AdapterKind, { label: string; model: string; config
       executable: "codex",
       sandbox: "workspace-write",
       approvalPolicy: "never",
+      promptPreamble: "",
+    },
+  },
+  codex_sdk: {
+    label: "Codex SDK bridge",
+    model: "default",
+    config: {
+      command: "",
+      promptPreamble: "",
+    },
+  },
+  codex_mcp: {
+    label: "Codex MCP bridge",
+    model: "default",
+    config: {
+      command: "",
       promptPreamble: "",
     },
   },
@@ -412,6 +447,7 @@ function PolicyForm({
       maxAutoContinueIterations: Number(form.get("maxAutoContinueIterations") || 1),
       interactionMode: String(form.get("interactionMode") || "manual") as InteractionMode,
       refinementMode: String(form.get("refinementMode") || "user_approved") as RefinementMode,
+      steeringWorktreePolicy: String(form.get("steeringWorktreePolicy") || "new_iteration_worktree") as SteeringWorktreePolicy,
       agentCreatedTicketDefaultState: String(form.get("agentCreatedTicketDefaultState") || "PROPOSED") as TicketState,
       ceremonyAutomation,
     });
@@ -471,6 +507,12 @@ function PolicyForm({
             <span>Refinement mode</span>
             <select name="refinementMode" defaultValue={policy?.refinementMode || "user_approved"}>
               {refinementModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Steering worktree</span>
+            <select name="steeringWorktreePolicy" defaultValue={policy?.steeringWorktreePolicy || "new_iteration_worktree"}>
+              {steeringWorktreePolicies.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
             </select>
           </label>
         </div>
@@ -857,17 +899,30 @@ function ProfileConfigFields({
   config: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
 }) {
-  if (adapter === "shell") {
+  if (adapter === "shell" || adapter === "codex_sdk" || adapter === "codex_mcp") {
     return (
-      <label>
-        <span>Command</span>
-        <textarea
-          name="command"
-          value={stringConfig(config, "command")}
-          rows={3}
-          onChange={(event) => onChange("command", event.currentTarget.value)}
-        />
-      </label>
+      <div className="action-grid">
+        <label className="wide-field">
+          <span>Command</span>
+          <textarea
+            name="command"
+            value={stringConfig(config, "command")}
+            rows={3}
+            onChange={(event) => onChange("command", event.currentTarget.value)}
+          />
+        </label>
+        {adapter === "codex_sdk" || adapter === "codex_mcp" ? (
+          <label className="wide-field">
+            <span>Prompt preamble</span>
+            <textarea
+              name="promptPreamble"
+              value={stringConfig(config, "promptPreamble")}
+              rows={3}
+              onChange={(event) => onChange("promptPreamble", event.currentTarget.value)}
+            />
+          </label>
+        ) : null}
+      </div>
     );
   }
 
@@ -946,7 +1001,7 @@ function draftFromProfile(profile: RoleProfile): ProfileDraft {
 }
 
 function isAdapterKind(value: string): value is AdapterKind {
-  return value === "codex" || value === "shell" || value === "mock";
+  return value === "codex" || value === "codex_sdk" || value === "codex_mcp" || value === "shell" || value === "mock";
 }
 
 function parseConfigText(value: string): { ok: true; config: Record<string, unknown> } | { ok: false } {
@@ -964,6 +1019,7 @@ function parseConfigText(value: string): { ok: true; config: Record<string, unkn
 function validateProfileDraft(draft: ProfileDraft, config: Record<string, unknown>) {
   if (!draft.model.trim()) return "Model is required";
   if (draft.adapter === "shell" && !stringConfig(config, "command").trim()) return "Command is required";
+  if ((draft.adapter === "codex_sdk" || draft.adapter === "codex_mcp") && !stringConfig(config, "command").trim()) return "Bridge command is required";
   if (draft.adapter === "codex" && !stringConfig(config, "executable").trim()) return "Executable is required";
   if (draft.adapter === "mock" && typeof config.result !== "object") return "Mock result must be an object";
   return "";
