@@ -189,15 +189,14 @@ Acceptance:
 
 ## Recommended Execution Order
 
-1. Stop, cancel, and active-work ownership.
-2. Ticket detail execution surface cleanup.
-3. Comment, HITL, and steering final polish.
+1. Merge conflict rebase delegation and authenticated tests.
+2. Full-loop authenticated Codex proof with HITL included.
+3. Demo idle-trim improvements and snippet recording workflow.
 4. Lifecycle batch refinement and work generation hardening.
-5. Full-loop authenticated Codex proof with HITL included.
-6. Merge conflict rebase delegation and authenticated tests.
-7. Demo idle-trim improvements and snippet recording workflow.
-8. External agent adapter hardening and ACP mapping.
-9. Final MVP 2.0 release demo and proof manifest.
+5. Comment, HITL, and steering final polish for any gaps found during proof.
+6. External agent adapter hardening and ACP mapping.
+7. Release-level UI audit across board, ticket detail, conversation, ceremonies, constellation, and merge queue.
+8. Final MVP 2.0 release demo and proof manifest.
 
 ## Proof Checklist
 
@@ -212,17 +211,134 @@ Acceptance:
 - idle-trimmed video output
 - proof manifest with agents, tickets, checks, artifacts, review, validation, demo, and merge state
 
+## Completed Foundation
+
+- Stop, cancel, and active-work ownership are implemented for ticket close and UI close paths.
+- Ticket detail now uses one execution dock instead of separate "Agent working" and "Watch execution" panels.
+- Conversation/HITL state is cleaner and suppresses duplicated questions.
+- Project context now includes lookup handles for recent artifacts, target artifacts, events, pending questions, target messages, and recent comments.
+- Big-work proof manifests now assert full-loop gates for idea refinement, HITL answer, review evidence, validation evidence, demo evidence, merge evidence, and idle-cut metadata.
+
 ## Immediate Next Slice
 
-Implement stop, cancel, and active-work ownership:
+Harden merge conflict rework as a normal agent workflow:
 
-- Confirm the current cancel execution API, store behavior, and harness cleanup semantics.
-- Add one explicit active-work owner per ticket surface: selected ticket detail, board indicator, and execution dock.
-- Stop or cancel active ticket work when the ticket detail is closed, with a clear user-facing result.
-- Add UI-close handling for active work where browser or Electron lifecycle events can reliably notify the API.
-- Keep automatic cancellation visible in the ticket conversation or execution history without adding giant comments.
-- Add tests for ticket-close cancellation, UI-close cancellation where practical, and active-work indicator cleanup.
-- Run focused tests and commit the slice.
+- Confirm how merge rework currently selects the repair agent and whether it resumes the original developer execution/session when available.
+- Route merge conflicts back to the previous developer session with `resumedFromExecutionId` and harness session metadata when the harness supports resume.
+- Fall back to an integrator or fresh developer execution when the original session cannot resume.
+- Preserve review, validation, demo, HITL, steering, and merge evidence through the repair run.
+- Add store/API tests for autonomous rework routing, operator-approved rework suggestions, original-session resumption, integrator fallback, and interrupted retry.
+- Update the merge rework proof so the manifest records responsible execution, repair execution, harness kind, resume lineage, retry result, and final merge state.
+- Run focused merge tests and commit the slice.
+
+## Forward-Looking MVP 2.0 Plan
+
+### Phase 1: Merge And Rebase Proof
+
+Goal: a merge conflict is treated as routine product work, not a terminal failure.
+
+Deliverables:
+
+- Original developer session resumption for conflict repair when available.
+- Integrator fallback when the original session is unavailable or cannot resume.
+- Merge queue state visible enough for a user to understand conflict, repair owner, retry status, and next action.
+- Authenticated Codex integration proof that expects local Codex auth and fails clearly when unavailable.
+
+Exit signal:
+
+- A conflict can be created, repaired by an agent, checks rerun, and merge retried without manual database surgery or app restart.
+
+### Phase 2: Authenticated Full-Loop Codex Demo
+
+Goal: prove the real product loop with real Codex agents.
+
+Deliverables:
+
+- Start from one greenfield idea ticket, such as a calendar application with frontend and backend.
+- Run backlog refinement before execution and produce a batch of child tickets.
+- Include one HITL question and scripted answer to prove ticket comment unblocking.
+- Exercise developer, reviewer, validator, demo evidence, merge, and merge rework where possible.
+- Capture proof that agents did real work: commands, files changed, artifacts, checks, review, validation, demo, and merge state.
+
+Exit signal:
+
+- The demo reaches evidence-backed completion with an idle-trimmed recording and a proof manifest.
+
+### Phase 3: Demo Editing And Evidence Quality
+
+Goal: make proof videos easy to watch without hiding important work.
+
+Deliverables:
+
+- Treat idle as any time with no visible ticket transition, screen work, user action, or meaningful agent milestone.
+- Preserve roughly one second around each visible transition.
+- Produce short snippets for specific UX proofs and one longer release proof for the full loop.
+- Keep long harness output out of ticket comments and store it as artifacts/logs with compact ticket summaries.
+
+Exit signal:
+
+- A reviewer can watch a short video and understand the agent loop without long waiting periods or giant ticket messages.
+
+### Phase 4: Lifecycle Product Engine
+
+Goal: make Floop advance a product from idea to backlog to shipped surface based on lifecycle state.
+
+Deliverables:
+
+- Batch refinement that can split, combine, remove, clarify, reorder, and accept work.
+- New-work generation near sprint end, product milestone completion, or ready-backlog depletion.
+- Planning when enough refined work exists for an execution batch.
+- Demo preparation when validated work exists.
+- Retro when repeated blockers, rework, validation failures, or merge conflicts appear.
+- Project context supplied through lookup handles, not prompt dumps.
+
+Exit signal:
+
+- One broad idea can become a sensible product backlog and continue generating next work until the product surface is meaningful.
+
+### Phase 5: HITL, Steering, And External Agent Inputs
+
+Goal: make human and external-agent interaction first-class without making the user babysit the system.
+
+Deliverables:
+
+- Comments can be context, answers, steering, or reopen/start instructions depending on ticket state and user choice.
+- Rapid comments are ordered safely so later steering does not erase earlier context.
+- Agents can ask questions in all modes, including fully autonomous mode.
+- ACP/OpenClaw/Hermes-style messages map into Floop comments, questions, artifacts, dispatch suggestions, and ceremony inputs.
+- Harness capability flags control resume, interrupt, steer, artifact, and question behavior.
+
+Exit signal:
+
+- External agents and users can interact through the same ticket model, and unsupported live features degrade into queued context or reopen instructions.
+
+### Phase 6: Release UI/UX Audit
+
+Goal: every MVP 2.0 surface is calm, useful, and action-oriented.
+
+Deliverables:
+
+- Board cards show active work, HITL, review, validation, demo, and merge status at scan level.
+- Ticket detail has one cockpit, one execution dock, one conversation area, and one obvious next action.
+- Ceremony screens show current proposal, pending question, applied changes, and next action without dense prose.
+- Constellation communicates idle, queued, active, blocked, done, failed, and hover detail states.
+- Merge queue explains conflict, repair owner, retry, and final state.
+
+Exit signal:
+
+- A user can understand current state and available actions without reading raw logs or agent transcripts.
+
+### Phase 7: MVP 2.0 Release Gate
+
+Goal: ship only when the loop is proof-backed and repeatable.
+
+Required proof:
+
+- Unit and integration tests for execution, HITL/comment, ceremony automation, context handles, merge rework, and UI smoke.
+- Fixture full-loop demo for fast regression.
+- Authenticated Codex full-loop demo for real-agent proof.
+- Idle-trimmed video with proof manifest.
+- Final issue list showing known limitations, risks, and MVP 3 candidates.
 
 ## MVP 2.0 Slice Backlog
 

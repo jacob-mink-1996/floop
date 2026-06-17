@@ -413,7 +413,16 @@ function assertProjectCanStartMerge(database, projectId, ticketKey) {
   }
 }
 
-function startAutoRoutedLaneExecution({ store, database, projectId, ticketId, reason }) {
+function startAutoRoutedLaneExecution({
+  store,
+  database,
+  projectId,
+  ticketId,
+  reason,
+  resumedFromExecutionId = "",
+  reasonCode = "routine_lane_ready",
+  steeringMetadata = {},
+}) {
   const ticket = getTicketRow(database, projectId, ticketId);
   if (!ticket) {
     return null;
@@ -431,6 +440,19 @@ function startAutoRoutedLaneExecution({ store, database, projectId, ticketId, re
   } else {
     return null;
   }
+
+  const resumeExecution = resumedFromExecutionId
+    ? getExecutionRow(database, projectId, resumedFromExecutionId)
+    : null;
+  const canUseResumeLineage =
+    resumeExecution &&
+    resumeExecution.ticket_id === ticketId &&
+    resumeExecution.role === nextRole;
+  const resumeCapabilities = canUseResumeLineage ? JSON.parse(resumeExecution.harness_capabilities_json || "[]") : [];
+  const canResumeNativeSession =
+    canUseResumeLineage &&
+    resumeCapabilities.includes("interrupt_and_resume") &&
+    Boolean(resumeExecution.external_thread_id);
 
   const interactionMode = policy.interaction_mode || policy.interactionMode || "manual";
   if (interactionMode === "manual") {
@@ -462,7 +484,21 @@ function startAutoRoutedLaneExecution({ store, database, projectId, ticketId, re
         metadata: {
           role: nextRole,
           interactionMode,
-          reasonCode: "routine_lane_ready",
+          reasonCode,
+          ...(canUseResumeLineage
+            ? {
+                resumedFromExecutionId: resumeExecution.id,
+              }
+            : {}),
+          ...(canResumeNativeSession
+            ? {
+                harnessKind: resumeExecution.harness_kind || "",
+                externalThreadId: resumeExecution.external_thread_id || "",
+                externalSessionId: resumeExecution.external_session_id || "",
+                externalConversationId: resumeExecution.external_conversation_id || "",
+                harnessCapabilities: resumeCapabilities,
+              }
+            : {}),
         },
       });
     }
@@ -484,6 +520,26 @@ function startAutoRoutedLaneExecution({ store, database, projectId, ticketId, re
     return store.createExecution(projectId, ticketId, {
       role: nextRole,
       reason,
+      ...(canUseResumeLineage
+        ? {
+            resumedFromExecutionId: resumeExecution.id,
+            steeringMetadata: {
+              ...steeringMetadata,
+              resumeReasonCode: reasonCode,
+              ...(canResumeNativeSession ? { resumeStrategy: "interrupt_and_resume" } : {}),
+            },
+          }
+        : {}),
+      ...(canResumeNativeSession
+        ? {
+            agentProfileId: resumeExecution.agent_profile_id || undefined,
+            harnessKind: resumeExecution.harness_kind || "",
+            externalThreadId: resumeExecution.external_thread_id || "",
+            externalSessionId: resumeExecution.external_session_id || "",
+            externalConversationId: resumeExecution.external_conversation_id || "",
+            harnessCapabilities: resumeCapabilities,
+          }
+        : {}),
     });
   } catch {
     return null;

@@ -297,12 +297,30 @@ export function createMergeCommands({
       });
 
       if (status === "rework") {
+        const sourceExecution = database
+          .prepare(
+            `select id
+             from executions
+             where project_id = ?
+               and ticket_id = ?
+               and role not in ('reviewer', 'validator')
+             order by coalesce(finished_at, started_at) desc, started_at desc, iteration desc
+             limit 1`,
+          )
+          .get(projectId, mergeRun.ticket_id);
+
         startAutoRoutedLaneExecution?.({
           store: getStore?.(),
           database,
           projectId,
           ticketId: mergeRun.ticket_id,
           reason: `${ticket.key} merge requested rework; Floop routed the previous working lane with merge evidence.`,
+          resumedFromExecutionId: sourceExecution?.id || "",
+          reasonCode: "merge_rework",
+          steeringMetadata: {
+            mergeRunId,
+            mergeStatus: status,
+          },
         });
       }
 

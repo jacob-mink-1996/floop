@@ -2253,6 +2253,13 @@ test("store routes merge rework back to the previous working lane in autonomous 
     role: "developer",
     reason: "Prepare a merge conflict rework test.",
   });
+  store.updateExecutionHarnessSession("project_floop", implementation.id, {
+    harnessKind: "codex_exec",
+    externalThreadId: "codex-thread-merge-rework",
+    externalSessionId: "codex-session-merge-rework",
+    externalConversationId: "codex-conversation-merge-rework",
+    harnessCapabilities: ["queued_context", "interrupt_and_resume"],
+  });
   store.completeExecution("project_floop", implementation.id, {
     outcome: "completed",
     summaryMd: "Implementation is ready for merge.",
@@ -2276,6 +2283,17 @@ test("store routes merge rework back to the previous working lane in autonomous 
   assert.equal(ticket.state, "WORKING");
   assert.equal(developerRuns.length, 2);
   assert.equal(developerRuns[0].status, "running");
+  assert.equal(developerRuns[0].resumedFromExecutionId, implementation.id);
+  assert.equal(developerRuns[0].harnessKind, "codex_exec");
+  assert.equal(developerRuns[0].externalThreadId, "codex-thread-merge-rework");
+  assert.equal(developerRuns[0].externalSessionId, "codex-session-merge-rework");
+  assert.equal(developerRuns[0].externalConversationId, "codex-conversation-merge-rework");
+  assert.deepEqual(developerRuns[0].harnessCapabilities, ["queued_context", "interrupt_and_resume"]);
+  assert.equal(developerRuns[0].steeringMetadata.resumeReasonCode, "merge_rework");
+  assert.equal(developerRuns[0].steeringMetadata.resumeStrategy, "interrupt_and_resume");
+  assert.equal(developerRuns[0].steeringMetadata.mergeRunId, started.id);
+  assert.equal(developerRuns[0].worktrees[0].resumedFromWorktreeId, implementation.worktrees[0].id);
+  assert.equal(developerRuns[0].worktrees[0].lineageId, implementation.worktrees[0].lineageId);
   assert.match(developerRuns[0].summaryMd || ticket.latestSummary, /merge requested rework|merge evidence/i);
   assert.equal(store.listAgentMessages("project_floop", { intent: "suggest_dispatch" }).length, 0);
 
@@ -2294,6 +2312,13 @@ test("store suggests merge rework dispatch in operator-approved mode", () => {
   const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
     role: "developer",
     reason: "Prepare operator-approved merge conflict rework test.",
+  });
+  store.updateExecutionHarnessSession("project_floop", implementation.id, {
+    harnessKind: "codex_exec",
+    externalThreadId: "codex-thread-operator-merge-rework",
+    externalSessionId: "codex-session-operator-merge-rework",
+    externalConversationId: "codex-conversation-operator-merge-rework",
+    harnessCapabilities: ["queued_context", "interrupt_and_resume"],
   });
   store.completeExecution("project_floop", implementation.id, {
     outcome: "completed",
@@ -2320,7 +2345,62 @@ test("store suggests merge rework dispatch in operator-approved mode", () => {
   assert.equal(developerRuns.length, 1);
   assert.ok(suggestion);
   assert.equal(suggestion.metadata.role, "developer");
+  assert.equal(suggestion.metadata.reasonCode, "merge_rework");
+  assert.equal(suggestion.metadata.resumedFromExecutionId, implementation.id);
+  assert.equal(suggestion.metadata.harnessKind, "codex_exec");
+  assert.equal(suggestion.metadata.externalThreadId, "codex-thread-operator-merge-rework");
+  assert.equal(suggestion.metadata.externalSessionId, "codex-session-operator-merge-rework");
+  assert.equal(suggestion.metadata.externalConversationId, "codex-conversation-operator-merge-rework");
+  assert.deepEqual(suggestion.metadata.harnessCapabilities, ["queued_context", "interrupt_and_resume"]);
   assert.match(suggestion.body, /merge requested rework|merge evidence/i);
+
+  store.close();
+});
+
+test("store keeps merge rework lineage without native session resume for non-resumable harnesses", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: false,
+    requireHumanApprovalBeforeMerge: false,
+    interactionMode: "fully_autonomous",
+  });
+
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Prepare non-resumable merge conflict rework test.",
+  });
+  store.updateExecutionHarnessSession("project_floop", implementation.id, {
+    harnessKind: "shell",
+    externalThreadId: "shell-thread-should-not-resume",
+    harnessCapabilities: ["queued_context"],
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation is ready for merge.",
+  });
+
+  const started = store.startMergeRun("project_floop", "ticket_project_floop_2", {
+    strategy: "squash",
+    approvedByKind: "system",
+    approvedByRef: "floop-auto",
+    claimToken: "merge-worker",
+  });
+  store.completeMergeRun("project_floop", started.id, {
+    status: "rework",
+    summaryMd: "Merge conflicted against trunk. Rebase the implementation branch and retry.",
+  });
+
+  const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+  const rework = ticket.executions.find((execution) => execution.role === "developer" && execution.status === "running");
+  assert.ok(rework);
+  assert.equal(rework.resumedFromExecutionId, implementation.id);
+  assert.equal(rework.harnessKind, "");
+  assert.equal(rework.externalThreadId, "");
+  assert.deepEqual(rework.harnessCapabilities, []);
+  assert.equal(rework.steeringMetadata.resumeReasonCode, "merge_rework");
+  assert.equal(rework.steeringMetadata.resumeStrategy, undefined);
+  assert.equal(rework.worktrees[0].resumedFromWorktreeId, implementation.worktrees[0].id);
 
   store.close();
 });

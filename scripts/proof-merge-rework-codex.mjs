@@ -103,6 +103,7 @@ try {
     (execution) => execution.role === "developer" && execution.status === "running",
   );
   assert.ok(reworkExecution);
+  assert.equal(reworkExecution.resumedFromExecutionId, initialExecution.id);
 
   await executionDriver.pollOnce();
   const afterCodex = store.getTicket(projectId, ticketId);
@@ -243,6 +244,8 @@ function collectProof({ initialExecutionId, reworkExecutionId, finalText }) {
       agentEvents: readOptional(join(artifactRoot, "agent-events.jsonl")),
     };
   });
+  const initialExecution = executions.find((execution) => execution.id === initialExecutionId);
+  const reworkExecution = executions.find((execution) => execution.id === reworkExecutionId);
   return {
     kind: "merge_rework_codex_proof",
     createdAt: new Date().toISOString(),
@@ -253,6 +256,24 @@ function collectProof({ initialExecutionId, reworkExecutionId, finalText }) {
     ticket,
     initialExecutionId,
     reworkExecutionId,
+    mergeReworkRouting: {
+      sourceExecutionId: initialExecutionId,
+      repairExecutionId: reworkExecutionId,
+      repairResumedFromExecutionId: reworkExecution?.resumedFromExecutionId || "",
+      sourceHarnessKind: initialExecution?.harnessKind || "",
+      repairHarnessKind: reworkExecution?.harnessKind || "",
+      repairExternalThreadId: reworkExecution?.externalThreadId || "",
+      nativeSessionResumed:
+        reworkExecution?.steeringMetadata?.resumeStrategy === "interrupt_and_resume" &&
+        Boolean(reworkExecution?.externalThreadId),
+      repairResumeReasonCode: reworkExecution?.steeringMetadata?.resumeReasonCode || "",
+      repairWorktreeLineage: reworkExecution?.worktrees?.map((worktree) => ({
+        repoId: worktree.repoId,
+        branchName: worktree.branchName,
+        resumedFromWorktreeId: worktree.resumedFromWorktreeId,
+        lineageId: worktree.lineageId,
+      })) || [],
+    },
     mergeRuns,
     executions,
     artifacts,
