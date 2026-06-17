@@ -86,7 +86,7 @@ export function nextActionForTicket(ticket: BoardTicket | null): { label: string
     case "READY":
       return { label: "Start developer lane", detail: "The ticket is ready for execution." };
     case "WORKING":
-      return { label: "Watch execution", detail: "Implementation is active or awaiting outcome evidence." };
+      return { label: "Execution in progress", detail: "Use the execution dock to watch, steer, or stop work." };
     case "REVIEWING":
       return { label: "Record review", detail: "Reviewer evidence is the next gate." };
     case "VALIDATING":

@@ -684,6 +684,7 @@ function App() {
               projectId={projectId}
               ticket={ticket}
               selectedTicket={selectedTicketSummary}
+              runObservability={runObservability}
               onClose={() => void closeTicketDetail()}
               onRefresh={refreshTicket}
               onFullRefresh={refresh}
@@ -2269,6 +2270,7 @@ function TicketDetailPanel({
   projectId,
   ticket,
   selectedTicket,
+  runObservability,
   onClose,
   onRefresh,
   onFullRefresh,
@@ -2279,6 +2281,7 @@ function TicketDetailPanel({
   projectId: string;
   ticket: TicketDetail | null;
   selectedTicket: BoardTicket | null;
+  runObservability: RunObservability | null;
   onClose: () => void;
   onRefresh: (ticketId?: string) => Promise<void>;
   onFullRefresh: () => Promise<void>;
@@ -2368,6 +2371,7 @@ function TicketDetailPanel({
             <TicketCockpit
               projectId={projectId}
               ticket={ticket}
+              runObservability={runObservability}
               action={action}
               busy={busy}
               onRun={runAction}
@@ -2505,6 +2509,7 @@ function TicketDetailPanel({
 function TicketCockpit({
   projectId,
   ticket,
+  runObservability,
   action,
   busy,
   onRun,
@@ -2513,6 +2518,7 @@ function TicketCockpit({
 }: {
   projectId: string;
   ticket: TicketDetail;
+  runObservability: RunObservability | null;
   action: { label: string; detail: string };
   busy: string;
   onRun: (label: string, work: () => Promise<void>) => Promise<void>;
@@ -2534,9 +2540,10 @@ function TicketCockpit({
         <PhaseRail items={ticketPhaseItems(ticket)} />
       </div>
       <div className="cockpit-work">
-        <TicketWorkPanel
+        <TicketExecutionDock
           projectId={projectId}
           ticket={ticket}
+          run={runObservability?.runs.find((run) => run.kind === "execution" && run.runId === (activeExecution || latestExecution)?.id)}
           execution={activeExecution}
           busy={busy}
           onRun={onRun}
@@ -2621,9 +2628,10 @@ function ProductAutopilotPanel({
   );
 }
 
-function TicketWorkPanel({
+function TicketExecutionDock({
   projectId,
   ticket,
+  run,
   execution,
   busy,
   onRun,
@@ -2632,6 +2640,7 @@ function TicketWorkPanel({
 }: {
   projectId: string;
   ticket: TicketDetail;
+  run?: RunObservability["runs"][number];
   execution?: NonNullable<TicketDetail["executions"][number]>;
   busy: string;
   onRun: (label: string, work: () => Promise<void>) => Promise<void>;
@@ -2642,6 +2651,13 @@ function TicketWorkPanel({
   const visibleExecution = execution || latestExecution;
   const logArtifacts = (visibleExecution?.artifacts || []).filter((artifact) => artifact.kind === "log").slice(0, 3);
   const proofCount = visibleExecution?.artifacts?.length || 0;
+  const runProofCount =
+    run?.artifactCount ||
+    Number(Boolean(run?.workLogArtifactUri)) +
+      Number(Boolean(run?.stdoutArtifactUri)) +
+      Number(Boolean(run?.stderrArtifactUri));
+  const visibleProofCount = Math.max(proofCount, runProofCount || 0);
+  const lastMilestone = run?.liveAgentLog?.milestones?.at(-1);
   const workStatus = execution
     ? execution.claimed
       ? "Agent working"
@@ -2693,25 +2709,25 @@ function TicketWorkPanel({
 
   if (!visibleExecution) {
     return (
-      <article className="ticket-work-panel">
-        <div className="ticket-work-head">
+      <article className="execution-dock">
+        <div className="execution-dock-head">
           <div>
-            <p className="kicker">Current work</p>
+            <p className="kicker">Execution dock</p>
             <h3>No agent running</h3>
           </div>
           <span className="quiet-status">Ready</span>
         </div>
-        <p className="ticket-work-summary">Dispatch an agent when this ticket is ready to move.</p>
+        <p className="execution-dock-summary">Dispatch an agent when this ticket is ready to move.</p>
         <PhaseRail items={phases} compact />
       </article>
     );
   }
 
   return (
-    <article className={`ticket-work-panel ${execution ? "is-active" : ""}`}>
-      <div className="ticket-work-head">
+    <article className={`execution-dock ${execution ? "is-active" : ""}`}>
+      <div className="execution-dock-head">
         <div>
-          <p className="kicker">Current work</p>
+          <p className="kicker">Execution dock</p>
           <h3>{prettyRole(visibleExecution.role)} iteration {visibleExecution.iteration}</h3>
         </div>
         {execution ? (
@@ -2723,13 +2739,17 @@ function TicketWorkPanel({
           <span className="quiet-status">{workStatus}</span>
         )}
       </div>
-      <p className="ticket-work-summary">{visibleExecution.summaryMd || (execution ? "Agent is working in the background." : "Latest run has no summary yet.")}</p>
+      <p className="execution-dock-summary">{visibleExecution.summaryMd || lastMilestone?.text || (execution ? "Agent is working in the background." : "Latest run has no summary yet.")}</p>
       <PhaseRail items={phases} compact />
-      <div className="ticket-work-meta" aria-label="Current work evidence">
-        <span>{proofCount} artifact{proofCount === 1 ? "" : "s"}</span>
+      <div className="execution-dock-meta" aria-label="Execution evidence">
+        <span>{visibleProofCount} proof{visibleProofCount === 1 ? "" : "s"}</span>
         <span>{logArtifacts.length} log{logArtifacts.length === 1 ? "" : "s"}</span>
+        {run?.agentProgressSignalCount ? <span>{run.agentProgressSignalCount} progress</span> : null}
+        {run?.agentQuestionSignalCount ? <span>{run.agentQuestionSignalCount} questions</span> : null}
       </div>
-      <div className="ticket-work-actions">
+      {run ? <AgentTraceSummary run={run} /> : null}
+      {run ? <AgentMilestoneList run={run} /> : null}
+      <div className="execution-dock-actions">
         {execution ? (
           <button className="danger-button" type="button" disabled={Boolean(busy)} onClick={handleStop}>
             <Square size={14} />

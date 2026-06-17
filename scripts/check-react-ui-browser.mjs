@@ -244,6 +244,8 @@ try {
   await waitForText("Normal comment should add context without dispatching.");
   await setFormValue("Dispatch agent", "summary", "Starting from the browser UI.");
   await clickText("Dispatch agent");
+  await waitForText("EXECUTION DOCK");
+  await assertScript("document.querySelectorAll('.ticket-detail .execution-dock').length === 1", "ticket detail has one execution dock");
   await waitForText("QUEUED");
   await clickText("Close ticket detail");
   await waitForBoardTicket(

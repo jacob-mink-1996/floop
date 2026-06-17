@@ -2914,7 +2914,7 @@ textarea {
   line-height: 1;
 }
 
-.ticket-work-panel {
+.execution-dock {
   display: grid;
   align-content: start;
   gap: 10px;
@@ -2925,13 +2925,13 @@ textarea {
   background: var(--panel-soft);
 }
 
-.ticket-work-panel.is-active {
+.execution-dock.is-active {
   border-color: color-mix(in srgb, var(--blue) 62%, var(--line));
   background: color-mix(in srgb, var(--panel-warm) 86%, var(--blue) 14%);
 }
 
-.ticket-work-head,
-.ticket-work-actions {
+.execution-dock-head,
+.execution-dock-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2939,19 +2939,19 @@ textarea {
   min-width: 0;
 }
 
-.ticket-work-head > div {
+.execution-dock-head > div {
   display: grid;
   gap: 3px;
   min-width: 0;
 }
 
-.ticket-work-head h3 {
+.execution-dock-head h3 {
   margin: 0;
   overflow-wrap: anywhere;
   font-size: 15px;
 }
 
-.ticket-work-summary {
+.execution-dock-summary {
   display: -webkit-box;
   margin: 0;
   overflow: hidden;
@@ -2962,25 +2962,25 @@ textarea {
   -webkit-line-clamp: 3;
 }
 
-.ticket-work-actions {
+.execution-dock-actions {
   justify-content: flex-start;
   flex-wrap: wrap;
 }
 
-.ticket-work-actions .danger-button {
+.execution-dock-actions .danger-button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-height: 34px;
 }
 
-.ticket-work-meta {
+.execution-dock-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.ticket-work-meta span,
+.execution-dock-meta span,
 .quiet-status,
 .work-status {
   display: inline-flex;
