@@ -298,7 +298,7 @@ export function createCeremonyCommands({
 
       for (const proposal of proposals) {
         const payload = parseJsonObject(proposal.payload_json, {});
-        const appliedTicketId = applyCeremonyProposal(getStore(), projectId, proposal, payload);
+        const appliedTicketId = applyCeremonyProposal(getStore(), database, projectId, run, proposal, payload);
         database
           .prepare(
             `update ceremony_proposals
@@ -1137,7 +1137,65 @@ function noteProposal(summary, timestamp) {
   return proposal("note", summary, timestamp, { note: summary });
 }
 
-function applyCeremonyProposal(store, projectId, proposalRow, payload) {
+function ticketCreatePayloadForCeremony(database, projectId, runRow, payload) {
+  const ticket = { ...(payload.ticket || {}) };
+  if (!shouldAutoReadyRefinementChild(database, projectId, runRow, payload)) {
+    return ticket;
+  }
+
+  const policy = database
+    .prepare("select refinement_mode, agent_created_ticket_default_state from project_policies where project_id = ?")
+    .get(projectId);
+  const defaultState = policy?.agent_created_ticket_default_state || "";
+  if (defaultState) {
+    ticket.state = defaultState;
+  }
+  return ticket;
+}
+
+function shouldAutoReadyRefinementChild(database, projectId, runRow, payload) {
+  if (runRow.type !== "refinement" || !payload.sourceTicketId) {
+    return false;
+  }
+  const policy = database
+    .prepare("select refinement_mode, agent_created_ticket_default_state from project_policies where project_id = ?")
+    .get(projectId);
+  if (policy?.refinement_mode !== "autonomous" || policy?.agent_created_ticket_default_state !== "READY") {
+    return false;
+  }
+  const unresolvedQuestion = database
+    .prepare(
+      `select id
+       from agent_messages
+       where project_id = ?
+         and intent = 'submit_ceremony_input'
+         and status = 'pending'
+         and json_extract(target_json, '$.runId') = ?
+         and json_extract(target_json, '$.ticketId') = ?
+         and json_extract(metadata_json, '$.refinementQuestion') = 1
+       limit 1`,
+    )
+    .get(projectId, runRow.id, payload.sourceTicketId);
+  if (unresolvedQuestion) {
+    return false;
+  }
+  const answeredQuestion = database
+    .prepare(
+      `select id
+       from agent_messages
+       where project_id = ?
+         and intent = 'comment_on_ticket'
+         and status = 'attached'
+         and json_extract(target_json, '$.ticketId') = ?
+         and json_extract(metadata_json, '$.ceremonyResponse') = 1
+         and json_extract(metadata_json, '$.unblockResponse') = 1
+       limit 1`,
+    )
+    .get(projectId, payload.sourceTicketId);
+  return Boolean(answeredQuestion);
+}
+
+function applyCeremonyProposal(store, database, projectId, runRow, proposalRow, payload) {
   switch (proposalRow.kind) {
     case "ticket_patch":
       store.updateTicket(projectId, requiredText(payload.ticketId, "ticketId"), payload.patch || {});
@@ -1169,7 +1227,7 @@ function applyCeremonyProposal(store, projectId, proposalRow, payload) {
       return lastTicketId;
     }
     case "ticket_create":
-      return store.createTicket(projectId, payload.ticket || {})?.id || "";
+      return store.createTicket(projectId, ticketCreatePayloadForCeremony(database, projectId, runRow, payload))?.id || "";
     case "ticket_transition":
       store.transitionTicket(projectId, requiredText(payload.ticketId, "ticketId"), {
         targetState: payload.targetState,

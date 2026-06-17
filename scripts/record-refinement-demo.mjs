@@ -118,7 +118,7 @@ function seedProject() {
   store.updateProjectPolicy(project.id, {
     interactionMode: "autopilot",
     refinementMode: "autonomous",
-    agentCreatedTicketDefaultState: "PROPOSED",
+    agentCreatedTicketDefaultState: "READY",
     ceremonyAutomation: {
       enabled: true,
       mode: "operator_approved",
@@ -338,12 +338,6 @@ async function runWalkthrough(page, appUrl, projectId) {
     .listTickets(projectId)
     .find((ticket) => ticket.title === "Create shared calendar invite model");
   assert.ok(childTicket);
-  store.transitionTicket(projectId, childTicket.id, {
-    targetState: "READY",
-    reason: "Refinement answer resolved the scope enough to start the first slice.",
-    reasonCode: "refinement_scope_ready",
-    reasonSource: "operator",
-  });
   store.createExecution(projectId, childTicket.id, {
     role: "developer",
     reason: "Implement first child ticket after refinement handoff.",

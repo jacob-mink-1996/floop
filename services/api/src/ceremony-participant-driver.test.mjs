@@ -215,6 +215,159 @@ test("ceremony participant recommendations produce refinement proposals", async 
   }
 });
 
+test("answered refinement questions can ready split child tickets in autonomous refinement", async () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  try {
+    store.updateProjectPolicy("project_floop", {
+      refinementMode: "autonomous",
+      agentCreatedTicketDefaultState: "READY",
+    });
+    const broad = store.createTicket("project_floop", {
+      title: "Build shared calendar collaboration",
+      brief: "Split invitations and permissions into child implementation slices.",
+      assignedRole: "product_manager",
+      state: "PROPOSED",
+    });
+    store.updateRoleProfile("project_floop", "product_manager", {
+      adapter: "mock",
+      model: "fixture",
+      config: {
+        result: {
+          outcome: "completed",
+          summaryMd: "PM split the broad calendar idea.",
+          payload: {
+            refinementRecommendations: [
+              {
+                type: "split",
+                sourceTicketId: broad.id,
+                reason: "Invites are executable once auth scope is known.",
+                tickets: [
+                  {
+                    title: "Create shared calendar invite model",
+                    brief: "Build invite acceptance using the clarified auth decision.",
+                    acceptanceCriteriaMd: "- Invite acceptance follows auth scope",
+                    assignedRole: "developer",
+                  },
+                ],
+              },
+              {
+                type: "question",
+                ticketId: broad.id,
+                questionMd: "Should invite acceptance require account login?",
+                reason: "Auth scope gates executable invite work.",
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const run = store.createCeremonyRun("project_floop", {
+      type: "refinement",
+      participantRoles: ["product_manager"],
+      deciderRole: "product_manager",
+    });
+    const driver = createCeremonyParticipantDriver({ store, logger: silentLogger(), maxParallel: 1 });
+    await driver.pollOnce();
+
+    const completed = store.getCeremonyRun("project_floop", run.id);
+    const split = completed.proposals.find(
+      (proposal) => proposal.kind === "ticket_create" && proposal.payload.sourceTicketId === broad.id,
+    );
+    const question = store
+      .listAgentMessages("project_floop", { intent: "submit_ceremony_input", status: "pending" })
+      .find((message) => message.target.runId === run.id && message.target.ticketId === broad.id);
+    assert.ok(split);
+    assert.ok(question);
+
+    store.respondAgentMessage("project_floop", question.id, {
+      responseMd: "Require account login before invite acceptance.",
+      responderKind: "human",
+      responderRef: "operator",
+      continueExecution: false,
+    });
+    store.applyCeremonyRun("project_floop", run.id, { proposalIds: [split.id] });
+    const child = store.listTickets("project_floop", { parentTicketId: broad.id }).find((ticket) =>
+      ticket.title === "Create shared calendar invite model",
+    );
+
+    assert.ok(child);
+    assert.equal(store.getTicket("project_floop", child.id).state, "READY");
+  } finally {
+    store.close();
+  }
+});
+
+test("pending refinement questions keep split child tickets proposed", async () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  try {
+    store.updateProjectPolicy("project_floop", {
+      refinementMode: "autonomous",
+      agentCreatedTicketDefaultState: "READY",
+    });
+    const broad = store.createTicket("project_floop", {
+      title: "Build guest calendar links",
+      brief: "Decide auth scope before executable guest-link work starts.",
+      assignedRole: "product_manager",
+      state: "PROPOSED",
+    });
+    store.updateRoleProfile("project_floop", "product_manager", {
+      adapter: "mock",
+      model: "fixture",
+      config: {
+        result: {
+          outcome: "completed",
+          summaryMd: "PM split guest links but still needs auth scope.",
+          payload: {
+            refinementRecommendations: [
+              {
+                type: "split",
+                sourceTicketId: broad.id,
+                tickets: [
+                  {
+                    title: "Create guest calendar link model",
+                    brief: "Build the guest link model after auth scope is answered.",
+                    assignedRole: "developer",
+                  },
+                ],
+              },
+              {
+                type: "question",
+                ticketId: broad.id,
+                questionMd: "Are guest links allowed without login?",
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const run = store.createCeremonyRun("project_floop", {
+      type: "refinement",
+      participantRoles: ["product_manager"],
+      deciderRole: "product_manager",
+    });
+    const driver = createCeremonyParticipantDriver({ store, logger: silentLogger(), maxParallel: 1 });
+    await driver.pollOnce();
+
+    const completed = store.getCeremonyRun("project_floop", run.id);
+    const split = completed.proposals.find(
+      (proposal) => proposal.kind === "ticket_create" && proposal.payload.sourceTicketId === broad.id,
+    );
+    assert.ok(split);
+
+    store.applyCeremonyRun("project_floop", run.id, { proposalIds: [split.id] });
+    const child = store.listTickets("project_floop", { parentTicketId: broad.id }).find((ticket) =>
+      ticket.title === "Create guest calendar link model",
+    );
+
+    assert.ok(child);
+    assert.equal(store.getTicket("project_floop", child.id).state, "PROPOSED");
+  } finally {
+    store.close();
+  }
+});
+
 test("ceremony participant HITL stays scoped to the ceremony run", async () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   try {
