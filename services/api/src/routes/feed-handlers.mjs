@@ -1,4 +1,10 @@
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArtifactFilters, parseEventFilters, parseRunFilters, parseWorktreeFilters, respondMaybe } from "./shared.mjs";
+
+const LIVE_LOG_TAIL_BYTES = 4096;
+const LIVE_EVENT_LIMIT = 20;
 
 export function handleFeedRoute(route, url, body, store) {
   switch (route.name) {
@@ -40,7 +46,7 @@ function buildRunFeed(store, projectId, filters = {}) {
   const mergeRuns = store.listMergeRuns(projectId, { limit }) || [];
   const ceremonies = store.listCeremonyRuns(projectId) || [];
   const runs = [
-    ...executions.map((execution) => executionRunItem(store, projectId, execution)),
+    ...executions.map((execution) => executionRunItem(store, project, projectId, execution)),
     ...mergeRuns.map((run) => mergeRunItem(store, projectId, run)),
     ...ceremonies.map(ceremonyRunItem),
   ]
@@ -54,10 +60,11 @@ function buildRunFeed(store, projectId, filters = {}) {
   };
 }
 
-function executionRunItem(store, projectId, execution) {
+function executionRunItem(store, project, projectId, execution) {
   const artifacts = execution.artifacts || [];
   const workLogArtifact = findArtifact(artifacts, "Agent work log");
   const agentWork = workLogArtifact?.metadata?.agentWork || {};
+  const liveAgentLog = buildLiveAgentLog(project, execution);
   const movementReason = latestTicketMovementReason(store, projectId, execution.ticketId);
   return {
     id: `execution:${execution.id}`,
@@ -77,10 +84,15 @@ function executionRunItem(store, projectId, execution) {
     retryAttemptCount: retryAttemptCount(execution.summaryMd),
     workLogArtifactUri: workLogArtifact?.uri || "",
     agentTraceSummary: typeof agentWork.summary === "string" ? agentWork.summary : "",
-    agentProgressSignalCount: Number.isInteger(agentWork.progressSignalCount) ? agentWork.progressSignalCount : 0,
-    agentQuestionSignalCount: Number.isInteger(agentWork.questionSignalCount) ? agentWork.questionSignalCount : 0,
+    agentProgressSignalCount: Number.isInteger(agentWork.progressSignalCount)
+      ? agentWork.progressSignalCount
+      : liveAgentLog.progressSignalCount,
+    agentQuestionSignalCount: Number.isInteger(agentWork.questionSignalCount)
+      ? agentWork.questionSignalCount
+      : liveAgentLog.questionSignalCount,
     stdoutArtifactUri: findArtifactUri(artifacts, "stdout"),
     stderrArtifactUri: findArtifactUri(artifacts, "stderr"),
+    liveAgentLog,
     worktreePaths: (execution.worktrees || []).map((worktree) => worktree.path).filter(Boolean),
     movementReason,
     startedAt: execution.startedAt,
@@ -89,6 +101,115 @@ function executionRunItem(store, projectId, execution) {
     worktreeCount: execution.worktrees?.length || 0,
     needsAttention: execution.status === "needs_continue" || ["failed", "blocked"].includes(execution.outcome),
   };
+}
+
+function buildLiveAgentLog(project, execution) {
+  const empty = {
+    available: false,
+    stdoutTail: "",
+    stderrTail: "",
+    agentEventsUri: "",
+    stdoutUri: "",
+    stderrUri: "",
+    recentEvents: [],
+    progressSignalCount: 0,
+    questionSignalCount: 0,
+    updatedAt: "",
+  };
+  if (!project?.workspaceRoot || !execution?.id || execution.finishedAt) {
+    return empty;
+  }
+
+  const root = resolve(project.workspaceRoot, ".floop", "artifacts", "executions", execution.id);
+  const stdoutPath = resolve(root, "stdout.log");
+  const stderrPath = resolve(root, "stderr.log");
+  const agentEventsPath = resolve(root, "agent-events.jsonl");
+  const stdoutTail = readTail(stdoutPath);
+  const stderrTail = readTail(stderrPath);
+  const recentEvents = readRecentJsonl(agentEventsPath, LIVE_EVENT_LIMIT);
+  const signalText = [
+    stdoutTail,
+    stderrTail,
+    ...recentEvents.map((event) => (typeof event.text === "string" ? event.text : "")),
+  ].join("\n");
+  const updatedAt = latestMtime([stdoutPath, stderrPath, agentEventsPath]);
+  const available = Boolean(stdoutTail || stderrTail || recentEvents.length > 0);
+
+  return {
+    available,
+    stdoutTail,
+    stderrTail,
+    agentEventsUri: existsSync(agentEventsPath) ? pathToFileURL(agentEventsPath).href : "",
+    stdoutUri: existsSync(stdoutPath) ? pathToFileURL(stdoutPath).href : "",
+    stderrUri: existsSync(stderrPath) ? pathToFileURL(stderrPath).href : "",
+    recentEvents,
+    progressSignalCount: countProgressSignals(signalText),
+    questionSignalCount: countQuestionSignals(signalText),
+    updatedAt,
+  };
+}
+
+function readTail(filename) {
+  try {
+    if (!existsSync(filename)) {
+      return "";
+    }
+    const content = readFileSync(filename);
+    return content.subarray(Math.max(0, content.length - LIVE_LOG_TAIL_BYTES)).toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+function readRecentJsonl(filename, limit) {
+  const text = readTail(filename);
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-limit)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return { event: "parse_error", text: line };
+      }
+    });
+}
+
+function latestMtime(filenames) {
+  const times = filenames
+    .map((filename) => {
+      try {
+        return existsSync(filename) ? statSync(filename).mtimeMs : 0;
+      } catch {
+        return 0;
+      }
+    })
+    .filter((value) => value > 0);
+  if (times.length === 0) {
+    return "";
+  }
+  return new Date(Math.max(...times)).toISOString();
+}
+
+function countProgressSignals(text) {
+  return signalLines(text).filter((line) => isProgressSignal(line)).length;
+}
+
+function countQuestionSignals(text) {
+  return signalLines(text).filter((line) => /\?|blocked|needs input|need input|clarify|question/i.test(line)).length;
+}
+
+function signalLines(text) {
+  return String(text || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function isProgressSignal(line) {
+  return /\b(progress|working|implemented|created|updated|validated|reviewed|tested|passed|completed|wrote|added|fixed)\b/i.test(line);
 }
 
 function mergeRunItem(store, projectId, run) {

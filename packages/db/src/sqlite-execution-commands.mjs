@@ -510,12 +510,17 @@ export function createExecutionCommands({
         return null;
       }
 
+      const timestamp = now();
       if (execution.finished_at) {
+        dismissPendingInputRequestsForExecution(database, {
+          projectId,
+          executionId,
+          timestamp,
+        });
         return commands.getExecution(projectId, executionId);
       }
 
       const ticket = getTicketRow(database, projectId, execution.ticket_id);
-      const timestamp = now();
       const reason = optionalText(input.reason, "Execution cancelled by operator");
 
       withTransaction(database, () => {
@@ -530,6 +535,12 @@ export function createExecutionCommands({
         database
           .prepare("update worktrees set status = ?, updated_at = ? where project_id = ? and execution_id = ?")
           .run("cancelled", timestamp, projectId, executionId);
+
+        dismissPendingInputRequestsForExecution(database, {
+          projectId,
+          executionId,
+          timestamp,
+        });
 
         database
           .prepare("update tickets set latest_summary = ?, updated_at = ? where project_id = ? and id = ?")
@@ -600,6 +611,19 @@ export function createExecutionCommands({
 
 function isWorkerLaneRole(role) {
   return role !== "reviewer" && role !== "validator";
+}
+
+function dismissPendingInputRequestsForExecution(database, { projectId, executionId, timestamp }) {
+  database
+    .prepare(
+      `update agent_messages
+       set status = 'dismissed', dismissed_at = ?, updated_at = ?
+       where project_id = ?
+         and intent = 'request_input'
+         and status = 'pending'
+         and json_extract(target_json, '$.executionId') = ?`,
+    )
+    .run(timestamp, timestamp, projectId, executionId);
 }
 
 function createBlockedInputRequest(store, projectId, ticket, execution, completion) {

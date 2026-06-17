@@ -179,7 +179,7 @@ export function createAgentMessageCommands({
           ticketId,
           type: `agent.message_${input.status}`,
           summary: `${existing.actor} message ${input.status}`,
-          detail: existing.body || existing.summary,
+          detail: eventDetailForAgentMessage(existing),
           reasonCode: input.status,
           reasonSource: input.reasonSource || "operator",
         });
@@ -206,6 +206,8 @@ export function createAgentMessageCommands({
       const responderRef = optionalText(input.responderRef, "operator");
       const executionId = typeof existing.target?.executionId === "string" ? existing.target.executionId : "";
       const ticketId = typeof existing.target?.ticketId === "string" ? existing.target.ticketId : "";
+      const responseIsSensitive = looksCredentialLike(responseMd) || input.sensitive === true;
+      const eventSafeResponseMd = responseIsSensitive ? "[sensitive response redacted]" : responseMd;
       const updated = commands.updateAgentMessage(projectId, messageId, {
         status: "attached",
         promotedKind: "ticket_event",
@@ -224,6 +226,7 @@ export function createAgentMessageCommands({
           responseToMessageId: messageId,
           responderKind,
           responderRef,
+          sensitive: responseIsSensitive,
           unblockResponse: true,
         },
       });
@@ -237,7 +240,7 @@ export function createAgentMessageCommands({
       if (input.continueExecution !== false && executionId) {
         try {
           const continued = store.continueExecution(projectId, executionId, {
-            reason: `Unblock response from ${responderRef}: ${responseMd}`,
+            reason: `Unblock response from ${responderRef}: ${eventSafeResponseMd}`,
           });
           if (continued) {
             commands.updateAgentMessage(projectId, messageId, {
@@ -247,8 +250,27 @@ export function createAgentMessageCommands({
               reasonSource: responderKind,
             });
           }
-        } catch {
-          // The response remains attached even if the lane cannot continue automatically.
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const limitMessage = store.createAgentMessage(projectId, {
+            actor: "floop",
+            source: "execution_continue_limit",
+            intent: "comment_on_ticket",
+            target: { ticketId, executionId, responseToMessageId: messageId },
+            summary: `${existing.summary} could not continue automatically`,
+            body: message || "The lane could not continue automatically.",
+            metadata: {
+              responseToMessageId: messageId,
+              continuationLimitReached: message.includes(" reached the continuation limit of "),
+              unblockResponse: false,
+            },
+          });
+          commands.updateAgentMessage(projectId, limitMessage.id, {
+            status: "attached",
+            promotedKind: "ticket_event",
+            promotedRef: ticketId,
+            reasonSource: "execution_continue_limit",
+          });
         }
       }
 
@@ -257,6 +279,32 @@ export function createAgentMessageCommands({
   };
 
   return commands;
+}
+
+function eventDetailForAgentMessage(message) {
+  const detail = message.body || message.summary || "";
+  if (!isSensitiveAgentMessage(message, detail)) {
+    return detail;
+  }
+  return "[sensitive response redacted]";
+}
+
+function isSensitiveAgentMessage(message, detail) {
+  if (message.metadata?.sensitive === true || message.metadata?.secret === true) {
+    return true;
+  }
+  return looksCredentialLike(detail);
+}
+
+function looksCredentialLike(value) {
+  const text = String(value || "");
+  return [
+    /\b(api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|credential)\b\s*[:=]/i,
+    /\b(AKIA|ASIA)[A-Z0-9]{12,}\b/,
+    /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/,
+    /\bsk-[A-Za-z0-9_-]{20,}\b/,
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  ].some((pattern) => pattern.test(text));
 }
 
 function maybeAutoPromoteAgentMessage(commands, database, getStore, projectId, messageId) {

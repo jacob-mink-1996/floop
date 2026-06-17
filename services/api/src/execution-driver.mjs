@@ -207,7 +207,7 @@ class ExecutionDriver {
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       try {
         await materializeWorktrees(ticket, execution);
-        const runtime = await prepareRuntimeArtifacts(project, ticket, execution);
+        const runtime = await prepareRuntimeArtifacts(project, ticket, execution, this.store);
         const result = await executeAdapterRun(adapterRun, {
           project,
           ticket,
@@ -451,7 +451,7 @@ async function canReuseMaterializedWorktree(target, worktree) {
   );
 }
 
-async function prepareRuntimeArtifacts(project, ticket, execution) {
+async function prepareRuntimeArtifacts(project, ticket, execution, store) {
   const executionRoot = resolve(project.workspaceRoot, ".floop", "executions", execution.id);
   const artifactRoot = resolve(project.workspaceRoot, ".floop", "artifacts", "executions", execution.id);
   const contextPath = join(executionRoot, "context.json");
@@ -471,6 +471,7 @@ async function prepareRuntimeArtifacts(project, ticket, execution) {
       {
         project,
         ticket,
+        relatedTickets: buildRelatedTicketContext(store, project.id, ticket),
         execution,
       },
       null,
@@ -488,6 +489,41 @@ async function prepareRuntimeArtifacts(project, ticket, execution) {
     stdoutPath,
     stderrPath,
     agentEventsPath,
+  };
+}
+
+function buildRelatedTicketContext(store, projectId, ticket) {
+  if (!store || !projectId || !ticket) {
+    return { parent: null, children: [] };
+  }
+  const parent = ticket.parentTicketId
+    ? summarizeRelatedTicket(store.getTicket(projectId, ticket.parentTicketId))
+    : null;
+  const children = store
+    .listTickets(projectId, { parentTicketId: ticket.id })
+    .map((child) => summarizeRelatedTicket(store.getTicket(projectId, child.id)))
+    .filter(Boolean);
+  return { parent, children };
+}
+
+function summarizeRelatedTicket(ticket) {
+  if (!ticket) {
+    return null;
+  }
+  return {
+    id: ticket.id,
+    key: ticket.key,
+    title: ticket.title,
+    state: ticket.state,
+    priority: ticket.priority,
+    assignedRole: ticket.assignedRole,
+    latestSummary: ticket.latestSummary,
+    acceptanceCriteriaMd: ticket.acceptanceCriteriaMd,
+    definitionOfDoneMd: ticket.definitionOfDoneMd,
+    events: ticket.events,
+    reviews: ticket.reviews,
+    validations: ticket.validations,
+    artifacts: ticket.artifacts,
   };
 }
 
@@ -838,6 +874,20 @@ async function buildCompletionPayload(result, runtime, execution, ticket) {
     };
   }
 
+  if (isAuthRequiredAdapterFailure(result)) {
+    const authDetail = tailText([result.stderr || "", result.stdout || ""].join("\n")).trim();
+    return {
+      outcome: "blocked",
+      summaryMd: "Adapter requires authentication before it can run.",
+      remainingWorkMd: authDetail || "Authenticate the configured agent CLI, then continue this execution.",
+      expectedNextEvidenceMd: "The same agent lane completes after authentication is restored.",
+      failureKind: "",
+      blockedKind: "codex_auth_required",
+      artifacts,
+      followupTickets: normalized.followupTickets,
+    };
+  }
+
   if (result.exitCode !== 0 || missingResult) {
     return {
       outcome: "failed",
@@ -867,6 +917,21 @@ async function buildCompletionPayload(result, runtime, execution, ticket) {
     validation: normalized.validation,
     followupTickets: normalized.followupTickets,
   };
+}
+
+function isAuthRequiredAdapterFailure(result) {
+  if (!result || result.exitCode === 0) {
+    return false;
+  }
+  const text = `${result.stderr || ""}\n${result.stdout || ""}`.toLowerCase();
+  return (
+    text.includes("not logged in") ||
+    text.includes("not authenticated") ||
+    text.includes("authentication required") ||
+    text.includes("login required") ||
+    text.includes("please log in") ||
+    text.includes("codex login")
+  );
 }
 
 async function readResultFile(filename) {

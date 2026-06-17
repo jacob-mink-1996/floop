@@ -423,8 +423,42 @@ export function createMergeCommands({
     }
     return {
       ...validation,
-      artifacts: getArtifactsByValidationRunId(database, [validation.id]).get(validation.id) || [],
+      artifacts: [
+        ...(getArtifactsByValidationRunId(database, [validation.id]).get(validation.id) || []),
+        ...getTicketArtifacts(database, validation.id),
+      ],
     };
+  }
+}
+
+function getTicketArtifacts(database, validationRunId) {
+  const validation = database
+    .prepare("select project_id, ticket_id from validation_runs where id = ?")
+    .get(validationRunId);
+  if (!validation) {
+    return [];
+  }
+  return database
+    .prepare(
+      `select kind, label, uri, metadata_json
+       from artifacts
+       where project_id = ? and ticket_id = ?`,
+    )
+    .all(validation.project_id, validation.ticket_id)
+    .map((row) => ({
+      kind: row.kind,
+      label: row.label,
+      uri: row.uri,
+      metadata: parseJsonObject(row.metadata_json, {}),
+    }));
+}
+
+function parseJsonObject(text, fallback = {}) {
+  try {
+    const value = JSON.parse(text || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : fallback;
+  } catch {
+    return fallback;
   }
 }
 

@@ -519,6 +519,17 @@ export function createTicketCommands({
 
         database
           .prepare(
+            `update agent_messages
+             set status = 'dismissed', dismissed_at = ?, updated_at = ?
+             where project_id = ?
+               and intent = 'request_input'
+               and status = 'pending'
+               and json_extract(target_json, '$.ticketId') = ?`,
+          )
+          .run(timestamp, timestamp, projectId, ticketId);
+
+        database
+          .prepare(
             `update tickets
              set state = ?, latest_summary = ?, updated_at = ?
              where project_id = ? and id = ?`,

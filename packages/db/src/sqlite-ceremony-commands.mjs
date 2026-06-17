@@ -254,6 +254,27 @@ export function createCeremonyCommands({
           projectId,
           participantId,
         );
+      if (input.outcome === "blocked" && optionalText(input.questionsMd, input.summaryMd)) {
+        const questionMd = optionalText(input.questionsMd, input.summaryMd);
+        getStore().createAgentMessage(projectId, {
+          actor: existing.role,
+          source: "ceremony_participant",
+          intent: "submit_ceremony_input",
+          target: {
+            runId: existing.run_id,
+            participantId,
+            role: existing.role,
+          },
+          summary: `${existing.role} ceremony question`,
+          body: questionMd,
+          metadata: {
+            ceremonyHitlQuestion: true,
+            participantId,
+            role: existing.role,
+            outcome: "blocked",
+          },
+        });
+      }
       maybeSynthesizeCeremonyParticipants(database, projectId, existing.run_id, timestamp);
       return mapCeremonyParticipant(
         database.prepare("select * from ceremony_participants where project_id = ? and id = ?").get(projectId, participantId),

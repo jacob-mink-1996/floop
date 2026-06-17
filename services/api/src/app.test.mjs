@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -545,6 +545,66 @@ test("run observability endpoint combines execution and ceremony runs", async ()
   });
 });
 
+test("run observability endpoint surfaces live agent logs for active executions", async () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), "floop-live-agent-log-"));
+  const workspaceRoot = join(fixtureDir, "workspace");
+  try {
+    await withServer(
+      async (baseUrl, store) => {
+        const executionResponse = await fetch(
+          `${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2/executions`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              role: "developer",
+              reason: "Expose live agent logs in run observability.",
+            }),
+          },
+        );
+        const executionBody = await executionResponse.json();
+        assert.equal(executionResponse.status, 201);
+        store.claimExecution("project_floop", executionBody.execution.id, {
+          claimToken: "test-worker",
+          leaseMs: 60_000,
+        });
+
+        const logRoot = join(workspaceRoot, ".floop", "artifacts", "executions", executionBody.execution.id);
+        mkdirSync(logRoot, { recursive: true });
+        writeFileSync(join(logRoot, "stdout.log"), "progress: implemented calendar route\n", "utf8");
+        writeFileSync(join(logRoot, "stderr.log"), "question: should we validate recurrence?\n", "utf8");
+        writeFileSync(
+          join(logRoot, "agent-events.jsonl"),
+          [
+            JSON.stringify({ event: "process.output", stream: "stdout", text: "working on API smoke" }),
+            JSON.stringify({ event: "process.output", stream: "stderr", text: "needs input for timezone?" }),
+          ].join("\n") + "\n",
+          "utf8",
+        );
+
+        const runsResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/runs?limit=10`);
+        const runsBody = await runsResponse.json();
+        const executionRun = runsBody.observability.runs.find((run) => run.id === `execution:${executionBody.execution.id}`);
+
+        assert.equal(runsResponse.status, 200);
+        assert.ok(executionRun);
+        assert.equal(executionRun.status, "running");
+        assert.equal(executionRun.liveAgentLog.available, true);
+        assert.match(executionRun.liveAgentLog.stdoutTail, /implemented calendar route/);
+        assert.match(executionRun.liveAgentLog.stderrTail, /validate recurrence/);
+        assert.equal(executionRun.liveAgentLog.recentEvents.length, 2);
+        assert.equal(executionRun.agentProgressSignalCount > 0, true);
+        assert.equal(executionRun.agentQuestionSignalCount > 0, true);
+        assert.match(executionRun.liveAgentLog.stdoutUri, /^file:/);
+        assert.match(executionRun.liveAgentLog.agentEventsUri, /^file:/);
+      },
+      { workspaceRoot },
+    );
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("blocked execution input requests can be answered through the API", async () => {
   await withServer(async (baseUrl) => {
     const executionResponse = await fetch(
@@ -622,6 +682,110 @@ test("blocked execution input requests can be answered through the API", async (
     assert.equal(ticketBody.ticket.state, "WORKING");
     assert.ok(continuedExecution);
     assert.equal(continuedExecution.status, "running");
+  });
+});
+
+test("agent message response API rejects ordinary comments and stale HITL answers", async () => {
+  await withServer(async (baseUrl) => {
+    const commentResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/agent-messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: "architect",
+        source: "agent",
+        intent: "comment_on_ticket",
+        target: { ticketId: "ticket_project_floop_2" },
+        summary: "A useful ticket note",
+        body: "This is context, not a blocked request response.",
+      }),
+    });
+    const commentBody = await commentResponse.json();
+    assert.equal(commentResponse.status, 201);
+
+    const badResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages/${commentBody.message.id}/respond`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          responseMd: "Continue with this.",
+          responderKind: "human",
+          responderRef: "jacob",
+        }),
+      },
+    );
+    const badBody = await badResponse.json();
+    assert.equal(badResponse.status, 400);
+    assert.equal(badBody.message, "Only input requests can be responded to");
+
+    const executionResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2/executions`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          role: "developer",
+          reason: "Start work that needs one HITL answer.",
+        }),
+      },
+    );
+    const executionBody = await executionResponse.json();
+    assert.equal(executionResponse.status, 201);
+
+    const completeResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/executions/${executionBody.execution.id}/complete`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          outcome: "blocked",
+          summaryMd: "Need one answer.",
+          remainingWorkMd: "Pick the default calendar view.",
+          blockedKind: "needs_human_input",
+        }),
+      },
+    );
+    assert.equal(completeResponse.status, 200);
+
+    const requestsResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages?intent=request_input&status=pending`,
+    );
+    const requestsBody = await requestsResponse.json();
+    const request = requestsBody.messages.find(
+      (message) => message.target.executionId === executionBody.execution.id,
+    );
+    assert.ok(request);
+
+    const firstAnswerResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages/${request.id}/respond`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          responseMd: "Month view.",
+          responderKind: "human",
+          responderRef: "jacob",
+          continueExecution: false,
+        }),
+      },
+    );
+    assert.equal(firstAnswerResponse.status, 200);
+
+    const staleAnswerResponse = await fetch(
+      `${baseUrl}/api/v1/projects/project_floop/agent-messages/${request.id}/respond`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          responseMd: "Week view.",
+          responderKind: "human",
+          responderRef: "jacob",
+        }),
+      },
+    );
+    const staleAnswerBody = await staleAnswerResponse.json();
+    assert.equal(staleAnswerResponse.status, 400);
+    assert.equal(staleAnswerBody.message, "Input request is no longer pending");
   });
 });
 
@@ -1198,42 +1362,123 @@ test("dependency endpoint rejects missing blocker tickets with not found", async
 test("API exposes a live SSE event stream for project activity", async () => {
   await withServer(async (baseUrl) => {
     const abortController = new AbortController();
-    const response = await fetch(`${baseUrl}/api/v1/projects/project_floop/events/stream?limit=10`, {
-      signal: abortController.signal,
-    });
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/projects/project_floop/events/stream?limit=10`, {
+        signal: abortController.signal,
+      });
 
-    assert.equal(response.status, 200);
-    assert.match(response.headers.get("content-type"), /text\/event-stream/);
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get("content-type"), /text\/event-stream/);
 
-    const reader = response.body.getReader();
-    const initialChunk = await readStreamChunk(reader);
-    assert.match(initialChunk, /event: snapshot/);
-    const initialSnapshot = parseFirstSsePayload(initialChunk);
-    assert.equal(initialSnapshot.events[0].family.length > 0, true);
-    assert.equal(initialSnapshot.events[0].lane.length > 0, true);
-    assert.match(initialSnapshot.events[0].cursor, /:/);
-    assert.equal(typeof initialSnapshot.events[0].reasonCode, "string");
+      const reader = response.body.getReader();
+      const initialChunk = await readStreamChunk(reader);
+      assert.match(initialChunk, /event: snapshot/);
+      const initialSnapshot = parseFirstSsePayload(initialChunk);
+      assert.equal(initialSnapshot.events[0].family.length > 0, true);
+      assert.equal(initialSnapshot.events[0].lane.length > 0, true);
+      assert.match(initialSnapshot.events[0].cursor, /:/);
+      assert.equal(typeof initialSnapshot.events[0].reasonCode, "string");
 
-    await fetch(`${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2/transition`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        targetState: "WORKING",
-        reason: "Drive a live event for the stream.",
-        reasonCode: "operator_started_work",
-      }),
-    });
+      await fetch(`${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2/transition`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          targetState: "WORKING",
+          reason: "Drive a live event for the stream.",
+          reasonCode: "operator_started_work",
+        }),
+      });
 
-    const nextChunk = await readStreamUntil(reader, /ticket\.transitioned|WORKING/);
-    assert.match(nextChunk, /event: event/);
-    assert.match(nextChunk, /ticket\.transitioned/);
-    const nextEvent = parseLastSsePayload(nextChunk);
-    assert.equal(nextEvent.family, "ticket");
-    assert.equal(nextEvent.action, "transitioned");
-    assert.equal(nextEvent.lane, "ticket");
-    assert.equal(typeof nextEvent.reasonCode, "string");
+      const nextChunk = await readStreamUntil(reader, /ticket\.transitioned|WORKING/);
+      assert.match(nextChunk, /event: event/);
+      assert.match(nextChunk, /ticket\.transitioned/);
+      const nextEvent = parseLastSsePayload(nextChunk);
+      assert.equal(nextEvent.family, "ticket");
+      assert.equal(nextEvent.action, "transitioned");
+      assert.equal(nextEvent.lane, "ticket");
+      assert.equal(typeof nextEvent.reasonCode, "string");
+    } finally {
+      abortController.abort();
+    }
+  });
+});
 
-    abortController.abort();
+test("API streams HITL request answer and continuation lifecycle events", async () => {
+  await withServer(async (baseUrl) => {
+    const abortController = new AbortController();
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/projects/project_floop/events/stream?limit=100`, {
+        signal: abortController.signal,
+      });
+      assert.equal(response.status, 200);
+      const reader = response.body.getReader();
+      await readStreamChunk(reader);
+
+      const executionResponse = await fetch(
+        `${baseUrl}/api/v1/projects/project_floop/tickets/ticket_project_floop_2/executions`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            role: "developer",
+            reason: "Start work that will ask HITL in the event stream.",
+          }),
+        },
+      );
+      const executionBody = await executionResponse.json();
+      assert.equal(executionResponse.status, 201);
+
+      const completeResponse = await fetch(
+        `${baseUrl}/api/v1/projects/project_floop/executions/${executionBody.execution.id}/complete`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            outcome: "blocked",
+            summaryMd: "Need streamed user input.",
+            remainingWorkMd: "Pick the streamed HITL behavior.",
+            blockedKind: "needs_human_input",
+          }),
+        },
+      );
+      assert.equal(completeResponse.status, 200);
+
+      const requestChunk = await readStreamUntil(reader, /agent\.message_received/, 5000);
+      assert.match(requestChunk, /needs input|request input|agent\.message_received/);
+
+      const requestsResponse = await fetch(
+        `${baseUrl}/api/v1/projects/project_floop/agent-messages?intent=request_input&status=pending`,
+      );
+      const requestsBody = await requestsResponse.json();
+      const request = requestsBody.messages.find(
+        (message) => message.target.executionId === executionBody.execution.id,
+      );
+      assert.ok(request);
+
+      const answerResponse = await fetch(
+        `${baseUrl}/api/v1/projects/project_floop/agent-messages/${request.id}/respond`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            responseMd: "Use the streamed behavior.",
+            responderKind: "human",
+            responderRef: "jacob",
+          }),
+        },
+      );
+      assert.equal(answerResponse.status, 200);
+
+      const answerChunk = await readStreamUntil(
+        reader,
+        /execution\.started[\s\S]*agent\.message_(attached|accepted)|agent\.message_(attached|accepted)[\s\S]*execution\.started/,
+        5000,
+      );
+      assert.match(answerChunk, /Response to FLOOP-2 needs input|agent\.message_(attached|accepted)/);
+      assert.match(answerChunk, /execution\.started/);
+    } finally {
+      abortController.abort();
+    }
   });
 });
 
@@ -1241,8 +1486,17 @@ function findColumn(columns, state) {
   return columns.find((column) => column.state === state);
 }
 
-async function readStreamChunk(reader) {
-  const { value, done } = await reader.read();
+async function readStreamChunk(reader, timeoutMs = 3000) {
+  let timeout;
+  const timedOut = new Promise((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error(`Timed out waiting for stream chunk after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  const { value, done } = await Promise.race([reader.read(), timedOut]).finally(() => {
+    clearTimeout(timeout);
+  });
   assert.equal(done, false);
   return new TextDecoder().decode(value);
 }
@@ -1251,7 +1505,7 @@ async function readStreamUntil(reader, pattern, timeoutMs = 3000) {
   const deadline = Date.now() + timeoutMs;
   let text = "";
   while (Date.now() < deadline) {
-    text += await readStreamChunk(reader);
+    text += await readStreamChunk(reader, Math.max(1, deadline - Date.now()));
     if (pattern.test(text)) {
       return text;
     }

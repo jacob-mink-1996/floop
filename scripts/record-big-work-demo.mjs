@@ -12,6 +12,14 @@ import { createFloopServer } from "../services/api/src/app.mjs";
 import { createExecutionDriver } from "../services/api/src/execution-driver.mjs";
 import { createMergeDriver } from "../services/api/src/merge-driver.mjs";
 import { createStore } from "../services/api/src/store.mjs";
+import {
+  BIG_WORK_IDLE_DEFINITION,
+  buildFailureProofMetadata,
+  buildKeepRanges,
+  buildTrimMetadata,
+  buildTrimSuggestion,
+  shouldRetainDemoFixture,
+} from "./record-big-work-demo-lib.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadDotEnv();
@@ -48,21 +56,13 @@ let browser;
 let context;
 let appServer;
 let completed = false;
+let failureError = "";
 let recordingStartedAt = Date.now();
 const appDemoSnapshots = [];
 const timeline = {
   marks: [],
   idleRanges: [],
 };
-const IDLE_CUT_BUFFER_SECONDS = 0.25;
-const IDLE_CUT_MERGE_GAP_SECONDS = 1.5;
-const MIN_IDLE_CUT_SECONDS = 0.75;
-const INTRO_KEEP_SECONDS = 36;
-const FINAL_KEEP_SECONDS = 38;
-const TRANSITION_PRE_SECONDS = 1.25;
-const TRANSITION_START_POST_SECONDS = 2.5;
-const TRANSITION_END_PRE_SECONDS = 2.5;
-const TRANSITION_END_POST_SECONDS = 3.5;
 
 try {
   initializeCalendarRepo(targetRepoPath);
@@ -140,16 +140,23 @@ try {
 
   if (mode === "record") {
     const recordingDurationSeconds = Number(((Date.now() - recordingStartedAt) / 1000).toFixed(3));
-    const videoPath = finalizeVideo(recordingDir, proof.timeline.trimSuggestion, recordingDurationSeconds);
+    const finalizedVideo = finalizeVideo(recordingDir, proof.timeline.trimSuggestion, recordingDurationSeconds);
     writeFileSync(
       join(recordingDir, "proof.json"),
-      JSON.stringify({ appUrl, fixtureRoot, targetRepoPath, videoPath, ...proof }, null, 2),
+      JSON.stringify({
+        appUrl,
+        fixtureRoot,
+        targetRepoPath,
+        videoPath: finalizedVideo.videoPath,
+        trimmedVideo: finalizedVideo.trimMetadata,
+        ...proof,
+      }, null, 2),
       "utf8",
     );
-    console.log(`Recorded Floop big-work demo: ${videoPath}`);
+    console.log(`Recorded Floop big-work demo: ${finalizedVideo.videoPath}`);
     console.log(`Proof bundle: ${join(recordingDir, "proof.json")}`);
     if (openAfterRecord) {
-      openRecording(videoPath);
+      openRecording(finalizedVideo.videoPath);
     }
   } else {
     console.log("Playwright big-work proof passed");
@@ -157,6 +164,9 @@ try {
     console.log(`Done tickets: ${proof.doneTickets.map((ticket) => ticket.key).join(", ")}`);
   }
   completed = true;
+} catch (error) {
+  failureError = error instanceof Error ? `${error.message}\n${error.stack || ""}`.trim() : String(error);
+  throw error;
 } finally {
   await context?.close().catch(() => {});
   await browser?.close().catch(() => {});
@@ -164,10 +174,18 @@ try {
   await mergeDriver?.stop().catch(() => {});
   await executionDriver?.stop().catch(() => {});
   await closeServer(server);
+  const retainFixture = shouldRetainDemoFixture({
+    completed,
+    agentMode,
+    keepFixture: process.env.FLOOP_DEMO_KEEP_FIXTURE === "true",
+  });
+  if (!completed) {
+    writeFailureProof({ retainFixture, error: failureError });
+  }
   store?.close();
-  if (!completed && agentMode === "codex") {
+  if (!completed && retainFixture) {
     console.error(`Codex big-work demo failed; retained fixture for inspection: ${fixtureRoot}`);
-  } else if (process.env.FLOOP_DEMO_KEEP_FIXTURE !== "true") {
+  } else if (!retainFixture) {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
 }
@@ -902,8 +920,7 @@ function collectProof() {
     agentMode,
     timeline: {
       ...timeline,
-      idleDefinition:
-        "Idle is any time without an obvious ticket transition or screen work; background agent work is trimmed unless a visible state change is happening.",
+      idleDefinition: BIG_WORK_IDLE_DEFINITION,
       trimSuggestion: buildTrimSuggestion(timeline.idleRanges, elapsedSeconds()),
     },
     projects,
@@ -935,90 +952,39 @@ function collectProof() {
   };
 }
 
-function buildTrimSuggestion(idleRanges, recordingDurationSeconds = 0) {
-  const keepRanges = buildVisibleTransitionKeepRanges(idleRanges, recordingDurationSeconds);
-  const cuts = [];
-  let cursor = 0;
-  for (const range of keepRanges) {
-    if (range.start - cursor >= MIN_IDLE_CUT_SECONDS) {
-      cuts.push({
-        labels: ["strict idle: no visible ticket transition or screen work"],
-        removeFromSeconds: Number(cursor.toFixed(3)),
-        removeToSeconds: Number(range.start.toFixed(3)),
-      });
-    }
-    cursor = Math.max(cursor, range.end);
+function writeFailureProof({ retainFixture, error }) {
+  try {
+    const destinationDir = mode === "record" ? recordingDir : fixtureRoot;
+    mkdirSync(destinationDir, { recursive: true });
+    const partialProof = store ? collectProof() : null;
+    const failureProofPath = join(destinationDir, "failure-proof.json");
+    writeFileSync(
+      failureProofPath,
+      JSON.stringify(
+        {
+          ...buildFailureProofMetadata({
+            agentMode,
+            mode,
+            fixtureRoot,
+            targetRepoPath,
+            error,
+            partialProof,
+          }),
+          retainedFixture: retainFixture,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    console.error(`Failure proof bundle: ${failureProofPath}`);
+  } catch (proofError) {
+    console.error(
+      `Could not write failure proof bundle: ${
+        proofError instanceof Error ? proofError.message : String(proofError)
+      }`,
+    );
   }
-  if (Number.isFinite(recordingDurationSeconds) && recordingDurationSeconds - cursor >= MIN_IDLE_CUT_SECONDS) {
-    cuts.push({
-      labels: ["strict idle: no visible ticket transition or screen work"],
-      removeFromSeconds: Number(cursor.toFixed(3)),
-      removeToSeconds: Number(recordingDurationSeconds.toFixed(3)),
-    });
-  }
-
-  return mergeTrimCuts(cuts).map((range) => ({
-    label: range.labels.join(" + "),
-    removeFromSeconds: Number(range.removeFromSeconds.toFixed(3)),
-    removeToSeconds: Number(range.removeToSeconds.toFixed(3)),
-  }));
-}
-
-function buildVisibleTransitionKeepRanges(idleRanges, recordingDurationSeconds = 0) {
-  const boundedDuration = Number.isFinite(recordingDurationSeconds) && recordingDurationSeconds > 0
-    ? recordingDurationSeconds
-    : Number.POSITIVE_INFINITY;
-  const keepRanges = [];
-  const push = (start, end) => {
-    const bounded = {
-      start: Number(Math.max(0, start).toFixed(3)),
-      end: Number(Math.min(boundedDuration, end).toFixed(3)),
-    };
-    if (bounded.end - bounded.start >= MIN_IDLE_CUT_SECONDS) {
-      keepRanges.push(bounded);
-    }
-  };
-
-  push(0, INTRO_KEEP_SECONDS);
-  for (const range of idleRanges) {
-    push(range.startSeconds - TRANSITION_PRE_SECONDS, range.startSeconds + TRANSITION_START_POST_SECONDS);
-    push(range.endSeconds - TRANSITION_END_PRE_SECONDS, range.endSeconds + TRANSITION_END_POST_SECONDS);
-  }
-  if (Number.isFinite(boundedDuration)) {
-    push(boundedDuration - FINAL_KEEP_SECONDS, boundedDuration);
-  }
-
-  return mergeKeepRanges(keepRanges);
-}
-
-function mergeKeepRanges(keepRanges) {
-  const merged = [];
-  for (const range of keepRanges.sort((left, right) => left.start - right.start)) {
-    const previous = merged.at(-1);
-    if (previous && range.start <= previous.end + IDLE_CUT_BUFFER_SECONDS) {
-      previous.end = Math.max(previous.end, range.end);
-    } else {
-      merged.push({ ...range });
-    }
-  }
-  return merged;
-}
-
-function mergeTrimCuts(cuts) {
-  const sorted = cuts
-    .filter((range) => range.removeToSeconds - range.removeFromSeconds >= MIN_IDLE_CUT_SECONDS)
-    .sort((left, right) => left.removeFromSeconds - right.removeFromSeconds);
-  const merged = [];
-  for (const cut of sorted) {
-    const previous = merged.at(-1);
-    if (previous && cut.removeFromSeconds - previous.removeToSeconds <= IDLE_CUT_MERGE_GAP_SECONDS) {
-      previous.removeToSeconds = Math.max(previous.removeToSeconds, cut.removeToSeconds);
-      previous.labels.push(...cut.labels);
-    } else {
-      merged.push({ ...cut });
-    }
-  }
-  return merged;
 }
 
 function collectAgentConversations(project) {
@@ -1609,18 +1575,23 @@ function finalizeVideo(directory, trimSuggestion = [], recordingDurationSeconds 
   const webm = findVideo(directory);
   const destination = join(directory, "floop-big-work-demo.webm");
   const rawDestination = join(directory, "floop-big-work-demo.raw.webm");
+  const trimMetadata = buildTrimMetadata({
+    recordingDurationSeconds,
+    idleRanges: timeline.idleRanges,
+    trimSuggestion,
+  });
   if (trimSuggestion.length === 0) {
     renameSync(webm, destination);
-    return destination;
+    return { videoPath: destination, trimMetadata };
   }
   renameSync(webm, rawDestination);
   try {
     renderTrimmedVideo(rawDestination, destination, trimSuggestion, recordingDurationSeconds);
   } catch (error) {
     console.warn(`Could not render trimmed demo video; keeping raw recording: ${error.message}`);
-    return rawDestination;
+    return { videoPath: rawDestination, trimMetadata: { ...trimMetadata, trimmedDurationSeconds: recordingDurationSeconds, cutSeconds: 0 } };
   }
-  return destination;
+  return { videoPath: destination, trimMetadata };
 }
 
 function renderTrimmedVideo(source, destination, trimSuggestion, recordingDurationSeconds) {
@@ -1642,32 +1613,6 @@ function renderTrimmedVideo(source, destination, trimSuggestion, recordingDurati
     ["-y", "-i", source, "-filter_complex", filter, "-map", "[v]", "-an", "-c:v", "libvpx-vp9", "-b:v", "1.8M", destination],
     { stdio: "ignore" },
   );
-}
-
-function buildKeepRanges(trimSuggestion, recordingDurationSeconds) {
-  const sortedCuts = trimSuggestion
-    .map((range) => ({
-      start: Number(range.removeFromSeconds),
-      end: Number(range.removeToSeconds),
-    }))
-    .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start)
-    .sort((left, right) => left.start - right.start);
-  const keepRanges = [];
-  let cursor = 0;
-  for (const cut of sortedCuts) {
-    const start = Math.max(0, cut.start);
-    const end = Math.max(start, cut.end);
-    if (start - cursor > 0.25) {
-      keepRanges.push({ start: cursor, end: start });
-    }
-    cursor = Math.max(cursor, end);
-  }
-  if (!Number.isFinite(recordingDurationSeconds) || recordingDurationSeconds <= cursor + 0.25) {
-    keepRanges.push({ start: cursor, end: Number.POSITIVE_INFINITY });
-  } else {
-    keepRanges.push({ start: cursor, end: recordingDurationSeconds });
-  }
-  return keepRanges.filter((range) => !Number.isFinite(range.end) || range.end - range.start > 0.25);
 }
 
 function formatSeconds(value) {

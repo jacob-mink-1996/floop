@@ -232,13 +232,14 @@ export function createEvidenceCommands({
       const commandProfile = optionalText(input.commandProfile);
       const commandList = input.commands || [];
       const artifacts = input.artifacts || [];
+      const existingTicketArtifacts = listProjectArtifacts(database, projectId, { ticketId, limit: 200 });
       const validationIds = [];
       const mergePolicyBlocks =
         verdict === "passed"
           ? buildMergePolicyBlocks(policy, getLatestReviewRow(database, projectId, ticketId), {
               verdict,
               command_profile: commandProfile,
-              artifacts,
+              artifacts: [...artifacts, ...existingTicketArtifacts],
             })
           : [];
       const transitionReason = deriveValidationEventReason({
@@ -318,10 +319,56 @@ export function createEvidenceCommands({
           reason: `${ticket.key} validation found rework; Floop routed the previous working lane with validation evidence.`,
         });
       }
+      if (mergePolicyBlocks[0]?.code === "demo_evidence_required") {
+        suggestDemoEvidenceDispatch({
+          store: getStore(),
+          database,
+          projectId,
+          ticketId,
+          ticket,
+          reason: `${ticket.key} needs validator demo evidence before merge.`,
+        });
+      }
 
       return commands.listValidations(projectId, ticketId);
     },
   };
 
   return commands;
+}
+
+function suggestDemoEvidenceDispatch({ store, database, projectId, ticketId, ticket, reason }) {
+  const existing = database
+    .prepare(
+      `select id
+       from agent_messages
+       where project_id = ?
+         and status = 'pending'
+         and intent = 'suggest_dispatch'
+         and json_extract(target_json, '$.ticketId') = ?
+         and json_extract(metadata_json, '$.role') = 'validator'
+         and json_extract(metadata_json, '$.reasonCode') = 'demo_evidence_required'
+       order by created_at desc
+       limit 1`,
+    )
+    .get(projectId, ticketId);
+  if (existing) {
+    return;
+  }
+  store.createAgentMessage(projectId, {
+    actor: "floop",
+    source: "merge_policy",
+    intent: "suggest_dispatch",
+    target: { ticketId },
+    summary: `Collect demo evidence for ${ticket.key}`,
+    body: reason,
+    metadata: {
+      role: "validator",
+      reasonCode: "demo_evidence_required",
+      artifactRequirement: {
+        kind: "demo",
+        metadata: { demoEvidence: true },
+      },
+    },
+  });
 }

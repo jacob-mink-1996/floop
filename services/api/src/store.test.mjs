@@ -1296,6 +1296,240 @@ test("store does not treat ordinary ticket comments as unblock responses", () =>
   store.close();
 });
 
+test("store allows ticket comments in every interaction mode without implicit redispatch", () => {
+  const cases = [
+    ["manual", "pending"],
+    ["operator_approved", "pending"],
+    ["autonomous_with_review", "pending"],
+    ["autopilot", "attached"],
+    ["fully_autonomous", "attached"],
+  ];
+
+  for (const [interactionMode, expectedStatus] of cases) {
+    const store = createStore({ filename: ":memory:", seedDemo: true });
+    store.updateProjectPolicy("project_floop", { interactionMode });
+
+    const comment = store.createAgentMessage("project_floop", {
+      actor: "architect",
+      source: "agent",
+      intent: "comment_on_ticket",
+      target: { ticketId: "ticket_project_floop_2" },
+      summary: `${interactionMode} comment`,
+      body: "This is HITL context, not a blocked request response.",
+    });
+
+    assert.equal(comment.status, expectedStatus);
+    assert.equal(comment.promotedKind, expectedStatus === "attached" ? "ticket_event" : "");
+    assert.equal(
+      store
+        .getTicket("project_floop", "ticket_project_floop_2")
+        .executions.some((item) => item.iteration > 1),
+      false,
+      interactionMode,
+    );
+
+    store.close();
+  }
+});
+
+test("store preserves blocked questions across interaction modes and only auto-attaches the visible question comment where policy allows", () => {
+  const cases = [
+    ["manual", "pending"],
+    ["operator_approved", "pending"],
+    ["autonomous_with_review", "pending"],
+    ["autopilot", "attached"],
+    ["fully_autonomous", "attached"],
+  ];
+
+  for (const [interactionMode, expectedQuestionCommentStatus] of cases) {
+    const store = createStore({ filename: ":memory:", seedDemo: true });
+    store.updateProjectPolicy("project_floop", { interactionMode });
+
+    const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Start work that may need HITL.",
+    });
+    store.completeExecution("project_floop", execution.id, {
+      outcome: "blocked",
+      summaryMd: "Need a product decision.",
+      remainingWorkMd: "Should MVP reminders support email, browser notifications, or only in-app badges?",
+      blockedKind: "needs_human_input",
+    });
+
+    const request = store
+      .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+      .find((message) => message.target.executionId === execution.id);
+    const questionComment = store
+      .listAgentMessages("project_floop", { intent: "comment_on_ticket", status: expectedQuestionCommentStatus })
+      .find((message) => message.metadata.requestInputMessageId === request?.id);
+
+    assert.ok(request, interactionMode);
+    assert.equal(request.status, "pending");
+    assert.equal(request.metadata.questionMd, request.body);
+    assert.ok(questionComment, interactionMode);
+    assert.equal(questionComment.body, request.body);
+    assert.equal(questionComment.metadata.hitlQuestion, true);
+
+    store.close();
+  }
+});
+
+test("store can record an unblock answer without redispatching the blocked lane", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Start work that needs optional operator context.",
+  });
+  store.completeExecution("project_floop", execution.id, {
+    outcome: "blocked",
+    summaryMd: "Need input before continuing.",
+    remainingWorkMd: "Choose the export format for calendar downloads.",
+    blockedKind: "needs_human_input",
+  });
+  const request = store
+    .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+    .find((message) => message.target.executionId === execution.id);
+
+  const answered = store.respondAgentMessage("project_floop", request.id, {
+    responseMd: "Use ICS export first.",
+    responderKind: "human",
+    responderRef: "jacob",
+    continueExecution: false,
+  });
+  const ticket = store.getTicket("project_floop", "ticket_project_floop_2");
+
+  assert.equal(answered.status, "attached");
+  assert.equal(answered.promotedKind, "ticket_event");
+  assert.equal(
+    ticket.executions.some((item) => item.role === "developer" && item.iteration === 2),
+    false,
+  );
+  assert.equal(ticket.state, "BLOCKED");
+  assert.equal(
+    store
+      .listAgentMessages("project_floop", { intent: "comment_on_ticket", status: "attached" })
+      .some((message) => message.metadata.responseToMessageId === request.id && message.metadata.unblockResponse),
+    true,
+  );
+
+  store.close();
+});
+
+test("store redispatches the same agent lane when reviewer or validator questions are answered", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    interactionMode: "autonomous_with_review",
+  });
+
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Finish implementation before evidence lanes.",
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation ready for evidence lanes.",
+  });
+  const reviewerExecution = store
+    .getTicket("project_floop", "ticket_project_floop_2")
+    .executions.find((execution) => execution.role === "reviewer");
+  store.completeExecution("project_floop", reviewerExecution.id, {
+    outcome: "blocked",
+    summaryMd: "Reviewer needs scope clarification.",
+    remainingWorkMd: "Should review enforce accessibility keyboard support in MVP?",
+    blockedKind: "needs_human_input",
+  });
+  const reviewerRequest = store
+    .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+    .find((message) => message.target.executionId === reviewerExecution.id);
+  const reviewerAnswer = store.respondAgentMessage("project_floop", reviewerRequest.id, {
+    responseMd: "Yes, keyboard support is required for the MVP.",
+    responderKind: "human",
+    responderRef: "jacob",
+  });
+  const reviewerContinuation = store.getExecution("project_floop", reviewerAnswer.promotedRef);
+
+  assert.equal(reviewerContinuation.role, "reviewer");
+  assert.equal(reviewerContinuation.iteration, 2);
+  assert.equal(reviewerContinuation.status, "running");
+
+  store.completeExecution("project_floop", reviewerContinuation.id, {
+    outcome: "completed",
+    summaryMd: "Reviewer accepted keyboard support.",
+    review: {
+      verdict: "passed",
+      summaryMd: "Review passed after HITL clarification.",
+    },
+  });
+  const validatorExecution = store
+    .getTicket("project_floop", "ticket_project_floop_2")
+    .executions.find((execution) => execution.role === "validator");
+  store.completeExecution("project_floop", validatorExecution.id, {
+    outcome: "blocked",
+    summaryMd: "Validator needs environment input.",
+    remainingWorkMd: "Which browser matrix should validation use?",
+    blockedKind: "needs_environment_fix",
+  });
+  const validatorRequest = store
+    .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+    .find((message) => message.target.executionId === validatorExecution.id);
+  const validatorAnswer = store.respondAgentMessage("project_floop", validatorRequest.id, {
+    responseMd: "Use Chromium smoke coverage for now.",
+    responderKind: "agent",
+    responderRef: "architect",
+  });
+  const validatorContinuation = store.getExecution("project_floop", validatorAnswer.promotedRef);
+
+  assert.equal(validatorContinuation.role, "validator");
+  assert.equal(validatorContinuation.iteration, 2);
+  assert.equal(validatorContinuation.status, "running");
+  assert.equal(validatorRequest.metadata.suggestedResponders.includes("developer"), true);
+
+  store.close();
+});
+
+test("store does not duplicate HITL requests or accept stale unblock answers", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  const execution = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Start work that blocks once.",
+  });
+
+  store.completeExecution("project_floop", execution.id, {
+    outcome: "blocked",
+    summaryMd: "Need one answer.",
+    remainingWorkMd: "Pick the default calendar view.",
+    blockedKind: "needs_human_input",
+  });
+  store.completeExecution("project_floop", execution.id, {
+    outcome: "blocked",
+    summaryMd: "Duplicate completion should be ignored.",
+    remainingWorkMd: "This should not create another request.",
+    blockedKind: "needs_human_input",
+  });
+
+  const requests = store
+    .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+    .filter((message) => message.target.executionId === execution.id);
+  assert.equal(requests.length, 1);
+
+  const answered = store.respondAgentMessage("project_floop", requests[0].id, {
+    responseMd: "Month view.",
+    responderKind: "human",
+    responderRef: "jacob",
+  });
+  assert.equal(answered.status, "accepted");
+  assert.throws(
+    () => store.respondAgentMessage("project_floop", requests[0].id, {
+      responseMd: "Week view.",
+      responderKind: "human",
+      responderRef: "jacob",
+    }),
+    /Input request is no longer pending/,
+  );
+
+  store.close();
+});
+
 test("store can persist a review directly from reviewer execution completion", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   store.updateProjectPolicy("project_floop", {
@@ -1893,6 +2127,14 @@ test("store requires validator demo evidence before merge when policy is enabled
   assert.equal(mergeStatus.blockingReasons[0].code, "demo_evidence_required");
   assert.match(mergeStatus.statusSummary, /demo evidence/);
   assert.equal(store.getTicket("project_floop", "ticket_project_floop_2").events.at(-1).reasonCode, "demo_evidence_required");
+  const suggestion = store
+    .listAgentMessages("project_floop", { intent: "suggest_dispatch", status: "pending" })
+    .find((message) => message.target.ticketId === "ticket_project_floop_2");
+  assert.ok(suggestion);
+  assert.equal(suggestion.metadata.role, "validator");
+  assert.equal(suggestion.metadata.reasonCode, "demo_evidence_required");
+  assert.equal(suggestion.metadata.artifactRequirement.kind, "demo");
+  assert.equal(suggestion.metadata.artifactRequirement.metadata.demoEvidence, true);
 
   assert.throws(
     () =>
@@ -1901,6 +2143,109 @@ test("store requires validator demo evidence before merge when policy is enabled
       }),
     /Latest validation must include demo evidence before merge/,
   );
+  assert.equal(
+    store
+      .listAgentMessages("project_floop", { intent: "suggest_dispatch", status: "pending" })
+      .filter((message) => message.metadata.reasonCode === "demo_evidence_required").length,
+    1,
+  );
+
+  store.close();
+});
+
+test("store preserves demo evidence across merge rework and revalidation", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  store.updateProjectPolicy("project_floop", {
+    requireReviewer: false,
+    requireValidator: true,
+    requireHumanApprovalBeforeMerge: false,
+    requireDemoEvidenceBeforeMerge: true,
+    interactionMode: "fully_autonomous",
+  });
+
+  const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
+    role: "developer",
+    reason: "Prepare demo evidence before merge rework.",
+  });
+  store.completeExecution("project_floop", implementation.id, {
+    outcome: "completed",
+    summaryMd: "Implementation completed with demoable behavior.",
+  });
+
+  const firstValidator = store
+    .getTicket("project_floop", "ticket_project_floop_2")
+    .executions.find((execution) => execution.role === "validator");
+  store.completeExecution("project_floop", firstValidator.id, {
+    outcome: "completed",
+    summaryMd: "Validation passed with demo evidence.",
+    validation: {
+      verdict: "passed",
+      commandProfile: "ci",
+      commands: ["npm test", "browser smoke"],
+      repoIds: ["repo_project_floop_floop"],
+      summaryMd: "Checks passed and the feature was demonstrated.",
+      artifacts: [
+        {
+          kind: "demo",
+          label: "Calendar browser demo",
+          uri: "file:///tmp/calendar-demo.md",
+          metadata: { demoEvidence: true },
+        },
+      ],
+    },
+  });
+  assert.equal(store.getMergeStatus("project_floop", "ticket_project_floop_2").canMerge, true);
+
+  const mergeRun = store.startMergeRun("project_floop", "ticket_project_floop_2", {
+    strategy: "squash",
+    approvedByKind: "system",
+    approvedByRef: "floop-auto",
+    claimToken: "merge-worker",
+  });
+  store.completeMergeRun("project_floop", mergeRun.id, {
+    status: "rework",
+    summaryMd: "Merge conflicted after demo validation.",
+    artifacts: [{ kind: "report", label: "merge conflict summary", uri: "file:///tmp/merge-conflict.json" }],
+  });
+
+  const reworkDeveloper = store
+    .getTicket("project_floop", "ticket_project_floop_2")
+    .executions.find((execution) => execution.role === "developer" && execution.iteration === 2);
+  assert.ok(reworkDeveloper);
+  store.completeExecution("project_floop", reworkDeveloper.id, {
+    outcome: "completed",
+    summaryMd: "Resolved merge rework without changing demo behavior.",
+  });
+
+  const revalidation = store
+    .getTicket("project_floop", "ticket_project_floop_2")
+    .executions.find((execution) => execution.role === "validator" && execution.iteration === 2);
+  assert.ok(revalidation);
+  store.completeExecution("project_floop", revalidation.id, {
+    outcome: "completed",
+    summaryMd: "Revalidation passed after merge rework.",
+    validation: {
+      verdict: "passed",
+      commandProfile: "ci",
+      commands: ["npm test"],
+      repoIds: ["repo_project_floop_floop"],
+      summaryMd: "Revalidation passed and reused prior demo evidence.",
+      artifacts: [{ kind: "log", label: "Revalidation output", uri: "file:///tmp/revalidation.log" }],
+    },
+  });
+
+  const mergeStatus = store.getMergeStatus("project_floop", "ticket_project_floop_2");
+  assert.equal(mergeStatus.ticketState, "READY_TO_MERGE");
+  assert.equal(mergeStatus.canMerge, true);
+  assert.equal(mergeStatus.blockingReasons.some((reason) => reason.code === "demo_evidence_required"), false);
+
+  const merged = store.mergeTicket("project_floop", "ticket_project_floop_2", {
+    strategy: "squash",
+    approvedByKind: "system",
+    approvedByRef: "floop-auto",
+  });
+  assert.equal(merged.ticketState, "DONE");
+  assert.equal(merged.latestRun.status, "completed");
 
   store.close();
 });
@@ -2004,10 +2349,100 @@ test("store restarts tickets by cancelling runs and deleting worktrees", () => {
   }
 });
 
+test("store restarts tickets by dismissing pending HITL requests", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+
+  const execution = store.createExecution("project_floop", "ticket_project_floop_1", {
+    role: "developer",
+    reason: "Start work that will block before restart.",
+  });
+  store.completeExecution("project_floop", execution.id, {
+    outcome: "blocked",
+    summaryMd: "Need product input before continuing.",
+    remainingWorkMd: "Should the old implementation path be preserved?",
+    blockedKind: "needs_human_input",
+  });
+  const request = store
+    .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+    .find((message) => message.target.executionId === execution.id);
+  assert.ok(request);
+
+  const restarted = store.restartTicket("project_floop", "ticket_project_floop_1", {
+    reason: "Restart after stale blocked question.",
+  });
+  const dismissedRequest = store.getAgentMessage("project_floop", request.id);
+
+  assert.equal(restarted.state, "READY");
+  assert.equal(dismissedRequest.status, "dismissed");
+  assert.ok(dismissedRequest.dismissedAt);
+  assert.throws(
+    () => store.respondAgentMessage("project_floop", request.id, {
+      responseMd: "Preserve the old path.",
+      responderKind: "human",
+      responderRef: "jacob",
+    }),
+    /Input request is no longer pending/,
+  );
+  assert.equal(
+    store
+      .getTicket("project_floop", "ticket_project_floop_1")
+      .executions.some((item) => item.role === "developer" && item.iteration === 2),
+    false,
+  );
+
+  store.close();
+});
+
+test("store cancels blocked executions by dismissing pending HITL requests", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+
+  const execution = store.createExecution("project_floop", "ticket_project_floop_1", {
+    role: "developer",
+    reason: "Start work that will block before cancellation.",
+  });
+  store.completeExecution("project_floop", execution.id, {
+    outcome: "blocked",
+    summaryMd: "Need product input before continuing.",
+    remainingWorkMd: "Should this stale execution continue?",
+    blockedKind: "needs_human_input",
+  });
+  const request = store
+    .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+    .find((message) => message.target.executionId === execution.id);
+  assert.ok(request);
+
+  const cancelled = store.cancelExecution("project_floop", execution.id, {
+    reason: "Operator cancelled the blocked execution.",
+  });
+  const dismissedRequest = store.getAgentMessage("project_floop", request.id);
+
+  assert.equal(cancelled.status, "completed");
+  assert.equal(cancelled.outcome, "blocked");
+  assert.equal(dismissedRequest.status, "dismissed");
+  assert.ok(dismissedRequest.dismissedAt);
+  assert.throws(
+    () => store.respondAgentMessage("project_floop", request.id, {
+      responseMd: "Continue anyway.",
+      responderKind: "human",
+      responderRef: "jacob",
+    }),
+    /Input request is no longer pending/,
+  );
+  assert.equal(
+    store
+      .getTicket("project_floop", "ticket_project_floop_1")
+      .executions.some((item) => item.role === "developer" && item.iteration === 2),
+    false,
+  );
+
+  store.close();
+});
+
 test("store enforces continuation budgets before mutating the active run", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   store.updateProjectPolicy("project_floop", {
     maxAutoContinueIterations: 1,
+    interactionMode: "autonomous_with_review",
   });
 
   const started = store.createExecution("project_floop", "ticket_project_floop_1", {
@@ -2028,6 +2463,31 @@ test("store enforces continuation budgets before mutating the active run", () =>
     /FLOOP-1 reached the continuation limit of 1 iterations/,
   );
   assert.equal(store.getExecution("project_floop", continued.id).status, "running");
+
+  store.completeExecution("project_floop", continued.id, {
+    outcome: "blocked",
+    summaryMd: "Need one more answer after the continuation budget is spent.",
+    remainingWorkMd: "Should Floop keep trying automatically?",
+    blockedKind: "needs_human_input",
+  });
+  const request = store
+    .listAgentMessages("project_floop", { intent: "request_input", status: "pending" })
+    .find((message) => message.target.executionId === continued.id);
+  const answered = store.respondAgentMessage("project_floop", request.id, {
+    responseMd: "No, stop and ask for operator steering.",
+    responderKind: "human",
+    responderRef: "jacob",
+  });
+  const ticket = store.getTicket("project_floop", "ticket_project_floop_1");
+  const continuationLimitComment = store
+    .listAgentMessages("project_floop", { intent: "comment_on_ticket", status: "attached", limit: 100 })
+    .find((message) => message.metadata.continuationLimitReached === true);
+
+  assert.equal(answered.status, "attached");
+  assert.equal(answered.promotedKind, "ticket_event");
+  assert.equal(ticket.executions.filter((execution) => execution.role === "developer").length, 2);
+  assert.ok(continuationLimitComment);
+  assert.match(continuationLimitComment.body, /FLOOP-1 reached the continuation limit of 1 iterations/);
 
   store.close();
 });

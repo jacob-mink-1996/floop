@@ -195,6 +195,8 @@ export function inferErrorStatus(error) {
     message.startsWith("Invalid interaction mode:") ||
     message.startsWith("Invalid agent message intent:") ||
     message.startsWith("Invalid agent message status:") ||
+    message === "Only input requests can be responded to" ||
+    message === "Input request is no longer pending" ||
     message.startsWith("Unknown repo target:") ||
     message.startsWith("Duplicate repo target:") ||
     message.startsWith("Unknown execution for ticket ") ||

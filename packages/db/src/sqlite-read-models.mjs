@@ -640,8 +640,9 @@ export function buildMergeStatus(database, ticket, worktrees = []) {
   const latestValidation = getLatestValidationRunRow(database, ticket.projectId, ticket.id);
   const latestValidationArtifacts =
     latestValidation ? getArtifactsByValidationRunId(database, [latestValidation.id]).get(latestValidation.id) || [] : [];
+  const ticketArtifacts = getArtifactsByTicketId(database, ticket.projectId, [ticket.id]).get(ticket.id) || [];
   const latestValidationWithArtifacts = latestValidation
-    ? { ...latestValidation, artifacts: latestValidationArtifacts }
+    ? { ...latestValidation, artifacts: [...latestValidationArtifacts, ...ticketArtifacts] }
     : null;
   const latestRunArtifacts =
     latestRun ? getArtifactsByMergeRunId(database, [latestRun.id]).get(latestRun.id) || [] : [];
