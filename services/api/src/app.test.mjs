@@ -511,7 +511,7 @@ test("product autopilot starts from an idea ticket with agent-paced ceremony cad
       body: JSON.stringify({
         title: "Build a team calendar product",
         brief: "A greenfield product idea for shared calendars, event creation, and team availability.",
-        state: "PROPOSED",
+        state: "READY",
         priority: "high",
         assignedRole: "product_manager",
       }),

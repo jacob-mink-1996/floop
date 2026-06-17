@@ -109,7 +109,8 @@ function startProductAutopilot(store, projectId, ticketId) {
       ?.appliedTicketId || "";
   const breakdownTicket = breakdownTicketId
     ? store.getTicket(projectId, breakdownTicketId)
-    : store.listTickets(projectId, { parentTicketId: ticket.id }).find((candidate) => /Break down/.test(candidate.title));
+    : store.listTickets(projectId, { parentTicketId: ticket.id }).find((candidate) => /Break down/.test(candidate.title))
+      || store.createTicket(projectId, productAutopilotBreakdownTicket(ticket));
   const breakdownDetail = breakdownTicket?.id ? store.getTicket(projectId, breakdownTicket.id) : null;
   const existingActive = breakdownDetail?.executions?.find((execution) => execution.status === "running");
   const execution =
@@ -127,6 +128,23 @@ function startProductAutopilot(store, projectId, ticketId) {
     ideaTicket: store.getTicket(projectId, ticket.id),
     breakdownTicket: finalBreakdownTicket,
     execution,
+  };
+}
+
+function productAutopilotBreakdownTicket(ticket) {
+  return {
+    parentTicketId: ticket.id,
+    title: `Break down ${ticket.key}: ${ticket.title}`,
+    brief: `Turn the product idea into an executable plan.\n\nParent idea: ${ticket.title}\n\n${ticket.brief || ""}`.trim(),
+    acceptanceCriteriaMd:
+      "- Product boundaries and non-goals are captured\n- Child feature tickets are created with acceptance criteria and repo targets\n- Validation and demo evidence expectations are named for each feature\n- Open product questions are asked as HITL comments instead of guessed",
+    definitionOfDoneMd:
+      "- Feature tickets exist and are ready for planning\n- Architecture, implementation, review, validation, demo, and merge expectations are explicit\n- The parent idea can be tracked from plan through demo evidence",
+    priority: ticket.priority || "high",
+    state: "READY",
+    assignedRole: "product_manager",
+    repoTargets: ticket.repoTargets || [],
+    latestSummary: "Product Autopilot created a product breakdown lane for autonomous planning.",
   };
 }
 
