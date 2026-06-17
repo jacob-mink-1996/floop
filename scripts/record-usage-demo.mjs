@@ -109,8 +109,13 @@ try {
   assert.equal(proof.followupTickets.length >= 1, true);
   assert.equal(proof.ceremonyRuns.length >= 2, true);
   assert.equal(proof.artifacts.length >= 3, true);
+  assert.equal(proof.artifacts.some((artifact) => artifact.kind === "demo" || artifact.metadata?.demoEvidence === true), true);
   assert.equal(proof.runObservability.summary.executions >= 1, true);
   assert.equal(proof.runObservability.summary.ceremonies >= 2, true);
+  assert.equal(proof.timeline.idleDefinition, BIG_WORK_IDLE_DEFINITION);
+  assert.equal(proof.timeline.marks.length >= 8, true);
+  assert.equal(proof.timeline.idleRanges.length >= 1, true);
+  assert.equal(proof.timeline.trimSuggestion.length >= 1, true);
 
   await context.close();
   context = null;
