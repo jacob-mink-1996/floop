@@ -2586,9 +2586,18 @@ textarea {
   min-height: 34px;
 }
 
-.ticket-work-branch,
-.quiet-status {
+.ticket-work-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ticket-work-meta span,
+.quiet-status,
+.work-status {
   display: inline-flex;
+  align-items: center;
+  gap: 7px;
   width: fit-content;
   max-width: 100%;
   border: 1px solid var(--line);
@@ -2601,7 +2610,13 @@ textarea {
   text-transform: uppercase;
 }
 
+.work-status {
+  border-color: color-mix(in srgb, var(--blue) 48%, var(--line));
+  color: var(--text);
+}
+
 .work-pulse {
+  flex: 0 0 auto;
   width: 12px;
   height: 12px;
   border: 2px solid var(--blue);

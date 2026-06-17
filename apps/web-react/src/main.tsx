@@ -1887,9 +1887,10 @@ function TicketDetailPanel({
           message.status === "pending" &&
           typeof message.target?.ticketId === "string" &&
           message.target.ticketId === ticket?.id,
-      ),
+    ),
     [agentMessages, ticket?.id],
   );
+  const pendingRequest = inputRequests[0];
   useEffect(() => {
     setEditing(false);
   }, [ticket?.id]);
@@ -1929,6 +1930,18 @@ function TicketDetailPanel({
       ) : (
         <div className="detail-stack">
           {error ? <div className="status is-error">{error}</div> : null}
+          {pendingRequest ? (
+            <TicketConversationSection
+              projectId={projectId}
+              ticket={ticket}
+              messages={agentMessages}
+              pendingRequest={pendingRequest}
+              busy={busy}
+              onRun={runAction}
+              onRefresh={onRefresh}
+              onFullRefresh={onFullRefresh}
+            />
+          ) : null}
           <section className="ticket-cockpit">
             <TicketCockpit
               projectId={projectId}
@@ -1947,16 +1960,17 @@ function TicketDetailPanel({
               onRefresh={onRefresh}
             />
           </section>
-          <TicketConversationSection
-            projectId={projectId}
-            ticket={ticket}
-            messages={agentMessages}
-            pendingRequest={inputRequests[0]}
-            busy={busy}
-            onRun={runAction}
-            onRefresh={onRefresh}
-            onFullRefresh={onFullRefresh}
-          />
+          {!pendingRequest ? (
+            <TicketConversationSection
+              projectId={projectId}
+              ticket={ticket}
+              messages={agentMessages}
+              busy={busy}
+              onRun={runAction}
+              onRefresh={onRefresh}
+              onFullRefresh={onFullRefresh}
+            />
+          ) : null}
           <section className="detail-section">
             <div className="section-heading">
               <h3>Overview</h3>
@@ -2110,11 +2124,11 @@ function TicketCockpit({
       </div>
       <div className="cockpit-now">
         <div className="section-heading">
-          <h3>Proof Trail</h3>
+          <h3>Lane status</h3>
           <span>{activeExecution ? "Active" : prettyState(ticket.state)}</span>
         </div>
         <div className="cockpit-signal-list">
-          <CockpitSignal label="Run" value={activeExecution ? `${prettyRole(activeExecution.role)} iter ${activeExecution.iteration}` : latestExecution?.outcome || "Waiting"} tone={activeExecution ? "active" : toneForStatus(latestExecution?.outcome)} />
+          <CockpitSignal label="Build" value={activeExecution ? `${prettyRole(activeExecution.role)} iter ${activeExecution.iteration}` : latestExecution?.outcome || "Waiting"} tone={activeExecution ? "active" : toneForStatus(latestExecution?.outcome)} />
           <CockpitSignal label="Review" value={latestReview?.verdict || "No review"} tone={toneForStatus(latestReview?.verdict)} />
           <CockpitSignal label="Validation" value={latestValidation?.verdict || "No validation"} tone={toneForStatus(latestValidation?.verdict)} />
           <CockpitSignal label="Merge" value={ticket.mergeStatus?.statusSummary || (ticket.mergeStatus?.canMerge ? "Ready" : "Not ready")} tone={ticket.mergeStatus?.canMerge ? "done" : ticket.mergeStatus?.blockingReasons?.length ? "attention" : "neutral"} />
@@ -2143,10 +2157,15 @@ function TicketWorkPanel({
 }) {
   const latestExecution = ticket.executions[0];
   const visibleExecution = execution || latestExecution;
-  const worktree = visibleExecution
-    ? visibleExecution.worktrees?.[0] || ticket.worktrees.find((candidate) => candidate.executionId === visibleExecution.id)
-    : undefined;
   const logArtifacts = (visibleExecution?.artifacts || []).filter((artifact) => artifact.kind === "log").slice(0, 3);
+  const proofCount = visibleExecution?.artifacts?.length || 0;
+  const workStatus = execution
+    ? execution.claimed
+      ? "Agent working"
+      : "Queued"
+    : visibleExecution?.outcome
+      ? prettyState(visibleExecution.outcome)
+      : prettyState(ticket.state);
   const phases: PhaseItem[] = [
     {
       id: "claim",
@@ -2212,11 +2231,21 @@ function TicketWorkPanel({
           <p className="kicker">Current work</p>
           <h3>{prettyRole(visibleExecution.role)} iteration {visibleExecution.iteration}</h3>
         </div>
-        {execution ? <span className="work-pulse" aria-label="Agent is active" /> : <span className="quiet-status">{visibleExecution.outcome || prettyState(visibleExecution.status)}</span>}
+        {execution ? (
+          <span className="work-status">
+            <span className="work-pulse" aria-label="Agent is active" />
+            {workStatus}
+          </span>
+        ) : (
+          <span className="quiet-status">{workStatus}</span>
+        )}
       </div>
       <p className="ticket-work-summary">{visibleExecution.summaryMd || (execution ? "Agent is working in the background." : "Latest run has no summary yet.")}</p>
       <PhaseRail items={phases} compact />
-      {worktree?.branchName ? <span className="ticket-work-branch">{worktree.branchName}</span> : null}
+      <div className="ticket-work-meta" aria-label="Current work evidence">
+        <span>{proofCount} artifact{proofCount === 1 ? "" : "s"}</span>
+        <span>{logArtifacts.length} log{logArtifacts.length === 1 ? "" : "s"}</span>
+      </div>
       <div className="ticket-work-actions">
         {execution ? (
           <button className="danger-button" type="button" disabled={Boolean(busy)} onClick={handleStop}>
@@ -2224,9 +2253,6 @@ function TicketWorkPanel({
             Stop agent
           </button>
         ) : null}
-        {logArtifacts.map((artifact) => (
-          <LogChip key={artifact.id} label={artifact.label} value={artifact.uri} />
-        ))}
       </div>
     </article>
   );
