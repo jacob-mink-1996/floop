@@ -66,6 +66,44 @@ test("execution driver writes structured project lookup context for agents", asy
   });
 
   try {
+    const contextComment = store.createAgentMessage("project_floop", {
+      actor: "jacob",
+      source: "human",
+      intent: "comment_on_ticket",
+      target: { ticketId: "ticket_project_floop_2" },
+      summary: "Important clarification",
+      body: "Validator should know that transport errors are blocking.",
+      metadata: { commentMode: "context" },
+    });
+    store.updateAgentMessage("project_floop", contextComment.id, {
+      status: "attached",
+      promotedKind: "ticket_event",
+      promotedRef: "ticket_project_floop_2",
+      reasonSource: "human",
+    });
+    const proofArtifact = store.createAgentMessage("project_floop", {
+      actor: "validator",
+      source: "agent",
+      intent: "submit_artifact",
+      target: { ticketId: "ticket_project_floop_2" },
+      summary: "Prior demo proof",
+      body: "Demo proof exists for later agents.",
+      metadata: {
+        artifact: {
+          kind: "demo",
+          label: "Prior demo proof",
+          uri: "file:///tmp/floop-prior-demo-proof.md",
+          metadata: { demoEvidence: true },
+        },
+      },
+    });
+    store.updateAgentMessage("project_floop", proofArtifact.id, {
+      status: "accepted",
+      promotedKind: "artifact",
+      promotedRef: "ticket_project_floop_2",
+      reasonSource: "agent",
+    });
+
     store.updateRoleProfile("project_floop", "developer", {
       adapter: "shell",
       model: "fixture",
@@ -91,6 +129,9 @@ test("execution driver writes structured project lookup context for agents", asy
     assert.equal(context.projectContext.project.id, "project_floop");
     assert.equal(context.projectContext.tickets.target.id, "ticket_project_floop_2");
     assert.equal(context.projectContext.repositories.length > 0, true);
+    assert.equal(context.projectContext.evidence.recentArtifacts.some((artifact) => artifact.label === "Prior demo proof"), true);
+    assert.equal(context.projectContext.activity.recentEvents.some((event) => event.type === "agent.message_attached"), true);
+    assert.equal(context.projectContext.conversation.targetMessages.some((message) => message.summary === "Important clarification"), true);
     assert.equal(context.projectContext.lookupHints.length > 0, true);
   } finally {
     store.close();

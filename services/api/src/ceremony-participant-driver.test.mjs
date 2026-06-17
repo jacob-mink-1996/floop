@@ -58,6 +58,37 @@ test("ceremony participant driver writes structured project lookup context", asy
     workspaceRoot,
   });
   try {
+    const proofExecution = store.createExecution("project_floop", "ticket_project_floop_1", {
+      role: "developer",
+      reason: "Create ceremony context proof.",
+    });
+    store.completeExecution("project_floop", proofExecution.id, {
+      outcome: "completed",
+      summaryMd: "Prior implementation proof for ceremony lookup.",
+      artifacts: [
+        {
+          kind: "record",
+          label: "Prior ceremony lookup record",
+          uri: "file:///tmp/floop-ceremony-lookup-record.md",
+        },
+      ],
+    });
+    const contextComment = store.createAgentMessage("project_floop", {
+      actor: "architect",
+      source: "agent",
+      intent: "comment_on_ticket",
+      target: { ticketId: "ticket_project_floop_2" },
+      summary: "Ceremony context clarification",
+      body: "Refinement should batch related transport contract tickets.",
+      metadata: { commentMode: "context" },
+    });
+    store.updateAgentMessage("project_floop", contextComment.id, {
+      status: "attached",
+      promotedKind: "ticket_event",
+      promotedRef: "ticket_project_floop_2",
+      reasonSource: "agent",
+    });
+
     store.updateRoleProfile("project_floop", "product_manager", {
       adapter: "shell",
       model: "fixture",
@@ -82,6 +113,9 @@ test("ceremony participant driver writes structured project lookup context", asy
     assert.equal(completed.participants[0].outcome, "completed");
     assert.equal(context.projectContext.project.id, "project_floop");
     assert.equal(context.projectContext.tickets.backlog.length > 0, true);
+    assert.equal(context.projectContext.evidence.recentArtifacts.some((artifact) => artifact.label === "Prior ceremony lookup record"), true);
+    assert.equal(context.projectContext.activity.recentEvents.some((event) => event.type === "agent.message_attached"), true);
+    assert.equal(context.projectContext.conversation.recentComments.some((message) => message.summary === "Ceremony context clarification"), true);
     assert.equal(context.projectContext.lookupHints.length > 0, true);
   } finally {
     store.close();
