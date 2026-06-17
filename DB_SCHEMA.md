@@ -87,10 +87,10 @@ Suggested fields:
 - `updated_at` timestamptz not null
 
 `ceremony_automation_json` stores the project-level automatic ceremony trigger
-profile. The default profile is operator-approved and includes sensible triggers
-for refinement, planning, daily triage, review/demo prep, and retro. Each trigger
-can declare whether it is enabled, a minimum interval, participant roles, decider
-role, and consensus policy.
+profile. The default profile is operator-approved and includes sensible lifecycle
+triggers for refinement, planning, daily triage, review/demo prep, work
+generation, and retro. Each trigger can declare whether it is enabled, a minimum
+interval, participant roles, decider role, and consensus policy.
 
 ### `agent_profiles`
 

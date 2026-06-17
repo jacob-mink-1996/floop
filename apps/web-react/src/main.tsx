@@ -992,6 +992,7 @@ function ProductRunOverview({
     { key: "planning", label: "Plan", minutes: cadence.planning?.minIntervalMinutes || 15 },
     { key: "daily_triage", label: "Check-in", minutes: cadence.daily_triage?.minIntervalMinutes || 30 },
     { key: "review_demo_prep", label: "Demo", minutes: cadence.review_demo_prep?.minIntervalMinutes || 30 },
+    { key: "work_generation", label: "New work", minutes: cadence.work_generation?.minIntervalMinutes || 60 },
     { key: "retro", label: "Retro", minutes: cadence.retro?.minIntervalMinutes || 180 },
   ];
   const running = runObservability?.summary.running || 0;
@@ -1339,6 +1340,7 @@ const ceremonyOptions: Array<{ type: CeremonyType; label: string; detail: string
   { type: "planning", label: "Planning", detail: "Select the next ready slice against capacity." },
   { type: "daily_triage", label: "Daily triage", detail: "Surface blocked, rework, and active-ticket decisions." },
   { type: "review_demo_prep", label: "Review/demo prep", detail: "Assemble merge-ready and done work for PO review." },
+  { type: "work_generation", label: "Work generation", detail: "Generate the next backlog slice near sprint end." },
   { type: "retro", label: "Retro", detail: "Turn repeated stalls into process-improvement work." },
 ];
 
@@ -1365,6 +1367,11 @@ const defaultCeremonyFanOut: Record<
     participantRoles: ["product_manager", "reviewer", "validator", "integrator"],
     deciderRole: "reviewer",
     consensusPolicy: "only_evidence_backed_done_work_is_demoable",
+  },
+  work_generation: {
+    participantRoles: ["product_manager", "architect", "developer", "reviewer"],
+    deciderRole: "product_manager",
+    consensusPolicy: "decider_synthesizes_objections",
   },
   retro: {
     participantRoles: ["product_manager", "architect", "developer", "reviewer", "validator"],
@@ -2283,14 +2290,15 @@ function ProductAutopilotPanel({
         <p>
           {hasBreakdown
             ? "Floop has a product breakdown path for this idea."
-            : "Create the PM breakdown lane, enable agent cadence, and dispatch the first planning agent."}
+            : "Create the PM breakdown lane, enable lifecycle ceremonies, and dispatch the first planning agent."}
         </p>
       </div>
-      <div className="autopilot-cadence" aria-label="Agent ceremony cadence">
+      <div className="autopilot-cadence" aria-label="Agent ceremony lifecycle">
         <span><strong>10m</strong>Refine</span>
         <span><strong>15m</strong>Plan</span>
         <span><strong>30m</strong>Check-in</span>
         <span><strong>30m</strong>Demo</span>
+        <span><strong>End</strong>New work</span>
         <span><strong>180m</strong>Retro</span>
       </div>
       {canStart ? (

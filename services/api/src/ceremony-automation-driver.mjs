@@ -110,6 +110,13 @@ function shouldRunCeremony(store, project, type, trigger) {
       );
     case "review_demo_prep":
       return tickets.some((ticket) => ticket.state === "READY_TO_MERGE" || ticket.state === "DONE");
+    case "work_generation": {
+      const readyBacklog = tickets.filter((ticket) => ["READY", "PROPOSED"].includes(ticket.state)).length;
+      const threshold = Number(trigger.onReadyBacklogBelow ?? 2);
+      return Boolean(trigger.onSprintEndPlanning)
+        && readyBacklog <= threshold
+        && tickets.some((ticket) => ticket.state === "READY_TO_MERGE" || ticket.state === "DONE");
+    }
     case "retro":
       return (
         tickets.filter((ticket) => ticket.state === "BLOCKED" || ticket.state === "REWORK").length >=

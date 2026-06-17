@@ -84,7 +84,7 @@ function startProductAutopilot(store, projectId, ticketId) {
 
   const policy = store.updateProjectPolicy(projectId, productAutopilotPolicyPatch(project.policy));
   const ceremony = store.createCeremonyRun(projectId, {
-    type: "refinement",
+    type: "work_generation",
     scope: {
       trigger: "product_autopilot_start",
       ideaTicketId: ticket.id,
@@ -101,7 +101,7 @@ function startProductAutopilot(store, projectId, ticketId) {
   }
 
   const proposalIds = ceremony.proposals
-    .filter((proposal) => proposal.ticketId === ticket.id && ["ticket_patch", "ticket_create"].includes(proposal.kind))
+    .filter((proposal) => proposal.ticketId === ticket.id && proposal.kind === "ticket_create")
     .map((proposal) => proposal.id);
   const appliedCeremony = store.applyCeremonyRun(projectId, ceremony.id, { proposalIds });
   const breakdownTicketId =
@@ -186,6 +186,14 @@ function productAutopilotCeremonyAutomation(existing = {}) {
         minIntervalMinutes: 30,
       },
       review_demo_prep: { ...defaults.triggers.review_demo_prep, ...(triggers.review_demo_prep || {}), enabled: true, minIntervalMinutes: 30 },
+      work_generation: {
+        ...defaults.triggers.work_generation,
+        ...(triggers.work_generation || {}),
+        enabled: true,
+        onSprintEndPlanning: true,
+        onReadyBacklogBelow: 2,
+        minIntervalMinutes: 60,
+      },
       retro: { ...defaults.triggers.retro, ...(triggers.retro || {}), enabled: true, minIntervalMinutes: 180 },
     },
   };

@@ -56,7 +56,7 @@ export const dependencyTypes = ["finish_to_start"];
 
 export const refinementModes = ["autonomous", "user_approved", "user_participant", "user_only"];
 
-export const ceremonyTypes = ["refinement", "planning", "daily_triage", "review_demo_prep", "retro"];
+export const ceremonyTypes = ["refinement", "planning", "daily_triage", "review_demo_prep", "work_generation", "retro"];
 
 export const interactionModes = [
   "manual",

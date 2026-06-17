@@ -469,7 +469,7 @@ test("ceremony endpoints create proposal runs and apply approved proposals", asy
     });
     const runBody = await runResponse.json();
     const proposal = runBody.ceremony.proposals.find(
-      (item) => item.ticketId === createTicketBody.ticket.id && item.kind === "ticket_patch",
+      (item) => item.kind === "ticket_batch_patch" && item.payload.patches.some((patch) => patch.ticketId === createTicketBody.ticket.id),
     );
 
     const listResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/ceremonies`);
@@ -503,7 +503,7 @@ test("ceremony endpoints create proposal runs and apply approved proposals", asy
   });
 });
 
-test("product autopilot starts from an idea ticket with agent-paced ceremony cadence", async () => {
+test("product autopilot starts from an idea ticket with lifecycle ceremony triggers", async () => {
   await withServer(async (baseUrl, store) => {
     const createTicketResponse = await fetch(`${baseUrl}/api/v1/projects/project_floop/tickets`, {
       method: "POST",
@@ -540,8 +540,9 @@ test("product autopilot starts from an idea ticket with agent-paced ceremony cad
     assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.planning.minIntervalMinutes, 15);
     assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.daily_triage.minIntervalMinutes, 30);
     assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.review_demo_prep.minIntervalMinutes, 30);
+    assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.work_generation.minIntervalMinutes, 60);
     assert.equal(autopilotBody.autopilot.policy.ceremonyAutomation.triggers.retro.minIntervalMinutes, 180);
-    assert.equal(autopilotBody.autopilot.ceremony.type, "refinement");
+    assert.equal(autopilotBody.autopilot.ceremony.type, "work_generation");
     assert.equal(autopilotBody.autopilot.breakdownTicket.id, breakdown.id);
     assert.equal(autopilotBody.autopilot.breakdownTicket.parentTicketId, createTicketBody.ticket.id);
     assert.equal(autopilotBody.autopilot.breakdownTicket.assignedRole, "product_manager");

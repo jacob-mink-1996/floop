@@ -139,6 +139,45 @@ test("ceremony automation driver runs agent check-ins for active work on machine
   }
 });
 
+test("ceremony automation driver generates new work near sprint end when ready backlog is low", async () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  try {
+    store.updateProjectPolicy("project_floop", {
+      ceremonyAutomation: {
+        enabled: true,
+        mode: "operator_approved",
+        triggers: {
+          ...disabledTriggers(),
+          work_generation: {
+            enabled: true,
+            onSprintEndPlanning: true,
+            onReadyBacklogBelow: 2,
+            minIntervalMinutes: 30,
+            participantRoles: ["product_manager", "architect", "developer"],
+            deciderRole: "product_manager",
+            consensusPolicy: "decider_synthesizes_objections",
+          },
+        },
+      },
+    });
+    store.createTicket("project_floop", {
+      title: "Sprint slice shipped",
+      brief: "A completed sprint slice should trigger late-sprint work generation when backlog is low.",
+      assignedRole: "developer",
+      state: "DONE",
+    });
+
+    const driver = createCeremonyAutomationDriver({ store, logger: silentLogger() });
+    const created = await driver.pollOnce();
+
+    assert.equal(created.length, 1);
+    assert.equal(created[0].type, "work_generation");
+    assert.equal(created[0].scope.triggerConfig.onSprintEndPlanning, true);
+  } finally {
+    store.close();
+  }
+});
+
 function silentLogger() {
   return {
     error() {},
@@ -153,6 +192,7 @@ function disabledTriggers() {
     planning: { enabled: false },
     daily_triage: { enabled: false },
     review_demo_prep: { enabled: false },
+    work_generation: { enabled: false },
     retro: { enabled: false },
   };
 }

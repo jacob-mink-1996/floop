@@ -118,6 +118,7 @@ try {
   assert.equal(proof.productAutopilotProof.cadenceMinutes.planning, 15);
   assert.equal(proof.productAutopilotProof.cadenceMinutes.checkIn, 30);
   assert.equal(proof.productAutopilotProof.cadenceMinutes.demo, 30);
+  assert.equal(proof.productAutopilotProof.cadenceMinutes.newWork, 60);
   assert.equal(proof.productAutopilotProof.cadenceMinutes.retro, 180);
   assert.equal(proof.featureTickets.length >= 4, true);
   assert.equal(proof.demoFeatureTickets.length >= 4, true);
@@ -137,7 +138,7 @@ try {
   }
   assert.equal(proof.appDemoSnapshots.some((snapshot) => snapshot.stage === "vertical"), true);
   assert.equal(proof.appDemoSnapshots.some((snapshot) => snapshot.stage === "final"), true);
-  assert.deepEqual([...new Set(proof.ceremonyShowcaseTypes)].sort(), ["daily_triage", "planning", "refinement", "retro", "review_demo_prep"]);
+  assert.deepEqual([...new Set(proof.ceremonyShowcaseTypes)].sort(), ["daily_triage", "planning", "refinement", "retro", "review_demo_prep", "work_generation"]);
   assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_append_agent_message"), true);
   assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_request_dispatch"), true);
   assert.equal(proof.externalAgentProof.some((entry) => entry.tool === "floop_attach_artifact"), true);
@@ -401,7 +402,7 @@ async function showNewFeatureSettings(page) {
 }
 
 async function runCeremonyShowcase(page, projectId) {
-  const ceremonyTypes = ["refinement", "planning", "daily_triage", "review_demo_prep", "retro"];
+  const ceremonyTypes = ["refinement", "planning", "daily_triage", "review_demo_prep", "work_generation", "retro"];
   for (const type of ceremonyTypes) {
     store.createCeremonyRun(projectId, {
       type,
@@ -414,7 +415,7 @@ async function runCeremonyShowcase(page, projectId) {
   await refresh(page);
   await clickByText(page, "Ceremonies");
   await page.locator(".constellation-stage").first().waitFor({ state: "visible" });
-  for (const label of ["Refinement", "Planning", "Daily triage", "Review/demo prep", "Retro"]) {
+  for (const label of ["Refinement", "Planning", "Daily triage", "Review/demo prep", "Work generation", "Retro"]) {
     await clickByText(page, label);
     await pause(450);
   }
@@ -1457,6 +1458,7 @@ function collectProof() {
         planning: project?.policy?.ceremonyAutomation?.triggers?.planning?.minIntervalMinutes || 0,
         checkIn: project?.policy?.ceremonyAutomation?.triggers?.daily_triage?.minIntervalMinutes || 0,
         demo: project?.policy?.ceremonyAutomation?.triggers?.review_demo_prep?.minIntervalMinutes || 0,
+        newWork: project?.policy?.ceremonyAutomation?.triggers?.work_generation?.minIntervalMinutes || 0,
         retro: project?.policy?.ceremonyAutomation?.triggers?.retro?.minIntervalMinutes || 0,
       },
     },

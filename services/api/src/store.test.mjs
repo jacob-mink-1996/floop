@@ -224,7 +224,7 @@ test("store rejects illegal automatic ticket transitions", () => {
   store.close();
 });
 
-test("store creates ceremony proposals and applies approved ticket patches", () => {
+test("store creates batched refinement proposals and applies approved ticket patches", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   const draft = store.createTicket("project_floop", {
     title: "Thin refinement candidate",
@@ -238,9 +238,10 @@ test("store creates ceremony proposals and applies approved ticket patches", () 
     createdByKind: "human",
     createdByRef: "test",
   });
-  const proposal = run.proposals.find((item) => item.ticketId === draft.id && item.kind === "ticket_patch");
+  const proposal = run.proposals.find((item) => item.kind === "ticket_batch_patch");
 
   assert.ok(proposal);
+  assert.equal(proposal.payload.patches.some((item) => item.ticketId === draft.id), true);
   assert.equal(run.status, "proposed");
   assert.deepEqual(run.participantRoles, ["product_manager", "architect", "developer", "reviewer"]);
   assert.equal(run.deciderRole, "product_manager");
@@ -260,7 +261,7 @@ test("store creates ceremony proposals and applies approved ticket patches", () 
   store.close();
 });
 
-test("store refinement ceremony creates product breakdown child for a single idea ticket", () => {
+test("store work generation ceremony creates product breakdown child for a single idea ticket", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   const idea = store.createTicket("project_floop", {
     title: "Build a booking product",
@@ -270,7 +271,7 @@ test("store refinement ceremony creates product breakdown child for a single ide
   });
 
   const run = store.createCeremonyRun("project_floop", {
-    type: "refinement",
+    type: "work_generation",
     createdByKind: "system",
     createdByRef: "product-autopilot-test",
   });

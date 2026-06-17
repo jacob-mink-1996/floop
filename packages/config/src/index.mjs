@@ -59,6 +59,15 @@ export function defaultCeremonyAutomation() {
         deciderRole: "reviewer",
         consensusPolicy: "only_evidence_backed_done_work_is_demoable",
       },
+      work_generation: {
+        enabled: true,
+        onSprintEndPlanning: true,
+        onReadyBacklogBelow: 2,
+        minIntervalMinutes: 60,
+        participantRoles: ["product_manager", "architect", "developer", "reviewer"],
+        deciderRole: "product_manager",
+        consensusPolicy: "decider_synthesizes_objections",
+      },
       retro: {
         enabled: true,
         onRepeatedBlockedOrReworkCount: 3,

@@ -66,6 +66,7 @@ const ceremonyLabels: Record<CeremonyType, string> = {
   planning: "Planning",
   daily_triage: "Agent check-in",
   review_demo_prep: "Review/demo prep",
+  work_generation: "Work generation",
   retro: "Retro",
 };
 
@@ -161,6 +162,15 @@ const defaultCeremonyAutomation: CeremonyAutomation = {
       participantRoles: ["product_manager", "reviewer", "validator", "integrator"],
       deciderRole: "reviewer",
       consensusPolicy: "only_evidence_backed_done_work_is_demoable",
+    },
+    work_generation: {
+      enabled: true,
+      onSprintEndPlanning: true,
+      onReadyBacklogBelow: 2,
+      minIntervalMinutes: 60,
+      participantRoles: ["product_manager", "architect", "developer", "reviewer"],
+      deciderRole: "product_manager",
+      consensusPolicy: "decider_synthesizes_objections",
     },
     retro: {
       enabled: true,
@@ -341,6 +351,9 @@ function triggerSummary(type: CeremonyType, trigger: CeremonyAutomationTrigger) 
   if (type === "review_demo_prep") {
     return "Done or merge-ready work appears";
   }
+  if (type === "work_generation") {
+    return `Sprint-end planning when ready backlog is below ${Number(trigger.onReadyBacklogBelow ?? 2) + 1}`;
+  }
   return `Repeated blocked/rework patterns, ${trigger.onRepeatedBlockedOrReworkCount || 3}+ signals`;
 }
 
@@ -468,7 +481,7 @@ function PolicyForm({
         <input name="productAutopilotEnabled" type="checkbox" defaultChecked={productAutopilotEnabled} />
         <span>
           <strong>Product Autopilot</strong>
-          Turn one idea ticket into an agent-run product loop: refine, plan, check in, validate demo evidence, merge, and retro on agent cadence.
+          Turn one idea ticket into an agent-run product loop: batch refine, plan, check in, validate demo evidence, merge, generate follow-up work, and retro.
         </span>
       </label>
       <div className="toggle-list">
@@ -615,6 +628,14 @@ function productAutopilotCeremonyAutomation(existing: CeremonyAutomation): Cerem
         minIntervalMinutes: 30,
       },
       review_demo_prep: { ...defaultCeremonyAutomation.triggers.review_demo_prep, ...(existing.triggers?.review_demo_prep || {}), enabled: true, minIntervalMinutes: 30 },
+      work_generation: {
+        ...defaultCeremonyAutomation.triggers.work_generation,
+        ...(existing.triggers?.work_generation || {}),
+        enabled: true,
+        onSprintEndPlanning: true,
+        onReadyBacklogBelow: 2,
+        minIntervalMinutes: 60,
+      },
       retro: { ...defaultCeremonyAutomation.triggers.retro, ...(existing.triggers?.retro || {}), enabled: true, minIntervalMinutes: 180 },
     },
   };

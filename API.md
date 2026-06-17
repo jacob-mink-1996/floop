@@ -86,6 +86,7 @@ Create a ceremony run. Floop currently supports:
 - `planning`
 - `daily_triage`
 - `review_demo_prep`
+- `work_generation`
 - `retro`
 
 Expected fields:
@@ -159,6 +160,7 @@ Default trigger intent:
 - `planning`: ready queue changes or execution capacity opens
 - `daily_triage`: blocked, rework, or stale active work
 - `review_demo_prep`: done or merge-ready work appears
+- `work_generation`: late-sprint or low-backlog product expansion
 - `retro`: repeated blocked/rework patterns or cycle completion
 - `agentCreatedTicketDefaultState`
 

@@ -566,6 +566,8 @@ function buildCeremonyProposals(type, snapshot, timestamp) {
       return buildDailyTriageProposals(snapshot, timestamp);
     case "review_demo_prep":
       return buildReviewDemoPrepProposals(snapshot, timestamp);
+    case "work_generation":
+      return buildWorkGenerationProposals(snapshot, timestamp);
     case "retro":
       return buildRetroProposals(snapshot, timestamp);
     default:
@@ -577,13 +579,7 @@ function buildRefinementProposals(snapshot, timestamp) {
   const candidates = snapshot.tickets
     .filter((ticket) => ticket.state === "DRAFT" || ticket.state === "PROPOSED")
     .slice(0, 6);
-  const childCounts = new Map();
-  for (const ticket of snapshot.tickets) {
-    if (ticket.parentTicketId) {
-      childCounts.set(ticket.parentTicketId, (childCounts.get(ticket.parentTicketId) || 0) + 1);
-    }
-  }
-  const proposals = candidates.map((ticket) => {
+  const patches = candidates.map((ticket) => {
     const patch = {
       latestSummary: "Refinement pass proposed clearer scope and readiness criteria.",
     };
@@ -596,15 +592,36 @@ function buildRefinementProposals(snapshot, timestamp) {
     if (!ticket.definitionOfDoneMd) {
       patch.definitionOfDoneMd = "- Acceptance criteria satisfied\n- Review and validation evidence attached\n- Follow-up work captured as separate tickets";
     }
-    return proposal("ticket_patch", `Refine ${ticket.key} before agent execution`, timestamp, {
+    return {
       ticketId: ticket.id,
+      ticketKey: ticket.key,
+      ticketTitle: ticket.title,
       patch,
-    }, ticket.id);
+    };
   });
-  for (const ticket of candidates) {
-    if (ticket.parentTicketId || childCounts.get(ticket.id) || hasProductBreakdownTitle(ticket.title)) {
-      continue;
+  if (patches.length === 0) {
+    return [noteProposal("Backlog refinement found no draft or proposed tickets needing action.", timestamp)];
+  }
+  return [
+    proposal("ticket_batch_patch", `Refine ${patches.length} ticket(s) before agent execution`, timestamp, {
+      patches,
+    }),
+  ];
+}
+
+function buildWorkGenerationProposals(snapshot, timestamp) {
+  const childCounts = new Map();
+  for (const ticket of snapshot.tickets) {
+    if (ticket.parentTicketId) {
+      childCounts.set(ticket.parentTicketId, (childCounts.get(ticket.parentTicketId) || 0) + 1);
     }
+  }
+  const candidates = snapshot.tickets
+    .filter((ticket) => ["DRAFT", "PROPOSED", "READY"].includes(ticket.state))
+    .filter((ticket) => !ticket.parentTicketId && !childCounts.get(ticket.id) && !hasProductBreakdownTitle(ticket.title))
+    .slice(0, 4);
+  const proposals = [];
+  for (const ticket of candidates) {
     proposals.push(proposal("ticket_create", `Create product breakdown child for ${ticket.key}`, timestamp, {
       ticket: {
         parentTicketId: ticket.id,
@@ -622,7 +639,7 @@ function buildRefinementProposals(snapshot, timestamp) {
       },
     }, ticket.id));
   }
-  return proposals.length ? proposals : [noteProposal("Backlog refinement found no draft or proposed tickets needing action.", timestamp)];
+  return proposals.length ? proposals : [noteProposal("Work generation found no broad parent tickets needing new child work.", timestamp)];
 }
 
 function hasProductBreakdownTitle(title = "") {
@@ -738,6 +755,12 @@ function defaultCeremonyFanOut(type) {
         deciderRole: "reviewer",
         consensusPolicy: "only_evidence_backed_done_work_is_demoable",
       };
+    case "work_generation":
+      return {
+        participantRoles: ["product_manager", "architect", "developer", "reviewer"],
+        deciderRole: "product_manager",
+        consensusPolicy: "decider_synthesizes_objections",
+      };
     case "retro":
       return {
         participantRoles: ["product_manager", "architect", "developer", "reviewer", "validator"],
@@ -804,6 +827,15 @@ function applyCeremonyProposal(store, projectId, proposalRow, payload) {
     case "ticket_patch":
       store.updateTicket(projectId, requiredText(payload.ticketId, "ticketId"), payload.patch || {});
       return payload.ticketId;
+    case "ticket_batch_patch": {
+      let lastTicketId = "";
+      for (const item of Array.isArray(payload.patches) ? payload.patches : []) {
+        const ticketId = requiredText(item.ticketId, "ticketId");
+        store.updateTicket(projectId, ticketId, item.patch || {});
+        lastTicketId = ticketId;
+      }
+      return lastTicketId;
+    }
     case "ticket_create":
       return store.createTicket(projectId, payload.ticket || {})?.id || "";
     case "ticket_transition":
