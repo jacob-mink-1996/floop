@@ -21,6 +21,12 @@ const ticketId = "ticket_project_floop_2";
 const projectId = "project_floop";
 const repoId = "repo_project_floop_floop";
 const targetBranch = "floop-merge-conflict-proof";
+const codexExecutable = process.env.FLOOP_MERGE_REWORK_CODEX_EXECUTABLE || "codex";
+const codexModel = process.env.FLOOP_MERGE_REWORK_CODEX_MODEL || "codex-latest";
+const codexSandbox = process.env.FLOOP_MERGE_REWORK_CODEX_SANDBOX || "workspace-write";
+const codexApprovalPolicy = process.env.FLOOP_MERGE_REWORK_CODEX_APPROVAL_POLICY || "never";
+
+assertCodexExecutableAvailable(codexExecutable);
 
 const store = createStore({
   filename: join(fixtureRoot, "floop.sqlite"),
@@ -69,11 +75,11 @@ try {
 
   store.updateRoleProfile(projectId, "developer", {
     adapter: "codex",
-    model: process.env.FLOOP_MERGE_REWORK_CODEX_MODEL || "codex-latest",
+    model: codexModel,
     config: {
-      executable: process.env.FLOOP_MERGE_REWORK_CODEX_EXECUTABLE || "codex",
-      sandbox: process.env.FLOOP_MERGE_REWORK_CODEX_SANDBOX || "workspace-write",
-      approvalPolicy: process.env.FLOOP_MERGE_REWORK_CODEX_APPROVAL_POLICY || "never",
+      executable: codexExecutable,
+      sandbox: codexSandbox,
+      approvalPolicy: codexApprovalPolicy,
       promptPreamble: [
         "This is a focused Floop merge-conflict rework proof.",
         "The previous developer branch changed conflict.txt to include `developer change`.",
@@ -101,6 +107,7 @@ try {
   await executionDriver.pollOnce();
   const afterCodex = store.getTicket(projectId, ticketId);
   const completedReworkExecution = afterCodex.executions.find((execution) => execution.id === reworkExecution.id);
+  assertCodexReworkCompleted(completedReworkExecution);
   assert.equal(completedReworkExecution.status, "completed");
   assert.equal(completedReworkExecution.outcome, "completed");
   assert.equal(afterCodex.state, "READY_TO_MERGE");
@@ -264,6 +271,50 @@ function readOptional(filename) {
   }
 }
 
+function assertCodexExecutableAvailable(executable) {
+  const result = spawnSync(executable, ["--version"], {
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  if (result.error) {
+    throw new Error(
+      [
+        "Codex merge rework proof requires an authenticated Codex CLI on this system.",
+        `Could not execute ${JSON.stringify(executable)}: ${result.error.message}`,
+        "Install Codex, ensure it is on PATH, and run `codex login` before retrying.",
+        "Override with FLOOP_MERGE_REWORK_CODEX_EXECUTABLE=/path/to/codex if needed.",
+      ].join("\n"),
+    );
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      [
+        "Codex merge rework proof requires a usable Codex CLI.",
+        `${executable} --version exited with ${result.status}.`,
+        tailText(`STDOUT:\n${result.stdout || ""}\nSTDERR:\n${result.stderr || ""}`),
+        "Install Codex, ensure it is on PATH, and run `codex login` before retrying.",
+      ].join("\n"),
+    );
+  }
+}
+
+function assertCodexReworkCompleted(execution) {
+  if (!execution) {
+    assert.fail("Expected a Codex developer rework execution to exist after merge conflict routing.");
+  }
+  if (execution.blockedKind === "codex_auth_required") {
+    throw new Error(
+      [
+        "Codex merge rework proof reached the authenticated Codex lane, but Codex is not logged in.",
+        "Run `codex login` for the user executing this proof, then rerun `npm run proof:merge-rework:codex`.",
+        execution.remainingWorkMd ? `Codex output: ${execution.remainingWorkMd}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+}
+
 function git(args) {
   return run("git", args);
 }
@@ -283,6 +334,11 @@ function run(command, args, options = {}) {
     );
   }
   return result.stdout || "";
+}
+
+function tailText(value, maxLength = 1200) {
+  const text = String(value || "").trim();
+  return text.length > maxLength ? text.slice(-maxLength) : text;
 }
 
 function prefixedLogger(prefix) {
