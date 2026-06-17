@@ -260,6 +260,42 @@ test("store creates ceremony proposals and applies approved ticket patches", () 
   store.close();
 });
 
+test("store refinement ceremony creates product breakdown child for a single idea ticket", () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  const idea = store.createTicket("project_floop", {
+    title: "Build a booking product",
+    brief: "Create a full product surface for booking rooms, seeing availability, and managing reservations.",
+    assignedRole: "product_manager",
+    state: "PROPOSED",
+  });
+
+  const run = store.createCeremonyRun("project_floop", {
+    type: "refinement",
+    createdByKind: "system",
+    createdByRef: "product-autopilot-test",
+  });
+  const breakdown = run.proposals.find(
+    (item) => item.ticketId === idea.id && item.kind === "ticket_create" && /product breakdown/i.test(item.summary),
+  );
+
+  assert.ok(breakdown);
+  const applied = store.applyCeremonyRun("project_floop", run.id, {
+    proposalIds: [breakdown.id],
+  });
+  const child = store.listTickets("project_floop", { parentTicketId: idea.id }).find((ticket) =>
+    /Break down/.test(ticket.title),
+  );
+
+  assert.equal(applied.proposals.find((item) => item.id === breakdown.id).status, "applied");
+  assert.ok(child);
+  const childDetail = store.getTicket("project_floop", child.id);
+  assert.equal(childDetail.assignedRole, "product_manager");
+  assert.equal(childDetail.state, "READY");
+  assert.match(childDetail.acceptanceCriteriaMd, /Child feature tickets/);
+
+  store.close();
+});
+
 test("store can reconcile interrupted active executions after restart", () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   const execution = store.createExecution("project_floop", "ticket_project_floop_2", {

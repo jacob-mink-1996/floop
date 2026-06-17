@@ -103,6 +103,8 @@ function shouldRunCeremony(store, project, type, trigger) {
         && tickets.some((ticket) => ticket.state === "READY" || ticket.state === "PROPOSED");
     case "daily_triage":
       return (
+        (Boolean(trigger.onActiveWorkCheckIn) &&
+          tickets.some((ticket) => ["WORKING", "REVIEWING", "VALIDATING"].includes(ticket.state))) ||
         tickets.some((ticket) => ticket.state === "BLOCKED" || ticket.state === "REWORK") ||
         tickets.some((ticket) => isStaleActiveTicket(ticket, Number(trigger.onStaleActiveWorkHours || 24)))
       );

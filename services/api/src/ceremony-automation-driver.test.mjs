@@ -101,6 +101,44 @@ test("ceremony automation driver applies proposals in fully automatic mode", asy
   }
 });
 
+test("ceremony automation driver runs agent check-ins for active work on machine cadence", async () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  try {
+    store.updateProjectPolicy("project_floop", {
+      ceremonyAutomation: {
+        enabled: true,
+        mode: "operator_approved",
+        triggers: {
+          ...disabledTriggers(),
+          daily_triage: {
+            enabled: true,
+            onActiveWorkCheckIn: true,
+            minIntervalMinutes: 30,
+            participantRoles: ["product_manager", "developer"],
+            deciderRole: "product_manager",
+            consensusPolicy: "blockers_and_stale_work_win",
+          },
+        },
+      },
+    });
+    store.createExecution("project_floop", "ticket_project_floop_2", {
+      role: "developer",
+      reason: "Start active work that should receive agent check-ins.",
+    });
+
+    const driver = createCeremonyAutomationDriver({ store, logger: silentLogger() });
+    const first = await driver.pollOnce();
+    const second = await driver.pollOnce();
+
+    assert.equal(first.length, 1);
+    assert.equal(first[0].type, "daily_triage");
+    assert.equal(first[0].scope.triggerConfig.onActiveWorkCheckIn, true);
+    assert.equal(second.length, 0);
+  } finally {
+    store.close();
+  }
+});
+
 function silentLogger() {
   return {
     error() {},
@@ -111,6 +149,7 @@ function silentLogger() {
 
 function disabledTriggers() {
   return {
+    refinement: { enabled: false },
     planning: { enabled: false },
     daily_triage: { enabled: false },
     review_demo_prep: { enabled: false },

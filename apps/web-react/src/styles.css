@@ -1950,6 +1950,34 @@ h3 {
   background: currentColor;
 }
 
+.autopilot-preset {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid color-mix(in srgb, var(--teal) 58%, var(--line));
+  padding: 11px 12px;
+  background: color-mix(in srgb, var(--panel-warm) 82%, var(--teal) 18%);
+}
+
+.autopilot-preset input {
+  margin-top: 2px;
+}
+
+.autopilot-preset span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.autopilot-preset strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
 .toggle-list label,
 .check-row {
   display: flex;

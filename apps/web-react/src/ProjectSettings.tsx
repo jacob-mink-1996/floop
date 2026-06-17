@@ -64,7 +64,7 @@ const steeringWorktreePolicies: Array<{ value: SteeringWorktreePolicy; label: st
 const ceremonyLabels: Record<CeremonyType, string> = {
   refinement: "Refinement",
   planning: "Planning",
-  daily_triage: "Daily triage",
+  daily_triage: "Agent check-in",
   review_demo_prep: "Review/demo prep",
   retro: "Retro",
 };
@@ -130,7 +130,7 @@ const defaultCeremonyAutomation: CeremonyAutomation = {
       enabled: true,
       onTicketCreatedStates: ["DRAFT", "PROPOSED"],
       onBacklogChange: true,
-      minIntervalMinutes: 30,
+      minIntervalMinutes: 10,
       participantRoles: ["product_manager", "architect", "developer", "reviewer"],
       deciderRole: "product_manager",
       consensusPolicy: "decider_synthesizes_objections",
@@ -139,16 +139,17 @@ const defaultCeremonyAutomation: CeremonyAutomation = {
       enabled: true,
       onReadyQueueChanged: true,
       onCapacityAvailable: true,
-      minIntervalMinutes: 60,
+      minIntervalMinutes: 15,
       participantRoles: ["product_manager", "architect", "developer", "integrator"],
       deciderRole: "integrator",
       consensusPolicy: "decider_synthesizes_objections",
     },
     daily_triage: {
       enabled: true,
-      onStaleActiveWorkHours: 24,
+      onActiveWorkCheckIn: true,
+      onStaleActiveWorkHours: 2,
       onBlockedOrRework: true,
-      minIntervalMinutes: 240,
+      minIntervalMinutes: 30,
       participantRoles: ["product_manager", "developer", "reviewer", "validator"],
       deciderRole: "product_manager",
       consensusPolicy: "blockers_and_stale_work_win",
@@ -156,7 +157,7 @@ const defaultCeremonyAutomation: CeremonyAutomation = {
     review_demo_prep: {
       enabled: true,
       onDoneOrMergeReady: true,
-      minIntervalMinutes: 120,
+      minIntervalMinutes: 30,
       participantRoles: ["product_manager", "reviewer", "validator", "integrator"],
       deciderRole: "reviewer",
       consensusPolicy: "only_evidence_backed_done_work_is_demoable",
@@ -165,7 +166,7 @@ const defaultCeremonyAutomation: CeremonyAutomation = {
       enabled: true,
       onRepeatedBlockedOrReworkCount: 3,
       onCycleComplete: true,
-      minIntervalMinutes: 1440,
+      minIntervalMinutes: 180,
       participantRoles: ["product_manager", "architect", "developer", "reviewer", "validator"],
       deciderRole: "product_manager",
       consensusPolicy: "recurring_systemic_risk_wins",
@@ -410,11 +411,13 @@ function PolicyForm({
   onSubmit: (input: ProjectPolicyInput) => Promise<void>;
 }) {
   const policy = project.policy;
+  const productAutopilotEnabled = isProductAutopilotPolicy(policy);
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const productAutopilot = form.get("productAutopilotEnabled") === "on";
     const existingAutomation = policy?.ceremonyAutomation || defaultCeremonyAutomation;
-    const ceremonyAutomation: CeremonyAutomation = {
+    let ceremonyAutomation: CeremonyAutomation = {
       ...defaultCeremonyAutomation,
       ...existingAutomation,
       enabled: form.get("ceremonyAutomationEnabled") === "on",
@@ -436,19 +439,22 @@ function PolicyForm({
         }),
       ),
     };
+    if (productAutopilot) {
+      ceremonyAutomation = productAutopilotCeremonyAutomation(ceremonyAutomation);
+    }
     await onSubmit({
-      requireReviewer: form.get("requireReviewer") === "on",
-      requireValidator: form.get("requireValidator") === "on",
-      requireHumanApprovalBeforeMerge: form.get("requireHumanApprovalBeforeMerge") === "on",
-      requireDemoEvidenceBeforeMerge: form.get("requireDemoEvidenceBeforeMerge") === "on",
+      requireReviewer: productAutopilot ? true : form.get("requireReviewer") === "on",
+      requireValidator: productAutopilot ? true : form.get("requireValidator") === "on",
+      requireHumanApprovalBeforeMerge: productAutopilot ? false : form.get("requireHumanApprovalBeforeMerge") === "on",
+      requireDemoEvidenceBeforeMerge: productAutopilot ? true : form.get("requireDemoEvidenceBeforeMerge") === "on",
       requiredValidationCommandProfileForMerge: String(form.get("requiredValidationCommandProfileForMerge") || ""),
-      maxParallelExecutions: Number(form.get("maxParallelExecutions") || 1),
+      maxParallelExecutions: productAutopilot ? Math.max(2, Number(form.get("maxParallelExecutions") || 1)) : Number(form.get("maxParallelExecutions") || 1),
       maxParallelMerges: Number(form.get("maxParallelMerges") || 1),
-      maxAutoContinueIterations: Number(form.get("maxAutoContinueIterations") || 1),
-      interactionMode: String(form.get("interactionMode") || "manual") as InteractionMode,
-      refinementMode: String(form.get("refinementMode") || "user_approved") as RefinementMode,
+      maxAutoContinueIterations: productAutopilot ? Math.max(5, Number(form.get("maxAutoContinueIterations") || 1)) : Number(form.get("maxAutoContinueIterations") || 1),
+      interactionMode: (productAutopilot ? "fully_autonomous" : String(form.get("interactionMode") || "manual")) as InteractionMode,
+      refinementMode: (productAutopilot ? "autonomous" : String(form.get("refinementMode") || "user_approved")) as RefinementMode,
       steeringWorktreePolicy: String(form.get("steeringWorktreePolicy") || "new_iteration_worktree") as SteeringWorktreePolicy,
-      agentCreatedTicketDefaultState: String(form.get("agentCreatedTicketDefaultState") || "PROPOSED") as TicketState,
+      agentCreatedTicketDefaultState: (productAutopilot ? "READY" : String(form.get("agentCreatedTicketDefaultState") || "PROPOSED")) as TicketState,
       ceremonyAutomation,
     });
   }
@@ -458,6 +464,13 @@ function PolicyForm({
       <div className="section-heading">
         <h3>Delivery Policy</h3>
       </div>
+      <label className="autopilot-preset">
+        <input name="productAutopilotEnabled" type="checkbox" defaultChecked={productAutopilotEnabled} />
+        <span>
+          <strong>Product Autopilot</strong>
+          Turn one idea ticket into an agent-run product loop: refine, plan, check in, validate demo evidence, merge, and retro on agent cadence.
+        </span>
+      </label>
       <div className="toggle-list">
         <label><input name="requireReviewer" type="checkbox" defaultChecked={policy?.requireReviewer ?? true} /> Require reviewer</label>
         <label><input name="requireValidator" type="checkbox" defaultChecked={policy?.requireValidator ?? true} /> Require validator</label>
@@ -581,6 +594,41 @@ function PolicyForm({
         {busy === "Saving policy" ? busy : "Save policy"}
       </button>
     </form>
+  );
+}
+
+function productAutopilotCeremonyAutomation(existing: CeremonyAutomation): CeremonyAutomation {
+  return {
+    ...existing,
+    enabled: true,
+    mode: "fully_automatic",
+    triggers: {
+      ...existing.triggers,
+      refinement: { ...defaultCeremonyAutomation.triggers.refinement, ...(existing.triggers?.refinement || {}), enabled: true, minIntervalMinutes: 10 },
+      planning: { ...defaultCeremonyAutomation.triggers.planning, ...(existing.triggers?.planning || {}), enabled: true, minIntervalMinutes: 15 },
+      daily_triage: {
+        ...defaultCeremonyAutomation.triggers.daily_triage,
+        ...(existing.triggers?.daily_triage || {}),
+        enabled: true,
+        onActiveWorkCheckIn: true,
+        onStaleActiveWorkHours: 2,
+        minIntervalMinutes: 30,
+      },
+      review_demo_prep: { ...defaultCeremonyAutomation.triggers.review_demo_prep, ...(existing.triggers?.review_demo_prep || {}), enabled: true, minIntervalMinutes: 30 },
+      retro: { ...defaultCeremonyAutomation.triggers.retro, ...(existing.triggers?.retro || {}), enabled: true, minIntervalMinutes: 180 },
+    },
+  };
+}
+
+function isProductAutopilotPolicy(policy: Project["policy"] | undefined) {
+  const automation = policy?.ceremonyAutomation;
+  return Boolean(
+    policy?.interactionMode === "fully_autonomous" &&
+      policy.refinementMode === "autonomous" &&
+      policy.agentCreatedTicketDefaultState === "READY" &&
+      automation?.enabled &&
+      automation.mode === "fully_automatic" &&
+      automation.triggers?.daily_triage?.onActiveWorkCheckIn,
   );
 }
 

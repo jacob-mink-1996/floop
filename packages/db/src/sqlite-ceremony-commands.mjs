@@ -577,6 +577,12 @@ function buildRefinementProposals(snapshot, timestamp) {
   const candidates = snapshot.tickets
     .filter((ticket) => ticket.state === "DRAFT" || ticket.state === "PROPOSED")
     .slice(0, 6);
+  const childCounts = new Map();
+  for (const ticket of snapshot.tickets) {
+    if (ticket.parentTicketId) {
+      childCounts.set(ticket.parentTicketId, (childCounts.get(ticket.parentTicketId) || 0) + 1);
+    }
+  }
   const proposals = candidates.map((ticket) => {
     const patch = {
       latestSummary: "Refinement pass proposed clearer scope and readiness criteria.",
@@ -595,7 +601,32 @@ function buildRefinementProposals(snapshot, timestamp) {
       patch,
     }, ticket.id);
   });
+  for (const ticket of candidates) {
+    if (ticket.parentTicketId || childCounts.get(ticket.id) || hasProductBreakdownTitle(ticket.title)) {
+      continue;
+    }
+    proposals.push(proposal("ticket_create", `Create product breakdown child for ${ticket.key}`, timestamp, {
+      ticket: {
+        parentTicketId: ticket.id,
+        title: `Break down ${ticket.key}: ${ticket.title}`,
+        brief: `Turn the product idea into an executable plan.\n\nParent idea: ${ticket.title}\n\n${ticket.brief || ""}`.trim(),
+        acceptanceCriteriaMd:
+          "- Product boundaries and non-goals are captured\n- Child feature tickets are created with acceptance criteria and repo targets\n- Validation and demo evidence expectations are named for each feature\n- Open product questions are asked as HITL comments instead of guessed",
+        definitionOfDoneMd:
+          "- Feature tickets exist and are ready for planning\n- Architecture, implementation, review, validation, demo, and merge expectations are explicit\n- The parent idea can be tracked from plan through demo evidence",
+        priority: ticket.priority || "high",
+        state: "READY",
+        assignedRole: "product_manager",
+        repoTargets: ticket.repoTargets || [],
+        latestSummary: "Refinement created a product breakdown lane for autonomous planning.",
+      },
+    }, ticket.id));
+  }
   return proposals.length ? proposals : [noteProposal("Backlog refinement found no draft or proposed tickets needing action.", timestamp)];
+}
+
+function hasProductBreakdownTitle(title = "") {
+  return /\bbreak\s+down\b|\bfeature\s+breakdown\b|\bproduct\s+plan\b/i.test(String(title));
 }
 
 function buildPlanningProposals(snapshot, timestamp) {
