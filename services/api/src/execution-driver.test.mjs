@@ -2154,6 +2154,13 @@ fs.writeFileSync(
         command: `"${process.execPath}" "${developerAgentPath}"`,
       },
     });
+    store.updateRoleProfile("project_floop", "integrator", {
+      adapter: "shell",
+      model: "fixture",
+      config: {
+        command: `"${process.execPath}" "${developerAgentPath}"`,
+      },
+    });
 
     const firstDeveloper = store.createExecution("project_floop", "ticket_project_floop_2", {
       role: "developer",
@@ -2214,7 +2221,10 @@ fs.writeFileSync(
 
     const reworkExecution = store
       .getTicket("project_floop", "ticket_project_floop_2")
-      .executions.find((execution) => execution.role === "developer" && execution.status === "running");
+      .executions.find((execution) => execution.role === "integrator" && execution.status === "running");
+    assert.ok(reworkExecution);
+    assert.equal(reworkExecution.resumedFromExecutionId, continuedDeveloper.id);
+    assert.equal(reworkExecution.steeringMetadata.repairStrategy, "integrator_fallback");
     const driver = createExecutionDriver({ store, logger: silentLogger() });
     await driver.pollOnce();
 
@@ -2300,6 +2310,13 @@ fs.writeFileSync(
         command: `"${process.execPath}" "${developerAgentPath}"`,
       },
     });
+    store.updateRoleProfile("project_floop", "integrator", {
+      adapter: "shell",
+      model: "fixture",
+      config: {
+        command: `"${process.execPath}" "${developerAgentPath}"`,
+      },
+    });
 
     const implementation = store.createExecution("project_floop", "ticket_project_floop_2", {
       role: "developer",
@@ -2353,7 +2370,10 @@ fs.writeFileSync(
 
     const reworkExecution = store
       .getTicket("project_floop", "ticket_project_floop_2")
-      .executions.find((execution) => execution.role === "developer" && execution.iteration === 2);
+      .executions.find((execution) => execution.role === "integrator" && execution.status === "running");
+    assert.ok(reworkExecution);
+    assert.equal(reworkExecution.resumedFromExecutionId, implementation.id);
+    assert.equal(reworkExecution.steeringMetadata.repairStrategy, "integrator_fallback");
     const driver = createExecutionDriver({ store, logger: silentLogger() });
     await driver.pollOnce();
 
