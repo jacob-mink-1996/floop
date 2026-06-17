@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ import { createFloopServer } from "../services/api/src/app.mjs";
 import { createCeremonyAutomationDriver } from "../services/api/src/ceremony-automation-driver.mjs";
 import { createCeremonyParticipantDriver } from "../services/api/src/ceremony-participant-driver.mjs";
 import { createExecutionDriver } from "../services/api/src/execution-driver.mjs";
+import { createMergeDriver } from "../services/api/src/merge-driver.mjs";
 import { createStore } from "../services/api/src/store.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -29,6 +30,7 @@ let context;
 
 try {
   mkdirSync(repoPath, { recursive: true });
+  seedGitRepo(repoPath);
   store = createStore({ filename: join(fixtureRoot, "floop.sqlite"), seedDemo: false, workspaceRoot });
   const project = seedProject();
 
@@ -67,6 +69,7 @@ try {
   assert.equal(proof.firstChildValidationPassed, true);
   assert.equal(proof.firstChildDemoEvidenceCreated, true);
   assert.equal(proof.firstChildReadyToMerge, true);
+  assert.equal(proof.firstChildMergedDone, true);
   assert.equal(proof.splitProposalApplied, true);
   assert.equal(proof.duplicateCancelled, true);
   assert.equal(proof.obsoleteCancelled, true);
@@ -104,6 +107,15 @@ try {
   }
 }
 
+function seedGitRepo(path) {
+  execFileSync("git", ["init", "-b", "main", path]);
+  execFileSync("git", ["-C", path, "config", "user.name", "Floop Demo"]);
+  execFileSync("git", ["-C", path, "config", "user.email", "floop-demo@example.com"]);
+  writeFileSync(join(path, "README.md"), "# Calendar Product\n", "utf8");
+  execFileSync("git", ["-C", path, "add", "README.md"]);
+  execFileSync("git", ["-C", path, "commit", "-m", "seed calendar product"]);
+}
+
 function seedProject() {
   const project = store.createProject({
     name: "Calendar Backlog Refinement",
@@ -124,6 +136,7 @@ function seedProject() {
     refinementMode: "autonomous",
     agentCreatedTicketDefaultState: "READY",
     maxParallelExecutions: 2,
+    requireHumanApprovalBeforeMerge: false,
     ceremonyAutomation: {
       enabled: true,
       mode: "operator_approved",
@@ -246,6 +259,8 @@ function seedProject() {
     developerAgentPath,
     `#!/usr/bin/env node
 const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const path = require("node:path");
 const context = JSON.parse(fs.readFileSync(process.env.FLOOP_CONTEXT_PATH, "utf8"));
 const parentText = JSON.stringify(context.relatedTickets?.parent || {});
 if (!parentText.includes(${JSON.stringify(refinementAnswer)})) {
@@ -260,6 +275,10 @@ if (!parentText.includes(${JSON.stringify(refinementAnswer)})) {
   );
   process.exit(0);
 }
+const worktree = process.env.FLOOP_WORKTREE_PATH;
+fs.writeFileSync(path.join(worktree, "invite-model.md"), "# Invite Model\\n\\nMVP invite acceptance requires account login. Guest links are follow-up work.\\n", "utf8");
+execFileSync("git", ["-C", worktree, "add", "invite-model.md"]);
+execFileSync("git", ["-C", worktree, "commit", "-m", "Implement invite model"]);
 fs.writeFileSync(
   process.env.FLOOP_RESULT_PATH,
   JSON.stringify({
@@ -464,6 +483,15 @@ async function runWalkthrough(page, appUrl, projectId) {
   assert.equal(validatedChild.state, "READY_TO_MERGE");
   await refresh(page);
   await page.getByText("Create shared calendar invite model").first().waitFor();
+  await pause(900);
+
+  const mergeDriver = createMergeDriver({ store, logger: silentLogger() });
+  await mergeDriver.pollOnce();
+  const mergedChild = store.getTicket(projectId, childTicket.id);
+  assert.equal(mergedChild.state, "DONE");
+  assert.equal(readFileSync(join(repoPath, "invite-model.md"), "utf8").includes("requires account login"), true);
+  await refresh(page);
+  await page.getByText("Create shared calendar invite model").first().waitFor();
   await pause(1500);
 
   const proof = collectProof(projectId);
@@ -473,6 +501,7 @@ async function runWalkthrough(page, appUrl, projectId) {
   assert.equal(proof.firstChildValidationPassed, true);
   assert.equal(proof.firstChildDemoEvidenceCreated, true);
   assert.equal(proof.firstChildReadyToMerge, true);
+  assert.equal(proof.firstChildMergedDone, true);
 }
 
 function collectProof(projectId) {
@@ -507,7 +536,12 @@ function collectProof(projectId) {
         validation.artifacts?.some((artifact) => artifact.kind === "demo" || artifact.metadata?.demoEvidence === true),
       ),
     ),
-    firstChildReadyToMerge: firstChildDetail?.state === "READY_TO_MERGE",
+    firstChildReadyToMerge: firstChildDetail?.state === "READY_TO_MERGE" || firstChildDetail?.mergeStatus?.latestRun?.status === "completed",
+    firstChildMergedDone: Boolean(
+      firstChildDetail?.state === "DONE" &&
+      firstChildDetail?.mergeStatus?.latestRun?.status === "completed" &&
+      readOptionalFile(join(repoPath, "invite-model.md")).includes("requires account login"),
+    ),
     splitProposalApplied: Boolean(refinement?.proposals.some((proposal) => proposal.kind === "ticket_create" && proposal.status === "applied")),
     duplicateCancelled: tickets.some((ticket) => ticket.title === "Implement shared calendar invitations" && ticket.state === "CANCELLED"),
     obsoleteCancelled: tickets.some((ticket) => ticket.title === "Obsolete invitation spike" && ticket.state === "CANCELLED"),
@@ -526,6 +560,14 @@ async function clickByText(page, text) {
 async function refresh(page) {
   await clickByText(page, "Refresh");
   await pause(500);
+}
+
+function readOptionalFile(path) {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 async function moveTo(page, locator) {
