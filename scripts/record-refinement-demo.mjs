@@ -63,6 +63,10 @@ try {
   assert.equal(proof.agentCleanupProposal, true);
   assert.equal(proof.answeredRefinementQuestions >= 1, true);
   assert.equal(proof.firstChildExecutionSawRefinementAnswer, true);
+  assert.equal(proof.firstChildReviewPassed, true);
+  assert.equal(proof.firstChildValidationPassed, true);
+  assert.equal(proof.firstChildDemoEvidenceCreated, true);
+  assert.equal(proof.firstChildReadyToMerge, true);
   assert.equal(proof.splitProposalApplied, true);
   assert.equal(proof.duplicateCancelled, true);
   assert.equal(proof.obsoleteCancelled, true);
@@ -119,6 +123,7 @@ function seedProject() {
     interactionMode: "autopilot",
     refinementMode: "autonomous",
     agentCreatedTicketDefaultState: "READY",
+    maxParallelExecutions: 2,
     ceremonyAutomation: {
       enabled: true,
       mode: "operator_approved",
@@ -272,6 +277,90 @@ fs.writeFileSync(
       command: `"${process.execPath}" "${developerAgentPath}"`,
     },
   });
+  const reviewerAgentPath = join(fixtureRoot, "reviewer-refinement-handoff-agent.js");
+  writeFileSync(
+    reviewerAgentPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const context = JSON.parse(fs.readFileSync(process.env.FLOOP_CONTEXT_PATH, "utf8"));
+const eventText = JSON.stringify(context.ticket?.events || []);
+if (!eventText.includes("parent refinement answer")) {
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({
+      outcome: "blocked",
+      summaryMd: "Reviewer could not see developer completion evidence.",
+      remainingWorkMd: "Pass developer execution evidence into reviewer context.",
+      blockedKind: "needs_human_input"
+    }),
+  );
+  process.exit(0);
+}
+fs.writeFileSync(
+  process.env.FLOOP_RESULT_PATH,
+  JSON.stringify({
+    outcome: "completed",
+    summaryMd: "Reviewer approved invite model after checking refinement context.",
+    review: {
+      verdict: "passed",
+      summaryMd: "Review passed: implementation follows the account-login invite decision.",
+      artifacts: [{ kind: "report", label: "Review notes", uri: "file:///tmp/floop-review-notes.md" }]
+    }
+  }),
+);
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+  store.updateRoleProfile(project.id, "reviewer", {
+    adapter: "shell",
+    model: "fixture-refinement-review",
+    config: {
+      command: `"${process.execPath}" "${reviewerAgentPath}"`,
+    },
+  });
+  const validatorAgentPath = join(fixtureRoot, "validator-refinement-handoff-agent.js");
+  writeFileSync(
+    validatorAgentPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const context = JSON.parse(fs.readFileSync(process.env.FLOOP_CONTEXT_PATH, "utf8"));
+const reviewText = JSON.stringify(context.ticket?.reviews || []);
+if (!reviewText.includes("account-login invite decision")) {
+  fs.writeFileSync(
+    process.env.FLOOP_RESULT_PATH,
+    JSON.stringify({
+      outcome: "blocked",
+      summaryMd: "Validator could not see review evidence.",
+      remainingWorkMd: "Pass review evidence into validator context.",
+      blockedKind: "needs_human_input"
+    }),
+  );
+  process.exit(0);
+}
+fs.writeFileSync(
+  process.env.FLOOP_RESULT_PATH,
+  JSON.stringify({
+    outcome: "completed",
+    summaryMd: "Validator passed invite model and produced demo evidence.",
+    validation: {
+      verdict: "passed",
+      commandProfile: "demo-fixture",
+      commands: [{ command: "inspect invite demo", status: "passed", outputMd: "Demo evidence confirms account-login invite acceptance." }],
+      summaryMd: "Validation passed with demo evidence for account-login invite acceptance.",
+      artifacts: [{ kind: "demo", label: "Invite acceptance demo", uri: "file:///tmp/floop-invite-demo.md", metadata: { demoEvidence: true } }]
+    }
+  }),
+);
+`,
+    { encoding: "utf8", mode: 0o755 },
+  );
+  store.updateRoleProfile(project.id, "validator", {
+    adapter: "shell",
+    model: "fixture-refinement-validation",
+    config: {
+      command: `"${process.execPath}" "${validatorAgentPath}"`,
+    },
+  });
 
   return project;
 }
@@ -353,11 +442,37 @@ async function runWalkthrough(page, appUrl, projectId) {
   await refresh(page);
   await page.getByText("Create shared calendar invite model").first().waitFor();
   assert.equal(store.getTicket(projectId, childTicket.id).state, "REVIEWING");
+  await pause(900);
+
+  await executionDriver.pollOnce();
+  const reviewedChild = store.getTicket(projectId, childTicket.id);
+  assert.equal(reviewedChild.reviews.some((review) => review.verdict === "passed"), true);
+  assert.equal(reviewedChild.state, "VALIDATING");
+  await refresh(page);
+  await page.getByText("Create shared calendar invite model").first().waitFor();
+  await pause(900);
+
+  await executionDriver.pollOnce();
+  const validatedChild = store.getTicket(projectId, childTicket.id);
+  assert.equal(validatedChild.validations.some((validation) => validation.verdict === "passed"), true);
+  assert.equal(
+    validatedChild.validations.some((validation) =>
+      validation.artifacts?.some((artifact) => artifact.kind === "demo" || artifact.metadata?.demoEvidence === true),
+    ),
+    true,
+  );
+  assert.equal(validatedChild.state, "READY_TO_MERGE");
+  await refresh(page);
+  await page.getByText("Create shared calendar invite model").first().waitFor();
   await pause(1500);
 
   const proof = collectProof(projectId);
   assert.equal(proof.createdSplitTickets >= 1, true);
   assert.equal(proof.firstChildExecutionSawRefinementAnswer, true);
+  assert.equal(proof.firstChildReviewPassed, true);
+  assert.equal(proof.firstChildValidationPassed, true);
+  assert.equal(proof.firstChildDemoEvidenceCreated, true);
+  assert.equal(proof.firstChildReadyToMerge, true);
 }
 
 function collectProof(projectId) {
@@ -385,6 +500,14 @@ function collectProof(projectId) {
           execution.summaryMd?.includes("parent refinement answer"),
       ),
     ),
+    firstChildReviewPassed: Boolean(firstChildDetail?.reviews?.some((review) => review.verdict === "passed")),
+    firstChildValidationPassed: Boolean(firstChildDetail?.validations?.some((validation) => validation.verdict === "passed")),
+    firstChildDemoEvidenceCreated: Boolean(
+      firstChildDetail?.validations?.some((validation) =>
+        validation.artifacts?.some((artifact) => artifact.kind === "demo" || artifact.metadata?.demoEvidence === true),
+      ),
+    ),
+    firstChildReadyToMerge: firstChildDetail?.state === "READY_TO_MERGE",
     splitProposalApplied: Boolean(refinement?.proposals.some((proposal) => proposal.kind === "ticket_create" && proposal.status === "applied")),
     duplicateCancelled: tickets.some((ticket) => ticket.title === "Implement shared calendar invitations" && ticket.state === "CANCELLED"),
     obsoleteCancelled: tickets.some((ticket) => ticket.title === "Obsolete invitation spike" && ticket.state === "CANCELLED"),
