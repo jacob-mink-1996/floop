@@ -89,6 +89,117 @@ test("ceremony participant driver writes structured project lookup context", asy
   }
 });
 
+test("ceremony participant recommendations produce refinement proposals", async () => {
+  const store = createStore({ filename: ":memory:", seedDemo: true });
+  try {
+    const broad = store.createTicket("project_floop", {
+      title: "Build calendar collaboration",
+      brief: "A broad product item that should be split before planning.",
+      assignedRole: "product_manager",
+      state: "PROPOSED",
+    });
+    const keeper = store.createTicket("project_floop", {
+      title: "Add shared calendar invites",
+      brief: "Invite other users to shared calendar events.",
+      assignedRole: "developer",
+      state: "PROPOSED",
+    });
+    const duplicate = store.createTicket("project_floop", {
+      title: "Implement shared calendar invitations",
+      brief: "Duplicate invite work that should be combined into the clearer ticket.",
+      assignedRole: "developer",
+      state: "PROPOSED",
+    });
+    const obsolete = store.createTicket("project_floop", {
+      title: "Legacy invite experiment",
+      brief: "Old experiment the PM wants removed.",
+      assignedRole: "developer",
+      state: "DRAFT",
+    });
+    store.updateRoleProfile("project_floop", "product_manager", {
+      adapter: "mock",
+      model: "fixture",
+      config: {
+        result: {
+          outcome: "completed",
+          summaryMd: "PM cleaned up the refinement backlog.",
+          payload: {
+            refinementRecommendations: [
+              {
+                type: "combine",
+                keeperTicketId: keeper.id,
+                duplicateTicketId: duplicate.id,
+                reason: "Both tickets describe the same invite behavior.",
+              },
+              {
+                type: "cancel",
+                ticketId: obsolete.id,
+                reason: "This experiment is obsolete.",
+              },
+              {
+                type: "split",
+                sourceTicketId: broad.id,
+                reason: "Calendar collaboration is too broad for one implementation lane.",
+                tickets: [
+                  {
+                    title: "Create shared calendar invite model",
+                    brief: "Add the minimum data model for shared calendar invitations.",
+                    acceptanceCriteriaMd: "- Invite records can be created",
+                    assignedRole: "developer",
+                  },
+                ],
+              },
+              {
+                type: "question",
+                ticketId: broad.id,
+                questionMd: "Should shared calendar invites require account login before acceptance?",
+                reason: "Auth policy changes the implementation slice.",
+              },
+            ],
+          },
+        },
+      },
+    });
+    const run = store.createCeremonyRun("project_floop", {
+      type: "refinement",
+      participantRoles: ["product_manager"],
+      deciderRole: "product_manager",
+    });
+
+    const driver = createCeremonyParticipantDriver({ store, logger: silentLogger(), maxParallel: 1 });
+    await driver.pollOnce();
+
+    const completed = store.getCeremonyRun("project_floop", run.id);
+    const cleanup = completed.proposals.find(
+      (proposal) => proposal.kind === "ticket_backlog_cleanup" && proposal.payload.source === "participant_recommendations",
+    );
+    const split = completed.proposals.find(
+      (proposal) => proposal.kind === "ticket_create" && proposal.payload.sourceTicketId === broad.id,
+    );
+    const question = completed.proposals.find(
+      (proposal) => proposal.kind === "note" && proposal.payload.refinementQuestion === true,
+    );
+
+    assert.ok(cleanup);
+    assert.equal(cleanup.payload.actions.some((action) => action.duplicateTicketKey === duplicate.key), true);
+    assert.equal(cleanup.payload.actions.some((action) => action.ticketKey === obsolete.key), true);
+    assert.ok(split);
+    assert.equal(split.payload.ticket.parentTicketId, broad.id);
+    assert.equal(split.payload.ticket.title, "Create shared calendar invite model");
+    assert.ok(question);
+    assert.match(question.payload.note, /require account login/);
+
+    const applied = store.applyCeremonyRun("project_floop", run.id, { proposalIds: [cleanup.id, split.id] });
+    const createdSplitTicket = store.getTicket("project_floop", applied.proposals.find((proposal) => proposal.id === split.id).appliedTicketId);
+
+    assert.equal(store.getTicket("project_floop", duplicate.id).state, "CANCELLED");
+    assert.equal(store.getTicket("project_floop", obsolete.id).state, "CANCELLED");
+    assert.equal(createdSplitTicket.parentTicketId, broad.id);
+  } finally {
+    store.close();
+  }
+});
+
 test("ceremony participant HITL stays scoped to the ceremony run", async () => {
   const store = createStore({ filename: ":memory:", seedDemo: true });
   try {

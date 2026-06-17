@@ -252,6 +252,11 @@ Write a JSON result to ${runtime.resultPath} with:
 - questionsMd: open questions for the PO/decider
 - riskMd: risks, objections, or readiness concerns
 - payload: optional structured role findings
+  - For refinement ceremonies, payload.refinementRecommendations may include:
+    - { type: "combine", keeperTicketId, duplicateTicketId, reason }
+    - { type: "cancel", ticketId, reason }
+    - { type: "split", sourceTicketId, tickets: [{ title, brief, acceptanceCriteriaMd?, definitionOfDoneMd?, priority?, assignedRole?, repoTargets? }], reason }
+    - { type: "question", ticketId?, questionMd, reason? }
 
 Be explicit about disagreement or missing information.`;
 }

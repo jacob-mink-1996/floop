@@ -447,34 +447,50 @@ function maybeSynthesizeCeremonyParticipants(database, projectId, runId, timesta
     .filter(Boolean)
     .join("\n");
   const summary = `Agent consensus: ${deciderRole} synthesized ${participants.length} participant contribution(s).`;
+  const agentProposals = buildParticipantRecommendationProposals(run, participants, timestamp);
 
-  database
-    .prepare(
-      `insert into ceremony_proposals (
-        id, project_id, run_id, kind, status, summary, ticket_id,
-        payload_json, applied_ticket_id, applied_at, created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      `ceremony_proposal_${randomUUID()}`,
+  const insertProposal = database.prepare(
+    `insert into ceremony_proposals (
+      id, project_id, run_id, kind, status, summary, ticket_id,
+      payload_json, applied_ticket_id, applied_at, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insertProposal.run(
+    `ceremony_proposal_${randomUUID()}`,
+    projectId,
+    runId,
+    "note",
+    "pending",
+    summary,
+    null,
+    JSON.stringify({
+      note: summary,
+      deciderRole,
+      participantSummary,
+      unresolvedQuestions,
+      risks,
+    }),
+    null,
+    null,
+    timestamp,
+    timestamp,
+  );
+  for (const item of agentProposals) {
+    insertProposal.run(
+      item.id,
       projectId,
       runId,
-      "note",
+      item.kind,
       "pending",
-      summary,
-      null,
-      JSON.stringify({
-        note: summary,
-        deciderRole,
-        participantSummary,
-        unresolvedQuestions,
-        risks,
-      }),
+      item.summary,
+      item.ticketId || null,
+      JSON.stringify(item.payload || {}),
       null,
       null,
       timestamp,
       timestamp,
     );
+  }
 
   database
     .prepare(
@@ -496,10 +512,146 @@ function maybeSynthesizeCeremonyParticipants(database, projectId, runId, timesta
     projectId,
     type: "ceremony.proposed",
     summary,
-    detail: participantSummary,
+    detail: agentProposals.length
+      ? `${participantSummary}\n\nAgent refinement recommendations produced ${agentProposals.length} proposal(s).`
+      : participantSummary,
     reasonCode: run.type,
     reasonSource: "ceremony",
   });
+}
+
+function buildParticipantRecommendationProposals(run, participants, timestamp) {
+  if (run.type !== "refinement") {
+    return [];
+  }
+  const tickets = Array.isArray(run.inputSnapshot?.tickets) ? run.inputSnapshot.tickets : [];
+  const ticketsById = new Map(tickets.map((ticket) => [ticket.id, ticket]));
+  const cleanupActions = [];
+  const proposals = [];
+  const seenCleanup = new Set();
+  for (const participant of participants) {
+    for (const recommendation of refinementRecommendationsFromParticipant(participant)) {
+      const type = String(recommendation.type || "").trim();
+      if (type === "combine") {
+        const keeper = ticketsById.get(String(recommendation.keeperTicketId || ""));
+        const duplicate = ticketsById.get(String(recommendation.duplicateTicketId || ""));
+        if (!keeper || !duplicate || keeper.id === duplicate.id) {
+          continue;
+        }
+        const key = `combine:${keeper.id}:${duplicate.id}`;
+        if (seenCleanup.has(key)) {
+          continue;
+        }
+        seenCleanup.add(key);
+        cleanupActions.push({
+          type: "combine",
+          keeperTicketId: keeper.id,
+          keeperTicketKey: keeper.key,
+          duplicateTicketId: duplicate.id,
+          duplicateTicketKey: duplicate.key,
+          reason: textOr(recommendation.reason, `${participant.role} recommended combining ${duplicate.key} into ${keeper.key}.`),
+          keeperPatch: {
+            brief: mergeBacklogText(keeper.brief, duplicate.brief, duplicate),
+            latestSummary: `Refinement agent ${participant.role} recommended combining overlapping backlog item ${duplicate.key} into this ticket.`,
+          },
+          duplicateTransition: {
+            targetState: "CANCELLED",
+            reason: `Combined into ${keeper.key} by agent-assisted refinement.`,
+            reasonCode: "ceremony_backlog_combined",
+            reasonSource: "ceremony",
+            mode: "automatic",
+          },
+          participantRole: participant.role,
+        });
+      } else if (type === "cancel") {
+        const ticket = ticketsById.get(String(recommendation.ticketId || ""));
+        if (!ticket) {
+          continue;
+        }
+        const key = `cancel:${ticket.id}`;
+        if (seenCleanup.has(key)) {
+          continue;
+        }
+        seenCleanup.add(key);
+        cleanupActions.push({
+          ...cancelBacklogAction(ticket, textOr(recommendation.reason, `${participant.role} recommended removing this backlog item.`)),
+          participantRole: participant.role,
+        });
+      } else if (type === "split") {
+        const source = ticketsById.get(String(recommendation.sourceTicketId || recommendation.ticketId || ""));
+        const childTickets = Array.isArray(recommendation.tickets) ? recommendation.tickets : [];
+        for (const child of childTickets.slice(0, 6)) {
+          const ticket = normalizeRecommendedTicket(child, source);
+          if (!ticket) {
+            continue;
+          }
+          proposals.push(proposal("ticket_create", `Split ${source?.key || "refinement item"} into ${ticket.title}`, timestamp, {
+            ticket,
+            sourceTicketId: source?.id || "",
+            sourceTicketKey: source?.key || "",
+            participantRole: participant.role,
+            reason: textOr(recommendation.reason, `${participant.role} recommended splitting broad work into executable tickets.`),
+          }, source?.id || ""));
+        }
+      } else if (type === "question") {
+        const ticket = ticketsById.get(String(recommendation.ticketId || ""));
+        const questionMd = textOr(recommendation.questionMd, "");
+        if (!questionMd) {
+          continue;
+        }
+        proposals.push(proposal("note", `Refinement question${ticket?.key ? ` for ${ticket.key}` : ""}`, timestamp, {
+          note: questionMd,
+          ticketId: ticket?.id || "",
+          ticketKey: ticket?.key || "",
+          participantRole: participant.role,
+          reason: textOr(recommendation.reason, "Agent-assisted refinement needs more context before planning."),
+          refinementQuestion: true,
+        }, ticket?.id || ""));
+      }
+    }
+  }
+  if (cleanupActions.length > 0) {
+    proposals.unshift(proposal("ticket_backlog_cleanup", `Agent-assisted cleanup for ${cleanupActions.length} backlog item(s)`, timestamp, {
+      actions: cleanupActions,
+      source: "participant_recommendations",
+    }));
+  }
+  return proposals;
+}
+
+function refinementRecommendationsFromParticipant(participant) {
+  const payload = participant.payload && typeof participant.payload === "object" ? participant.payload : {};
+  const value = payload.refinementRecommendations || payload.recommendations || [];
+  return Array.isArray(value)
+    ? value.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function normalizeRecommendedTicket(input, source) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return null;
+  }
+  const title = textOr(input.title, "");
+  const brief = textOr(input.brief, "");
+  if (!title || !brief) {
+    return null;
+  }
+  return {
+    parentTicketId: source?.id || textOr(input.parentTicketId, ""),
+    title,
+    brief,
+    acceptanceCriteriaMd: textOr(input.acceptanceCriteriaMd, ""),
+    definitionOfDoneMd: textOr(input.definitionOfDoneMd, ""),
+    priority: textOr(input.priority, source?.priority || "medium"),
+    state: textOr(input.state, "PROPOSED"),
+    assignedRole: textOr(input.assignedRole, "developer"),
+    repoTargets: Array.isArray(input.repoTargets) ? input.repoTargets : source?.repoTargets || [],
+    latestSummary: "Agent-assisted refinement split this from broader backlog work.",
+  };
+}
+
+function textOr(value, fallback) {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
 function getCeremonyProposalRows(database, projectId, runId) {

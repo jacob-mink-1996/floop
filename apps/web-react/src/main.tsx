@@ -1708,9 +1708,36 @@ function CeremonyProposalBuckets({
 }
 
 function ProposalPayloadView({ proposal }: { proposal: CeremonyProposal }) {
-  if (proposal.kind !== "ticket_backlog_cleanup") {
-    return null;
+  if (proposal.kind === "ticket_create" && proposal.payload?.sourceTicketId) {
+    const ticket = isRecord(proposal.payload.ticket) ? proposal.payload.ticket : {};
+    return (
+      <div className="cleanup-action-list" aria-label="Split recommendation">
+        <div className="cleanup-action-row">
+          <span className="cleanup-action-mark cleanup-action-combine"><Plus size={14} /></span>
+          <div>
+            <strong>Split into ticket</strong>
+            <p>{typeof ticket.title === "string" && ticket.title ? ticket.title : proposal.summary}</p>
+            {typeof proposal.payload.reason === "string" && proposal.payload.reason ? <small>{proposal.payload.reason}</small> : null}
+          </div>
+        </div>
+      </div>
+    );
   }
+  if (proposal.kind === "note" && proposal.payload?.refinementQuestion === true) {
+    return (
+      <div className="cleanup-action-list" aria-label="Refinement question">
+        <div className="cleanup-action-row">
+          <span className="cleanup-action-mark">?</span>
+          <div>
+            <strong>Needs answer</strong>
+            <p>{typeof proposal.payload.note === "string" && proposal.payload.note ? proposal.payload.note : proposal.summary}</p>
+            {typeof proposal.payload.reason === "string" && proposal.payload.reason ? <small>{proposal.payload.reason}</small> : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (proposal.kind !== "ticket_backlog_cleanup") return null;
   const actions = Array.isArray(proposal.payload?.actions)
     ? proposal.payload.actions.filter((action): action is Record<string, unknown> => Boolean(action && typeof action === "object"))
     : [];
@@ -1724,6 +1751,10 @@ function ProposalPayloadView({ proposal }: { proposal: CeremonyProposal }) {
       ))}
     </div>
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function CleanupActionRow({ action }: { action: Record<string, unknown> }) {
