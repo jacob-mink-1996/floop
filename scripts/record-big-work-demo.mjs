@@ -1634,12 +1634,21 @@ async function fetchFirstCalendarId(appUrl) {
   const response = await fetch(`${appUrl}/api/calendars`).catch(() => undefined);
   if (!response?.ok) return undefined;
   const payload = await response.json().catch(() => ({}));
-  const calendars = Array.isArray(payload?.calendars) ? payload.calendars : [];
+  const calendars = Array.isArray(payload?.calendars)
+    ? payload.calendars
+    : Array.isArray(payload?.data?.calendars)
+      ? payload.data.calendars
+      : [];
   return calendars[0]?.id;
 }
 
 function calendarEventPayload({ title, startsAt, endsAt, calendarId }) {
+  const stableId = `event-${String(title || "demo")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "demo"}-${Date.parse(startsAt) || Date.now()}`;
   return {
+    id: stableId,
     calendarId,
     title,
     startsAt,
@@ -1648,7 +1657,10 @@ function calendarEventPayload({ title, startsAt, endsAt, calendarId }) {
     end: endsAt,
     timezone: "UTC",
     timeZone: "UTC",
-    reminders: [{ channel: "in_app", offsetMinutes: 15 }],
+    allDay: false,
+    status: "confirmed",
+    color: "#2563eb",
+    reminders: [{ id: `${stableId}-reminder`, channel: "inApp", offsetMinutes: 15 }],
   };
 }
 
