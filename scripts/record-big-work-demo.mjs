@@ -1457,49 +1457,20 @@ async function demoCalendarApp(page, floopUrl, stage) {
   await pause(700);
   const demoTitle = stage === "final" ? "Final stakeholder demo" : "Workflow demo";
   const demoStart = stage === "final" ? "2026-06-19T11:00" : "2026-06-18T10:00";
-  await ensureCalendarEditorOpen(page);
-  await page.locator('input[name="title"]:visible').fill(demoTitle);
-  if ((await page.locator('input[name="startsAt"]:visible').count()) > 0) {
-    await page.locator('input[name="startsAt"]:visible').fill(demoStart);
-    if ((await page.locator('input[name="endsAt"]:visible').count()) > 0) {
-      const [date, time] = demoStart.split("T");
-      await page.locator('input[name="endsAt"]:visible').fill(`${date}T${incrementHour(time)}`);
-    }
-  } else if ((await page.locator('input[name="start"]:visible').count()) > 0) {
-    await page.locator('input[name="start"]:visible').fill(demoStart);
-    if ((await page.locator('input[name="end"]:visible').count()) > 0) {
-      const [date, time] = demoStart.split("T");
-      await page.locator('input[name="end"]:visible').fill(`${date}T${incrementHour(time)}`);
-    }
-  } else {
-    const [date, time] = demoStart.split("T");
-    await page.locator('input[name="startDate"]:visible').fill(date);
-    await page.locator('input[name="startTime"]:visible').fill(time);
-    if ((await page.locator('input[name="endDate"]:visible').count()) > 0) {
-      await page.locator('input[name="endDate"]:visible').fill(date);
-    }
-    if ((await page.locator('input[name="endTime"]:visible').count()) > 0) {
-      await page.locator('input[name="endTime"]:visible').fill(incrementHour(time));
-    }
-  }
-  await page.locator("button:visible").filter({ hasText: /add event|save event/i }).first().click();
-  await pause(700);
-  if ((await page.getByText(demoTitle).count()) === 0) {
-    await page.evaluate(
-      async ({ title, startsAt, endsAt }) => {
-        await fetch("/api/events", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ title, startsAt, endsAt, start: startsAt, end: endsAt }),
-        });
-      },
-      { title: demoTitle, startsAt: demoStart, endsAt: incrementDateTimeLocalHour(demoStart) },
-    );
-    await page.reload();
-  }
   const demoEnd = incrementDateTimeLocalHour(demoStart);
   const demoStartIso = toDemoIsoDateTime(demoStart);
   const demoEndIso = toDemoIsoDateTime(demoEnd);
+  if ((await page.locator('input[name="title"]:visible').count()) > 0) {
+    await fillCalendarEventForm(page, { title: demoTitle, startsAt: demoStart });
+  } else {
+    await clickCalendarCreateAction(page);
+    await pause(700);
+    if ((await page.getByText(demoTitle).count()) === 0) {
+      await persistCalendarEventForDemo(appUrl, { title: demoTitle, startsAt: demoStartIso, endsAt: demoEndIso });
+      await page.reload();
+      await waitForCalendarUi(page);
+    }
+  }
   let eventsPayload = await fetchCalendarEvents(appUrl, demoStartIso, demoEndIso);
   let events = normalizeCalendarEvents(eventsPayload);
   if (!events.some((event) => event.title === demoTitle)) {
@@ -1538,9 +1509,47 @@ async function ensureCalendarEditorOpen(page) {
   await visibleTitleInput.waitFor({ state: "visible", timeout: 5000 });
 }
 
+async function fillCalendarEventForm(page, { title, startsAt }) {
+  await ensureCalendarEditorOpen(page);
+  await page.locator('input[name="title"]:visible').fill(title);
+  if ((await page.locator('input[name="startsAt"]:visible').count()) > 0) {
+    await page.locator('input[name="startsAt"]:visible').fill(startsAt);
+    if ((await page.locator('input[name="endsAt"]:visible').count()) > 0) {
+      const [date, time] = startsAt.split("T");
+      await page.locator('input[name="endsAt"]:visible').fill(`${date}T${incrementHour(time)}`);
+    }
+  } else if ((await page.locator('input[name="start"]:visible').count()) > 0) {
+    await page.locator('input[name="start"]:visible').fill(startsAt);
+    if ((await page.locator('input[name="end"]:visible').count()) > 0) {
+      const [date, time] = startsAt.split("T");
+      await page.locator('input[name="end"]:visible').fill(`${date}T${incrementHour(time)}`);
+    }
+  } else {
+    const [date, time] = startsAt.split("T");
+    await page.locator('input[name="startDate"]:visible').fill(date);
+    await page.locator('input[name="startTime"]:visible').fill(time);
+    if ((await page.locator('input[name="endDate"]:visible').count()) > 0) {
+      await page.locator('input[name="endDate"]:visible').fill(date);
+    }
+    if ((await page.locator('input[name="endTime"]:visible').count()) > 0) {
+      await page.locator('input[name="endTime"]:visible').fill(incrementHour(time));
+    }
+  }
+  await page.locator("button:visible").filter({ hasText: /add event|save event/i }).first().click();
+  await pause(700);
+}
+
+async function clickCalendarCreateAction(page) {
+  const createAction = page.getByRole("button", { name: /create event|new event|add event|create|new|add/i }).first();
+  if ((await createAction.count()) > 0) {
+    await createAction.click();
+  }
+}
+
 function normalizeCalendarEvents(payload) {
   if (Array.isArray(payload?.events)) return payload.events;
   if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.occurrences)) return payload.occurrences;
   return [];
 }
 
@@ -1583,12 +1592,14 @@ function endOfDemoDayIso(value) {
 }
 
 async function persistCalendarEventForDemo(appUrl, { title, startsAt, endsAt }) {
-  const apiResponse = await fetch(`${appUrl}/api/events`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ title, startsAt, endsAt, start: startsAt, end: endsAt }),
-  });
+  let apiResponse = await postCalendarEvent(appUrl, { title, startsAt, endsAt });
   if (apiResponse.ok) return;
+
+  const calendarId = await fetchFirstCalendarId(appUrl);
+  if (calendarId) {
+    apiResponse = await postCalendarEvent(appUrl, { title, startsAt, endsAt, calendarId });
+    if (apiResponse.ok) return;
+  }
 
   const legacyAppModulePath = join(targetRepoPath, "src", "app.mjs");
   if (!existsSync(legacyAppModulePath)) {
@@ -1604,11 +1615,41 @@ async function persistCalendarEventForDemo(appUrl, { title, startsAt, endsAt }) 
   const response = await appModule.handleRequest({
     method: "POST",
     url: "/api/events",
-    body: JSON.stringify({ title, startsAt, endsAt, start: startsAt, end: endsAt }),
+    body: JSON.stringify(calendarEventPayload({ title, startsAt, endsAt, calendarId })),
   });
   if (!response || response.status >= 400) {
     throw new Error(`Calendar app in-process POST failed: ${response?.status || "no response"} ${response?.body || ""}`);
   }
+}
+
+async function postCalendarEvent(appUrl, input) {
+  return fetch(`${appUrl}/api/events`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(calendarEventPayload(input)),
+  });
+}
+
+async function fetchFirstCalendarId(appUrl) {
+  const response = await fetch(`${appUrl}/api/calendars`).catch(() => undefined);
+  if (!response?.ok) return undefined;
+  const payload = await response.json().catch(() => ({}));
+  const calendars = Array.isArray(payload?.calendars) ? payload.calendars : [];
+  return calendars[0]?.id;
+}
+
+function calendarEventPayload({ title, startsAt, endsAt, calendarId }) {
+  return {
+    calendarId,
+    title,
+    startsAt,
+    endsAt,
+    start: startsAt,
+    end: endsAt,
+    timezone: "UTC",
+    timeZone: "UTC",
+    reminders: [{ channel: "in_app", offsetMinutes: 15 }],
+  };
 }
 
 async function waitForCalendarAppPort(child, stdoutText, fallbackPort) {
@@ -1639,8 +1680,14 @@ async function waitForCalendarUi(page) {
       Boolean(document.querySelector('input[name="startsAt"]')) ||
       Boolean(document.querySelector('input[name="start"]')) ||
       (Boolean(document.querySelector('input[name="startDate"]')) && Boolean(document.querySelector('input[name="startTime"]')));
-    const hasAddAction = /add event|save event|new event/i.test(bodyText) || Boolean(document.querySelector('button[type="submit"]'));
-    return hasCalendarSurface && hasTitleInput && hasStartsAtInput && hasAddAction;
+    const hasCreateAction =
+      /create event|add event|save event|new event/i.test(bodyText) ||
+      Boolean(document.querySelector('button[type="submit"]'));
+    const hasCalendarGrid =
+      Boolean(document.querySelector("#month-grid")) ||
+      Boolean(document.querySelector(".month-grid")) ||
+      Boolean(document.querySelector("[aria-label*='Month' i]"));
+    return hasCalendarSurface && hasCreateAction && ((hasTitleInput && hasStartsAtInput) || hasCalendarGrid);
   });
 }
 
