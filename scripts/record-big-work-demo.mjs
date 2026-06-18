@@ -1226,8 +1226,13 @@ function resolveDemoFeatureTickets(tickets) {
     "vertical slice",
     [
       "single-event",
+      "non-recurring",
+      "first user-visible",
+      "user-visible",
+      "create/edit/delete",
       "create edit",
       "create, edit",
+      "create, edit, and delete",
       "event editor",
       "creates",
       "create",
@@ -1241,7 +1246,22 @@ function resolveDemoFeatureTickets(tickets) {
       "event",
     ],
     0,
-    { avoid: ["skeleton", "baseline", "ci", "entrypoint", "static shell", "not ui-visible", "not ui visible"] },
+    {
+      avoid: [
+        "skeleton",
+        "baseline",
+        "ci",
+        "entrypoint",
+        "static shell",
+        "not ui-visible",
+        "not ui visible",
+        "recurrence",
+        "recurring",
+        "reminder",
+        "polish",
+        "final",
+      ],
+    },
   );
   const prerequisites = developerTickets.filter(
     (ticket) => ticket.id !== vertical.id && compareTicketOrder(ticket, vertical) < 0,
