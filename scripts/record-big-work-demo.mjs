@@ -1410,6 +1410,12 @@ async function demoCalendarApp(page, floopUrl, stage) {
       const [date, time] = demoStart.split("T");
       await page.locator('input[name="endsAt"]:visible').fill(`${date}T${incrementHour(time)}`);
     }
+  } else if ((await page.locator('input[name="start"]:visible').count()) > 0) {
+    await page.locator('input[name="start"]:visible').fill(demoStart);
+    if ((await page.locator('input[name="end"]:visible').count()) > 0) {
+      const [date, time] = demoStart.split("T");
+      await page.locator('input[name="end"]:visible').fill(`${date}T${incrementHour(time)}`);
+    }
   } else {
     const [date, time] = demoStart.split("T");
     await page.locator('input[name="startDate"]:visible').fill(date);
@@ -1425,14 +1431,14 @@ async function demoCalendarApp(page, floopUrl, stage) {
   await pause(700);
   if ((await page.getByText(demoTitle).count()) === 0) {
     await page.evaluate(
-      async ({ title, startsAt }) => {
+      async ({ title, startsAt, endsAt }) => {
         await fetch("/api/events", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ title, startsAt }),
+          body: JSON.stringify({ title, startsAt, endsAt, start: startsAt, end: endsAt }),
         });
       },
-      { title: demoTitle, startsAt: demoStart },
+      { title: demoTitle, startsAt: demoStart, endsAt: incrementDateTimeLocalHour(demoStart) },
     );
     await page.reload();
   }
@@ -1486,6 +1492,11 @@ function incrementHour(timeValue) {
   return `${String(hour).padStart(2, "0")}:${String(Number(minuteText) || 0).padStart(2, "0")}`;
 }
 
+function incrementDateTimeLocalHour(dateTimeValue) {
+  const [date = "", time = "00:00"] = String(dateTimeValue || "").split("T");
+  return `${date}T${incrementHour(time)}`;
+}
+
 async function persistCalendarEventInProcess({ title, startsAt }) {
   const appModuleUrl = `${pathToFileURL(join(targetRepoPath, "src", "app.mjs")).href}?demo=${Date.now()}`;
   const appModule = await import(appModuleUrl);
@@ -1528,6 +1539,7 @@ async function waitForCalendarUi(page) {
     const hasTitleInput = Boolean(document.querySelector('input[name="title"]'));
     const hasStartsAtInput =
       Boolean(document.querySelector('input[name="startsAt"]')) ||
+      Boolean(document.querySelector('input[name="start"]')) ||
       (Boolean(document.querySelector('input[name="startDate"]')) && Boolean(document.querySelector('input[name="startTime"]')));
     const hasAddAction = /add event|save event|new event/i.test(bodyText) || Boolean(document.querySelector('button[type="submit"]'));
     return hasCalendarSurface && hasTitleInput && hasStartsAtInput && hasAddAction;
