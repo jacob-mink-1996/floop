@@ -175,7 +175,11 @@ try {
   assert.equal(proof.projectPolicy?.steeringWorktreePolicy, "copy_interrupted_worktree");
   assert.equal(proof.projectPolicy?.requireDemoEvidenceBeforeMerge, true);
   assert.equal(existsSync(join(targetRepoPath, "src", "server.mjs")), true);
-  assert.equal(existsSync(join(targetRepoPath, "public", "index.html")), true);
+  assert.equal(
+    existsSync(join(targetRepoPath, "src", "public", "index.html")) ||
+      existsSync(join(targetRepoPath, "public", "index.html")),
+    true,
+  );
 
   await context.close();
   context = null;
@@ -1535,7 +1539,11 @@ async function fillCalendarEventForm(page, { title, startsAt }) {
       await page.locator('input[name="endTime"]:visible').fill(incrementHour(time));
     }
   }
-  await page.locator("button:visible").filter({ hasText: /add event|save event/i }).first().click();
+  const submitButton = page
+    .locator('button[type="submit"]:visible, button:visible')
+    .filter({ hasText: /add event|create event|save event/i })
+    .first();
+  await submitButton.click();
   await pause(700);
 }
 
@@ -1555,12 +1563,28 @@ function normalizeCalendarEvents(payload) {
 }
 
 async function fetchCalendarEvents(appUrl, from, to) {
-  const query = new URLSearchParams({
-    from: toDemoDateKey(from),
-    to: toDemoDateKey(to),
-  });
-  const response = await fetch(`${appUrl}/api/events?${query.toString()}`);
-  return response.json();
+  const queries = [
+    new URLSearchParams({
+      from: startOfDemoDayIso(from),
+      to: endOfDemoDayIso(to),
+    }),
+    new URLSearchParams({
+      start: toDemoDateKey(from),
+      end: toDemoDateKey(to),
+    }),
+    new URLSearchParams(),
+  ];
+  let fallbackPayload = {};
+  for (const query of queries) {
+    const suffix = query.toString();
+    const response = await fetch(`${appUrl}/api/events${suffix ? `?${suffix}` : ""}`);
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) {
+      if (normalizeCalendarEvents(payload).length > 0) return payload;
+      fallbackPayload = payload;
+    }
+  }
+  return fallbackPayload;
 }
 
 function incrementHour(timeValue) {
@@ -1682,20 +1706,23 @@ function calendarEventPayloadVariants(input) {
     title: input.title,
     startsAt: input.startsAt,
     endsAt: input.endsAt,
-    timeZone: "UTC",
+    timezone: "UTC",
   };
   return [
+    strictPayload,
+    {
+      ...strictPayload,
+      timeZone: "UTC",
+    },
     fullPayload,
     {
       ...fullPayload,
       reminders: [{ id: `${fullPayload.id}-reminder`, channel: "inApp", offsetMinutes: 15 }],
     },
-    strictPayload,
     {
       ...strictPayload,
       start: input.startsAt,
       end: input.endsAt,
-      timezone: "UTC",
     },
   ];
 }
