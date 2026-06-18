@@ -327,6 +327,14 @@ async function runWalkthrough(page, appUrl) {
   const featureTickets = await waitDuringIdle("product manager codex feature breakdown", () =>
     waitForFeatureTickets(project.id, breakdownTicket.id, 4),
   );
+  await waitForTicketRoleExecutionOutcome(
+    project.id,
+    breakdownTicket.id,
+    "product_manager",
+    ["completed", "followup_created"],
+    agentWaitMs(12_000, 180_000),
+  );
+  await closeTicketDetail(page);
   await clickByText(page, "Cockpit");
   await page.getByText("Product Run").first().waitFor();
   await page.getByText("Fully Autonomous").first().waitFor();
@@ -352,7 +360,14 @@ async function runWalkthrough(page, appUrl) {
 
   await closeAnyOpenRunProof(page);
   await clickByText(page, "Board");
-  await runTicketLoopFromUi(page, project.id, demoTickets.vertical);
+  for (const prerequisite of demoTickets.prerequisites) {
+    await runTicketLoopFromUi(page, project.id, prerequisite, {
+      summary: "Operator starts the next prerequisite slice for the visible product workflow.",
+    });
+  }
+  await runTicketLoopFromUi(page, project.id, demoTickets.vertical, {
+    summary: "Operator starts the visible calendar workflow slice.",
+  });
   await waitForTicketState(demoTickets.vertical, "DONE", 45_000);
   await page.getByText("Done").first().waitFor();
   await pause(1000);
@@ -975,7 +990,6 @@ async function startProductAutopilotFromUi(page, title) {
   await page.getByText("Start Product Autopilot").first().click();
   await page.getByText(/Product run started|Start Product Autopilot|Starting Product Autopilot/).first().waitFor({ timeout: 10_000 }).catch(() => {});
   await pause(1200);
-  await closeTicketDetail(page);
 }
 
 async function runBacklogRefinement(page, projectId, featureTickets) {
@@ -1017,14 +1031,14 @@ async function runBacklogRefinement(page, projectId, featureTickets) {
   await clickByText(page, "Board");
 }
 
-async function runTicketLoopFromUi(page, projectId, ticket) {
+async function runTicketLoopFromUi(page, projectId, ticket, options = {}) {
   const title = ticketTitle(ticket);
   if ((await page.locator(".ticket-detail:visible").count()) === 0) {
     await clickByText(page, "Board");
     await clickByText(page, ticketKey(ticket));
   }
   await page.getByText("Start developer lane").first().waitFor();
-  await fillByName(page, "summary", "Operator starts the first implementation slice.");
+  await fillByName(page, "summary", options.summary || "Operator starts the first implementation slice.");
   await clickByText(page, "Dispatch agent");
   const firstState = await waitForTicketInStates(ticket, ["WORKING", "REVIEWING", "VALIDATING", "READY_TO_MERGE", "DONE"], agentWaitMs(12_000, 90_000));
   if (firstState.state === "WORKING") {
@@ -1107,6 +1121,30 @@ async function waitForExecutionOutcome(projectId, executionId, outcome, timeoutM
   throw new Error(`Timed out waiting for ${executionId} to finish with ${outcome}`);
 }
 
+async function waitForTicketRoleExecutionOutcome(projectId, ticketId, role, expectedOutcome, timeoutMs) {
+  const expectedOutcomes = Array.isArray(expectedOutcome) ? expectedOutcome : [expectedOutcome];
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ticket = store.getTicket(projectId, ticketId);
+    const execution = [...(ticket?.executions || [])]
+      .filter((candidate) => candidate.role === role)
+      .sort((left, right) => {
+        if (right.iteration !== left.iteration) {
+          return right.iteration - left.iteration;
+        }
+        return String(right.startedAt || "").localeCompare(String(left.startedAt || ""));
+      })[0];
+    if (expectedOutcomes.includes(execution?.outcome)) return execution;
+    if (execution?.finishedAt && execution.outcome && !expectedOutcomes.includes(execution.outcome)) {
+      throw new Error(
+        `${ticket?.key || ticketId} ${role} finished with ${execution.outcome}, expected ${expectedOutcomes.join(" or ")}`,
+      );
+    }
+    await pause(250);
+  }
+  throw new Error(`Timed out waiting for ${ticketId} ${role} execution to finish with ${expectedOutcomes.join(" or ")}`);
+}
+
 async function waitForTicketAtOrPast(ticketRef, targetState, timeoutMs) {
   const order = ["DRAFT", "PROPOSED", "READY", "WORKING", "REVIEWING", "VALIDATING", "READY_TO_MERGE", "DONE"];
   const targetIndex = order.indexOf(targetState);
@@ -1165,13 +1203,16 @@ async function waitForProductBreakdownTicket(projectId, ideaTicketId) {
 
 function resolveDemoFeatureTickets(tickets) {
   const skipped = tickets.filter((ticket) => (ticket.assignedRole || ticket.assigned_role || "") !== "developer");
-  const remaining = tickets.filter((ticket) => (ticket.assignedRole || ticket.assigned_role || "") === "developer");
+  const developerTickets = tickets
+    .filter((ticket) => (ticket.assignedRole || ticket.assigned_role || "") === "developer")
+    .sort(compareTicketOrder);
+  const remaining = [...developerTickets];
   if (remaining.length < 4) {
     throw new Error(`Expected at least 4 developer feature tickets, found ${remaining.length}`);
   }
-  const pick = (label, keywords, fallbackIndex) => {
+  const pick = (label, keywords, fallbackIndex, options = {}) => {
     const ranked = remaining
-      .map((ticket) => ({ ticket, score: scoreTicketIntent(ticket, keywords) }))
+      .map((ticket) => ({ ticket, score: scoreTicketIntent(ticket, keywords, options.avoid || []) }))
       .sort((left, right) => right.score - left.score);
     const selected = ranked[0]?.score > 0 ? ranked[0].ticket : remaining[fallbackIndex] || remaining[0];
     if (!selected) {
@@ -1181,19 +1222,51 @@ function resolveDemoFeatureTickets(tickets) {
     return selected;
   };
 
-  const vertical = pick("vertical slice", ["vertical", "slice", "api", "frontend", "browser", "create", "event"], 0);
+  const vertical = pick(
+    "vertical slice",
+    [
+      "single-event",
+      "create edit",
+      "create, edit",
+      "event editor",
+      "creates",
+      "create",
+      "save",
+      "calendar view",
+      "views",
+      "frontend",
+      "browser",
+      "ui",
+      "api",
+      "event",
+    ],
+    0,
+    { avoid: ["skeleton", "baseline", "ci", "entrypoint", "static shell", "not ui-visible", "not ui visible"] },
+  );
+  const prerequisites = developerTickets.filter(
+    (ticket) => ticket.id !== vertical.id && compareTicketOrder(ticket, vertical) < 0,
+  );
   const recurrence = pick("recurrence", ["recurr", "repeat", "daily", "weekly"], 0);
   const reminders = pick("reminders", ["reminder", "notification", "notify"], 0);
   const final = pick("final integration", ["integrat", "final", "end-to-end", "complete"], 0);
-  return { vertical, recurrence, reminders, final, extras: remaining, skipped };
+  return { prerequisites, vertical, recurrence, reminders, final, extras: remaining, skipped };
 }
 
-function scoreTicketIntent(ticket, keywords) {
+function compareTicketOrder(left, right) {
+  const leftNumber = Number(String(left.key || "").match(/\d+/)?.[0] || 0);
+  const rightNumber = Number(String(right.key || "").match(/\d+/)?.[0] || 0);
+  if (leftNumber !== rightNumber) return leftNumber - rightNumber;
+  return String(left.createdAt || left.id || "").localeCompare(String(right.createdAt || right.id || ""));
+}
+
+function scoreTicketIntent(ticket, keywords, avoid = []) {
   const text = [ticket.title, ticket.brief, ticket.acceptanceCriteriaMd, ticket.definitionOfDoneMd]
     .filter(Boolean)
     .join("\n")
     .toLowerCase();
-  return keywords.reduce((score, keyword) => score + (text.includes(keyword) ? 1 : 0), 0);
+  const positive = keywords.reduce((score, keyword) => score + (text.includes(keyword) ? 1 : 0), 0);
+  const negative = avoid.reduce((score, keyword) => score + (text.includes(keyword) ? 1 : 0), 0);
+  return positive - negative * 2;
 }
 
 function agentWaitMs(fixtureMs, codexMs) {
@@ -1329,9 +1402,26 @@ async function demoCalendarApp(page, floopUrl, stage) {
   await pause(700);
   const demoTitle = stage === "final" ? "Final stakeholder demo" : "Workflow demo";
   const demoStart = stage === "final" ? "2026-06-19T11:00" : "2026-06-18T10:00";
-  await page.locator('input[name="title"]').fill(demoTitle);
-  await page.locator('input[name="startsAt"]').fill(demoStart);
-  await page.getByRole("button", { name: "Add event" }).click();
+  await ensureCalendarEditorOpen(page);
+  await page.locator('input[name="title"]:visible').fill(demoTitle);
+  if ((await page.locator('input[name="startsAt"]:visible').count()) > 0) {
+    await page.locator('input[name="startsAt"]:visible').fill(demoStart);
+    if ((await page.locator('input[name="endsAt"]:visible').count()) > 0) {
+      const [date, time] = demoStart.split("T");
+      await page.locator('input[name="endsAt"]:visible').fill(`${date}T${incrementHour(time)}`);
+    }
+  } else {
+    const [date, time] = demoStart.split("T");
+    await page.locator('input[name="startDate"]:visible').fill(date);
+    await page.locator('input[name="startTime"]:visible').fill(time);
+    if ((await page.locator('input[name="endDate"]:visible').count()) > 0) {
+      await page.locator('input[name="endDate"]:visible').fill(date);
+    }
+    if ((await page.locator('input[name="endTime"]:visible').count()) > 0) {
+      await page.locator('input[name="endTime"]:visible').fill(incrementHour(time));
+    }
+  }
+  await page.locator("button:visible").filter({ hasText: /add event|save event/i }).first().click();
   await pause(700);
   if ((await page.getByText(demoTitle).count()) === 0) {
     await page.evaluate(
@@ -1377,10 +1467,23 @@ async function demoCalendarApp(page, floopUrl, stage) {
   await pause(600);
 }
 
+async function ensureCalendarEditorOpen(page) {
+  const visibleTitleInput = page.locator('input[name="title"]:visible').first();
+  if ((await visibleTitleInput.count()) > 0) return;
+  await page.getByRole("button", { name: /create event|new event|add event|create|new|add/i }).first().click();
+  await visibleTitleInput.waitFor({ state: "visible", timeout: 5000 });
+}
+
 function normalizeCalendarEvents(payload) {
   if (Array.isArray(payload?.events)) return payload.events;
   if (Array.isArray(payload?.data)) return payload.data;
   return [];
+}
+
+function incrementHour(timeValue) {
+  const [hourText = "0", minuteText = "00"] = String(timeValue || "00:00").split(":");
+  const hour = (Number(hourText) + 1) % 24;
+  return `${String(hour).padStart(2, "0")}:${String(Number(minuteText) || 0).padStart(2, "0")}`;
 }
 
 async function persistCalendarEventInProcess({ title, startsAt }) {
@@ -1423,8 +1526,10 @@ async function waitForCalendarUi(page) {
     const title = document.title || "";
     const hasCalendarSurface = /team schedule|calendar|schedule|events/i.test(`${title}\n${bodyText}`);
     const hasTitleInput = Boolean(document.querySelector('input[name="title"]'));
-    const hasStartsAtInput = Boolean(document.querySelector('input[name="startsAt"]'));
-    const hasAddAction = /add event/i.test(bodyText) || Boolean(document.querySelector('button[type="submit"]'));
+    const hasStartsAtInput =
+      Boolean(document.querySelector('input[name="startsAt"]')) ||
+      (Boolean(document.querySelector('input[name="startDate"]')) && Boolean(document.querySelector('input[name="startTime"]')));
+    const hasAddAction = /add event|save event|new event/i.test(bodyText) || Boolean(document.querySelector('button[type="submit"]'));
     return hasCalendarSurface && hasTitleInput && hasStartsAtInput && hasAddAction;
   });
 }
