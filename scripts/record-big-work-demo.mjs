@@ -1548,6 +1548,7 @@ async function clickCalendarCreateAction(page) {
 
 function normalizeCalendarEvents(payload) {
   if (Array.isArray(payload?.events)) return payload.events;
+  if (Array.isArray(payload?.data?.events)) return payload.data.events;
   if (Array.isArray(payload?.data)) return payload.data;
   if (Array.isArray(payload?.occurrences)) return payload.occurrences;
   return [];
@@ -1555,8 +1556,8 @@ function normalizeCalendarEvents(payload) {
 
 async function fetchCalendarEvents(appUrl, from, to) {
   const query = new URLSearchParams({
-    from: startOfDemoDayIso(from),
-    to: endOfDemoDayIso(to),
+    from: toDemoDateKey(from),
+    to: toDemoDateKey(to),
   });
   const response = await fetch(`${appUrl}/api/events?${query.toString()}`);
   return response.json();
@@ -1577,6 +1578,12 @@ function toDemoIsoDateTime(dateTimeValue) {
   const parsed = new Date(dateTimeValue);
   if (Number.isNaN(parsed.getTime())) return dateTimeValue;
   return parsed.toISOString();
+}
+
+function toDemoDateKey(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value || "").slice(0, 10);
+  return parsed.toISOString().slice(0, 10);
 }
 
 function startOfDemoDayIso(value) {
@@ -1623,11 +1630,16 @@ async function persistCalendarEventForDemo(appUrl, { title, startsAt, endsAt }) 
 }
 
 async function postCalendarEvent(appUrl, input) {
-  return fetch(`${appUrl}/api/events`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(calendarEventPayload(input)),
-  });
+  let lastResponse;
+  for (const payload of calendarEventPayloadVariants(input)) {
+    lastResponse = await fetch(`${appUrl}/api/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (lastResponse.ok) return lastResponse;
+  }
+  return lastResponse;
 }
 
 async function fetchFirstCalendarId(appUrl) {
@@ -1660,8 +1672,32 @@ function calendarEventPayload({ title, startsAt, endsAt, calendarId }) {
     allDay: false,
     status: "confirmed",
     color: "#2563eb",
-    reminders: [{ id: `${stableId}-reminder`, channel: "inApp", offsetMinutes: 15 }],
+    reminders: [{ id: `${stableId}-reminder`, channel: "in_app", offsetMinutes: 15 }],
   };
+}
+
+function calendarEventPayloadVariants(input) {
+  const fullPayload = calendarEventPayload(input);
+  const strictPayload = {
+    title: input.title,
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    timeZone: "UTC",
+  };
+  return [
+    fullPayload,
+    {
+      ...fullPayload,
+      reminders: [{ id: `${fullPayload.id}-reminder`, channel: "inApp", offsetMinutes: 15 }],
+    },
+    strictPayload,
+    {
+      ...strictPayload,
+      start: input.startsAt,
+      end: input.endsAt,
+      timezone: "UTC",
+    },
+  ];
 }
 
 async function waitForCalendarAppPort(child, stdoutText, fallbackPort) {
@@ -1697,9 +1733,14 @@ async function waitForCalendarUi(page) {
       Boolean(document.querySelector('button[type="submit"]'));
     const hasCalendarGrid =
       Boolean(document.querySelector("#month-grid")) ||
+      Boolean(document.querySelector("#calendarGrid")) ||
       Boolean(document.querySelector(".month-grid")) ||
+      Boolean(document.querySelector(".calendar-grid")) ||
       Boolean(document.querySelector("[aria-label*='Month' i]"));
-    return hasCalendarSurface && hasCreateAction && ((hasTitleInput && hasStartsAtInput) || hasCalendarGrid);
+    const hasReadonlyCalendar =
+      hasCalendarGrid &&
+      (/agenda|selected day|today|no events|event/i.test(bodyText) || Boolean(document.querySelector("[data-date-key]")));
+    return hasCalendarSurface && ((hasCreateAction && hasTitleInput && hasStartsAtInput) || hasReadonlyCalendar);
   });
 }
 
