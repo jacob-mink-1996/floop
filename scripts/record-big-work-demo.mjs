@@ -283,7 +283,7 @@ async function runWalkthrough(page, appUrl) {
     reason: "Pre-planning conversation: define the system boundaries before PM feature breakdown.",
   });
   await waitDuringIdle("architect codex pre-planning", () =>
-    waitForTicketAtOrPast(architectureTicket.title, "REVIEWING", agentWaitMs(20_000, 360_000)),
+    waitForTicketAtOrPastWithContinue(project.id, architectureTicket, "REVIEWING", "architect", agentWaitMs(20_000, 360_000), 2),
   );
   await waitDuringIdle("architect codex review", () =>
     waitForTicketAtOrPast(architectureTicket.title, "VALIDATING", agentWaitMs(20_000, 360_000)),
@@ -1156,6 +1156,41 @@ async function waitForTicketAtOrPast(ticketRef, targetState, timeoutMs) {
     const ticket = findTicket(ticketRef);
     const stateIndex = ticket ? order.indexOf(ticket.state) : -1;
     if (stateIndex >= targetIndex) return ticket;
+    await pause(250);
+  }
+  throw new Error(`Timed out waiting for ${ticketTitle(ticketRef)} to reach at least ${targetState}`);
+}
+
+async function waitForTicketAtOrPastWithContinue(projectId, ticketRef, targetState, role, timeoutMs, maxContinues) {
+  const order = ["DRAFT", "PROPOSED", "READY", "WORKING", "REVIEWING", "VALIDATING", "READY_TO_MERGE", "DONE"];
+  const targetIndex = order.indexOf(targetState);
+  if (targetIndex < 0) {
+    throw new Error(`Unknown ticket progression state ${targetState}`);
+  }
+  const continuedExecutionIds = new Set();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ticket = findTicket(ticketRef);
+    const stateIndex = ticket ? order.indexOf(ticket.state) : -1;
+    if (stateIndex >= targetIndex) return ticket;
+    const executions = [...(store.getTicket(projectId, ticket?.id || ticketRef.id)?.executions || [])]
+      .filter((execution) => execution.role === role)
+      .sort((left, right) => String(right.startedAt || "").localeCompare(String(left.startedAt || "")));
+    const latest = executions[0];
+    const active = executions.some((execution) => execution.status === "running" || execution.status === "queued");
+    if (
+      latest?.outcome === "needs_continue" &&
+      latest.finishedAt &&
+      !active &&
+      continuedExecutionIds.size < maxContinues &&
+      !continuedExecutionIds.has(latest.id)
+    ) {
+      continuedExecutionIds.add(latest.id);
+      store.createExecution(projectId, ticket.id, {
+        role,
+        reason: `Continue ${role} work after ${latest.outcome}: ${latest.summaryMd || "additional work requested"}`,
+      });
+    }
     await pause(250);
   }
   throw new Error(`Timed out waiting for ${ticketTitle(ticketRef)} to reach at least ${targetState}`);
