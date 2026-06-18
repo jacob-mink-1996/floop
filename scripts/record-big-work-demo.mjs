@@ -1497,13 +1497,16 @@ async function demoCalendarApp(page, floopUrl, stage) {
     );
     await page.reload();
   }
-  let eventsPayload = await fetch(`${appUrl}/api/events`).then((response) => response.json());
+  const demoEnd = incrementDateTimeLocalHour(demoStart);
+  const demoStartIso = toDemoIsoDateTime(demoStart);
+  const demoEndIso = toDemoIsoDateTime(demoEnd);
+  let eventsPayload = await fetchCalendarEvents(appUrl, demoStartIso, demoEndIso);
   let events = normalizeCalendarEvents(eventsPayload);
   if (!events.some((event) => event.title === demoTitle)) {
-    await persistCalendarEventInProcess({ title: demoTitle, startsAt: demoStart });
+    await persistCalendarEventForDemo(appUrl, { title: demoTitle, startsAt: demoStartIso, endsAt: demoEndIso });
     await page.reload();
     await pause(700);
-    eventsPayload = await fetch(`${appUrl}/api/events`).then((response) => response.json());
+    eventsPayload = await fetchCalendarEvents(appUrl, demoStartIso, demoEndIso);
     events = normalizeCalendarEvents(eventsPayload);
   }
   if ((await page.getByText(demoTitle).count()) === 0) {
@@ -1541,6 +1544,15 @@ function normalizeCalendarEvents(payload) {
   return [];
 }
 
+async function fetchCalendarEvents(appUrl, from, to) {
+  const query = new URLSearchParams({
+    from: startOfDemoDayIso(from),
+    to: endOfDemoDayIso(to),
+  });
+  const response = await fetch(`${appUrl}/api/events?${query.toString()}`);
+  return response.json();
+}
+
 function incrementHour(timeValue) {
   const [hourText = "0", minuteText = "00"] = String(timeValue || "00:00").split(":");
   const hour = (Number(hourText) + 1) % 24;
@@ -1552,8 +1564,39 @@ function incrementDateTimeLocalHour(dateTimeValue) {
   return `${date}T${incrementHour(time)}`;
 }
 
-async function persistCalendarEventInProcess({ title, startsAt }) {
-  const appModuleUrl = `${pathToFileURL(join(targetRepoPath, "src", "app.mjs")).href}?demo=${Date.now()}`;
+function toDemoIsoDateTime(dateTimeValue) {
+  const parsed = new Date(dateTimeValue);
+  if (Number.isNaN(parsed.getTime())) return dateTimeValue;
+  return parsed.toISOString();
+}
+
+function startOfDemoDayIso(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate())).toISOString();
+}
+
+function endOfDemoDayIso(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate() + 1)).toISOString();
+}
+
+async function persistCalendarEventForDemo(appUrl, { title, startsAt, endsAt }) {
+  const apiResponse = await fetch(`${appUrl}/api/events`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title, startsAt, endsAt, start: startsAt, end: endsAt }),
+  });
+  if (apiResponse.ok) return;
+
+  const legacyAppModulePath = join(targetRepoPath, "src", "app.mjs");
+  if (!existsSync(legacyAppModulePath)) {
+    const body = await apiResponse.text().catch(() => "");
+    throw new Error(`Calendar app API POST failed: ${apiResponse.status} ${body}`);
+  }
+
+  const appModuleUrl = `${pathToFileURL(legacyAppModulePath).href}?demo=${Date.now()}`;
   const appModule = await import(appModuleUrl);
   if (typeof appModule.handleRequest !== "function") {
     throw new Error("Calendar app does not export handleRequest for in-process demo persistence");
@@ -1561,7 +1604,7 @@ async function persistCalendarEventInProcess({ title, startsAt }) {
   const response = await appModule.handleRequest({
     method: "POST",
     url: "/api/events",
-    body: JSON.stringify({ title, startsAt }),
+    body: JSON.stringify({ title, startsAt, endsAt, start: startsAt, end: endsAt }),
   });
   if (!response || response.status >= 400) {
     throw new Error(`Calendar app in-process POST failed: ${response?.status || "no response"} ${response?.body || ""}`);
